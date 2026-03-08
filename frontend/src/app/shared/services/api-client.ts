@@ -11,11 +11,20 @@ import {
 
 type RetryConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
-const API_BASE_URL =
-  (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.[
-    'NG_APP_API_BASE_URL'
-  ] ||
-  'http://localhost:3000';
+const appEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+const configuredApiBaseUrl = String(appEnv?.['NG_APP_API_BASE_URL'] ?? '').trim();
+const nodeEnv = String(appEnv?.['NODE_ENV'] ?? '').trim().toLowerCase();
+const isProductionBuild =
+  nodeEnv === 'production' ||
+  String(globalThis.location?.hostname ?? '').trim().toLowerCase() !== 'localhost';
+
+if (!configuredApiBaseUrl && isProductionBuild) {
+  throw new Error(
+    'Missing NG_APP_API_BASE_URL. Set this environment variable in your deployment platform and rebuild.',
+  );
+}
+
+const API_BASE_URL = configuredApiBaseUrl || 'http://localhost:3000';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
