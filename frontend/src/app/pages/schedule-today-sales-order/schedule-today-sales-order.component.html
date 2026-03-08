@@ -1,0 +1,268 @@
+<div>
+  <app-page-breadcrumb pageTitle="Schedule Today Sales Order" />
+
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] xl:p-6">
+    <div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">Today's Scheduled Sales Orders</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Select a sales order scheduled for today.</p>
+      </div>
+      <span class="inline-flex rounded-full bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+        {{ todaySchedules.length }} schedule(s)
+      </span>
+    </div>
+
+    @if (isLoading) {
+      <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading today schedules...</div>
+    } @else if (loadErrorMessage) {
+      <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+        {{ loadErrorMessage }}
+      </div>
+    } @else {
+      <div class="mt-5 overflow-x-auto">
+        <table class="w-full min-w-[820px]">
+          <thead>
+            <tr class="border-b border-gray-200 dark:border-gray-800">
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">SO Number</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Customer</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Schedule Date</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (order of todaySchedules; track order.id) {
+              <tr class="border-b border-gray-100 dark:border-gray-800/70">
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.soNumber }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.customerName }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDate(order.scheduleDate) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatAmount(order.totalAmount) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.status }}</td>
+                <td class="px-4 py-3 text-right">
+                  <div class="inline-flex items-center gap-2">
+                    @if (canMoveToForDelivery(order.status)) {
+                      <button
+                        type="button"
+                        (click)="moveToForDelivery(order)"
+                        [disabled]="movingForDeliveryIds.has(order.id)"
+                        class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 disabled:opacity-60 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                      >
+                        {{ movingForDeliveryIds.has(order.id) ? 'Processing...' : 'Move to For-Delivery' }}
+                      </button>
+                    }
+                    @if (isForDeliveryStatus(order.status)) {
+                      <button
+                        type="button"
+                        (click)="markReturnedUnits(order)"
+                        [disabled]="returningOrderIds.has(order.id)"
+                        class="rounded-lg border border-warning-300 px-3 py-1.5 text-xs font-medium text-warning-700 transition hover:bg-warning-50 disabled:opacity-60 dark:border-warning-700 dark:text-warning-400 dark:hover:bg-warning-500/10"
+                      >
+                        {{ returningOrderIds.has(order.id) ? 'Processing...' : 'Returned Units' }}
+                      </button>
+                    }
+                    <button
+                      type="button"
+                      (click)="selectOrder(order.id)"
+                      class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
+                      [ngClass]="selectedOrderId === order.id
+                        ? 'border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                    >
+                      {{ selectedOrderId === order.id ? 'Selected' : 'Select' }}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                  No sales orders scheduled for today.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </div>
+
+  @if (isDetailOpen) {
+    <div class="fixed inset-0 z-[100000] bg-gray-900/40" (click)="closeDetail()"></div>
+  }
+
+  <aside
+    class="fixed right-0 top-0 z-[100001] h-full w-full max-w-2xl transform border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
+    [ngClass]="isDetailOpen ? 'translate-x-0' : 'translate-x-full'"
+  >
+    <div class="flex h-full flex-col">
+      <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Sales Order Details</h3>
+          <p class="text-sm text-gray-500 dark:text-gray-400">Warehouseman detail view for selected schedule.</p>
+        </div>
+        <button
+          type="button"
+          (click)="closeDetail()"
+          class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Close
+        </button>
+      </div>
+
+      <div class="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+        @if (isDetailLoading) {
+          <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading sales order details...</div>
+        } @else if (detailError) {
+          <div class="rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+            {{ detailError }}
+          </div>
+        } @else if (selectedOrderDetail) {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Sales Order</h4>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div class="text-sm text-gray-600 dark:text-gray-300"><span class="font-medium">SO Number:</span> {{ selectedOrderDetail.soNumber || '-' }}</div>
+              <div class="text-sm text-gray-600 dark:text-gray-300"><span class="font-medium">Status:</span> {{ formatReadableLabel(selectedOrderDetail.status) }}</div>
+              <div class="text-sm text-gray-600 dark:text-gray-300"><span class="font-medium">Schedule Date:</span> {{ formatDate(selectedOrderDetail.scheduleDate) }}</div>
+              <div class="text-sm text-gray-600 dark:text-gray-300"><span class="font-medium">Sales Type:</span> {{ selectedOrderDetail.salesType || '-' }}</div>
+              <div class="text-sm text-gray-600 dark:text-gray-300 md:col-span-2"><span class="font-medium">Remarks:</span> {{ selectedOrderDetail.remarks || '-' }}</div>
+            </div>
+          </section>
+
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Customer</h4>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div class="text-sm text-gray-600 dark:text-gray-300"><span class="font-medium">Name:</span> {{ selectedOrderDetail.customerName || '-' }}</div>
+              <div class="text-sm text-gray-600 dark:text-gray-300"><span class="font-medium">Contact Person:</span> {{ selectedOrderDetail.customerContactPerson || '-' }}</div>
+              <div class="text-sm text-gray-600 dark:text-gray-300"><span class="font-medium">Contact Number:</span> {{ selectedOrderDetail.customerContactNumber || '-' }}</div>
+              <div class="text-sm text-gray-600 dark:text-gray-300"><span class="font-medium">Email:</span> {{ selectedOrderDetail.customerEmail || '-' }}</div>
+              <div class="text-sm text-gray-600 dark:text-gray-300 md:col-span-2"><span class="font-medium">Address:</span> {{ selectedOrderDetail.customerAddress || '-' }}</div>
+            </div>
+          </section>
+
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Product Items</h4>
+            <div class="space-y-2">
+              @if (detailProductItems.length > 0) {
+                <div class="mb-3 flex flex-wrap gap-2">
+                  @for (item of detailProductItems; track item.id; let productIndex = $index) {
+                    <button
+                      type="button"
+                      (click)="selectProductTab(productIndex)"
+                      [title]="(productIndex + 1) + '. ' + item.productName"
+                      class="rounded-lg border px-3 py-1 text-xs font-medium"
+                      [ngClass]="activeProductTabIndex === productIndex
+                        ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
+                        : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                    >
+                      <span class="inline-block max-w-[190px] truncate align-bottom">
+                        {{ productIndex + 1 }}. {{ item.productName }}
+                      </span>
+                    </button>
+                  }
+                </div>
+
+                @if (detailProductItems[activeProductTabIndex]; as item) {
+                  <div class="rounded-lg border border-gray-200 p-3 text-sm dark:border-gray-700">
+                    <div class="grid grid-cols-1 gap-2 md:grid-cols-2">
+                      <div class="text-gray-700 dark:text-gray-200">Product: {{ item.productName }} (ID: {{ item.productId }})</div>
+                      <div class="text-gray-700 dark:text-gray-200">Capacity: {{ item.capacityName }} (ID: {{ item.capacityId }})</div>
+                      <div class="text-gray-600 dark:text-gray-300">Set Qty: {{ item.totalSetQty }}</div>
+                      <div class="text-gray-600 dark:text-gray-300">Serial Count: {{ getUnitTypeSerialCount(item.unitTypes) }}</div>
+                      <div class="text-gray-600 dark:text-gray-300">Unit Price: {{ formatAmount(item.unitPrice) }}</div>
+                      <div class="text-gray-600 dark:text-gray-300">Sell/Discount: {{ formatAmount(item.sellPrice) }} / {{ formatAmount(item.discountPrice) }}</div>
+                    </div>
+
+                    <div class="mt-3 flex flex-wrap gap-2">
+                      @for (unitType of item.unitTypes; track unitType.label) {
+                        <button
+                          type="button"
+                          (click)="selectUnitType(activeProductTabIndex, unitType.label)"
+                          class="rounded-lg border px-3 py-1 text-xs font-medium"
+                          [ngClass]="getSelectedUnitTypeLabel(activeProductTabIndex) === unitType.label
+                            ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
+                            : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                        >
+                          {{ formatReadableLabel(unitType.label) }} ({{ unitType.value }})
+                        </button>
+                      }
+                    </div>
+
+                    @for (unitType of item.unitTypes; track unitType.label) {
+                      @if (getSelectedUnitTypeLabel(activeProductTabIndex) === unitType.label) {
+                        <div class="mt-3 space-y-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                          <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Scan Serial ({{ formatReadableLabel(unitType.label) }})</p>
+
+                          <div class="flex gap-2">
+                            <input
+                              type="text"
+                              [(ngModel)]="unitType.scanInput"
+                              [id]="'todayScheduleScanInput_' + activeProductTabIndex + '_' + unitType.label"
+                              [name]="'scanInput_' + activeProductTabIndex + '_' + unitType.label"
+                              (ngModelChange)="onSerialScanInputChange(activeProductTabIndex, unitType.label, $event)"
+                              (keyup.enter)="scanSerialForSelectedUnit(activeProductTabIndex)"
+                              placeholder="Enter serial number"
+                              [autofocus]="isDetailOpen && getSelectedUnitTypeLabel(activeProductTabIndex) === unitType.label"
+                              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                            />
+                          </div>
+
+                          @if (unitType.scanError) {
+                            <p class="text-xs text-error-600 dark:text-error-400">{{ unitType.scanError }}</p>
+                          }
+                          @if (unitType.scanSuccess) {
+                            <p class="text-xs text-success-700 dark:text-success-400">{{ unitType.scanSuccess }}</p>
+                          }
+                          @if (unitType.isScanning) {
+                            <p class="text-xs text-gray-500 dark:text-gray-400">Processing serial...</p>
+                          }
+
+                          @if (unitType.serials.length > 0) {
+                            <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                              <table class="w-full min-w-[320px]">
+                                <thead>
+                                  <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+                                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">#</th>
+                                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Number</th>
+                                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  @for (serial of unitType.serials; track serial; let serialIndex = $index) {
+                                    <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
+                                      <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serialIndex + 1 }}</td>
+                                      <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serial }}</td>
+                                      <td class="px-3 py-2 text-right">
+                                        <button
+                                          type="button"
+                                          (click)="removeScannedSerial(activeProductTabIndex, unitType.label, serial)"
+                                          [disabled]="unitType.isScanning"
+                                          class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                                        >
+                                          Remove
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  }
+                                </tbody>
+                              </table>
+                            </div>
+                          } @else {
+                            <p class="text-xs text-gray-500 dark:text-gray-400">No scanned serial numbers yet.</p>
+                          }
+                        </div>
+                      }
+                    }
+                  </div>
+                }
+              } @else {
+                <p class="text-sm text-gray-500 dark:text-gray-400">No product items.</p>
+              }
+            </div>
+          </section>
+        }
+      </div>
+    </div>
+  </aside>
+
+</div>

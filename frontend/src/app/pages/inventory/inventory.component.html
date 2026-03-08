@@ -1,0 +1,967 @@
+<div>
+  <app-page-breadcrumb pageTitle="Inventory" />
+
+  <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-white/[0.02]">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <h3 class="text-2xl font-semibold text-gray-800 dark:text-white/90">Inventory</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Brand List Folder → Product List → Capacity List</p>
+      </div>
+
+      <button
+        type="button"
+        (click)="openCreationDrawer('all-in-one')"
+        class="inline-flex items-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
+      >
+        Create Brand/Product/Capacity
+      </button>
+    </div>
+  </div>
+
+    @if (isLoading) {
+      <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading inventory folders...</div>
+    } @else if (errorMessage) {
+      <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+        {{ errorMessage }}
+      </div>
+    } @else {
+      <div class="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Folder Tree</h4>
+
+          <div class="mb-3">
+            <input
+              type="text"
+              [(ngModel)]="treeSearch"
+              placeholder="Search brand, product, capacity..."
+              class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+            />
+          </div>
+
+          <div class="space-y-2">
+            @for (folder of filteredBrandFolders; track folder.name) {
+              <div class="rounded-lg border border-gray-200 p-2 dark:border-gray-700" data-brand-context="true" (contextmenu)="openBrandContextMenu($event, folder.name)">
+                <button
+                  type="button"
+                  (click)="toggleBrand(folder.name)"
+                  class="flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-sm font-medium transition hover:bg-gray-50 dark:hover:bg-gray-800"
+                  [ngClass]="isBrandSelected(folder.name) ? 'text-brand-700 dark:text-brand-300' : 'text-gray-700 dark:text-gray-300'"
+                >
+                  <span (click)="selectBrand(folder.name)">📁 {{ folder.name }}</span>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ isBrandExpanded(folder.name) ? '▾' : '▸' }}</span>
+                </button>
+
+                @if (isBrandExpanded(folder.name)) {
+                  <div class="ml-4 mt-1 space-y-1 border-l border-gray-200 pl-3 dark:border-gray-700">
+                    @for (product of folder.products; track product.id) {
+                      <div>
+                        <button
+                          type="button"
+                          (click)="toggleProduct(folder.name, product.id); selectProduct(folder.name, product.id)"
+                          class="flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-sm transition hover:bg-gray-50 dark:hover:bg-gray-800"
+                          [ngClass]="isProductSelected(product.id) ? 'text-brand-700 dark:text-brand-300' : 'text-gray-700 dark:text-gray-300'"
+                        >
+                          <span>📦 {{ product.name }}</span>
+                          <span class="text-xs text-gray-500 dark:text-gray-400">{{ isProductExpanded(folder.name, product.id) ? '▾' : '▸' }}</span>
+                        </button>
+
+                        @if (isProductExpanded(folder.name, product.id)) {
+                          <div class="ml-4 mt-1 space-y-1 border-l border-gray-200 pl-3 dark:border-gray-700">
+                            @for (capacity of product.capacities; track capacity.id) {
+                              <button
+                                type="button"
+                                (click)="selectCapacity(folder.name, product.id, capacity.id)"
+                                class="block w-full rounded-md px-2 py-1 text-left text-sm transition hover:bg-gray-50 dark:hover:bg-gray-800"
+                                [ngClass]="isCapacitySelected(capacity.id)
+                                  ? 'text-brand-700 dark:text-brand-300'
+                                  : 'text-gray-600 dark:text-gray-400'"
+                              >
+                                📄 {{ capacity.name }}
+                              </button>
+                            } @empty {
+                              <p class="px-2 py-1 text-xs text-gray-500 dark:text-gray-400">No capacities</p>
+                            }
+                          </div>
+                        }
+                      </div>
+                    } @empty {
+                      <p class="px-2 py-1 text-xs text-gray-500 dark:text-gray-400">No products</p>
+                    }
+                  </div>
+                }
+              </div>
+            } @empty {
+              <p class="text-sm text-gray-500 dark:text-gray-400">No brands found.</p>
+            }
+          </div>
+
+          @if (brandContextMenuVisible) {
+            <div
+              data-brand-context-menu="true"
+              class="fixed z-[100010] min-w-[180px] rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900"
+              [style.left.px]="brandContextMenuX"
+              [style.top.px]="brandContextMenuY"
+              (click)="$event.stopPropagation()"
+            >
+              <button
+                type="button"
+                class="block w-full rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+                (click)="onBrandContextAction('add-product')"
+              >
+                Add New Product
+              </button>
+              <div class="my-1 border-t border-gray-200 dark:border-gray-700"></div>
+              <button
+                type="button"
+                class="block w-full rounded-md px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+                (click)="onBrandContextAction('edit-brand')"
+              >
+                Edit Brand
+              </button>
+              <button
+                type="button"
+                class="block w-full rounded-md px-3 py-2 text-left text-sm text-error-600 hover:bg-error-50 dark:text-error-400 dark:hover:bg-error-500/10"
+                (click)="onBrandContextAction('delete-brand')"
+              >
+                Delete Brand
+              </button>
+            </div>
+          }
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-5 dark:border-gray-800">
+          <h4 class="text-base font-semibold text-gray-800 dark:text-white/90">{{ selectedNodeTitle }}</h4>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ selectedNodeDescription }}</p>
+
+          @if (selectedNodeType !== 'product' && selectedNodeType !== 'capacity') {
+            <div class="mt-4 rounded-lg border border-dashed border-gray-300 p-4 dark:border-gray-700">
+              <p class="text-sm text-gray-600 dark:text-gray-300">Use the creation drawer for adding brands, products, and capacities.</p>
+              <button
+                type="button"
+                (click)="openCreationDrawer(selectedBrandName ? 'product-capacity' : 'all-in-one')"
+                class="mt-3 inline-flex items-center rounded-lg border border-brand-300 px-3 py-2 text-sm font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+              >
+                Add Product & Capacity
+              </button>
+            </div>
+          }
+
+          @if (selectedNodeType === 'brand' && selectedBrand) {
+            <div class="mt-4 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+              <p class="text-sm text-gray-700 dark:text-gray-300">Products in this brand: {{ selectedBrand.products.length }}</p>
+            </div>
+          }
+
+          @if (selectedNodeType === 'product' && selectedProduct) {
+            <div class="mt-4 space-y-4">
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                <div class="flex items-start justify-between gap-3">
+                  <div>
+                    <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">Product Details</p>
+                    <p class="mt-2 text-sm text-gray-700 dark:text-gray-300">Name: {{ selectedProduct.name }}</p>
+                    <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">Unit: {{ selectedProduct.unit || '-' }}</p>
+                    <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">Unit Types: {{ (selectedProduct.unitTypes?.length ? selectedProduct.unitTypes?.join(', ') : '-') }}</p>
+                  </div>
+                  <button
+                    type="button"
+                    (click)="editSelectedProductDetails()"
+                    [disabled]="isUpdatingProduct"
+                    class="rounded-lg border border-brand-300 px-3 py-2 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                  >
+                    {{ isUpdatingProduct ? 'Saving...' : 'Edit Product' }}
+                  </button>
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                <p class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Add Capacity</p>
+                <p class="text-sm text-gray-600 dark:text-gray-300">Add one or multiple capacities using the creation drawer.</p>
+                <button
+                  type="button"
+                  (click)="openCapacityOnlyDrawer()"
+                  class="mt-3 inline-flex items-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
+                >
+                  Add Capacity
+                </button>
+              </div>
+
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                <p class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Available Capacities</p>
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  @for (capacity of selectedProduct.capacities; track capacity.id) {
+                    <button
+                      type="button"
+                      (click)="selectCapacity(selectedBrandName || '', selectedProduct.id, capacity.id)"
+                      class="rounded-lg border border-gray-200 p-3 text-left transition hover:border-brand-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+                      [ngClass]="isCapacitySelected(capacity.id) ? 'border-brand-300 bg-brand-50 dark:bg-brand-500/10' : ''"
+                    >
+                      <p class="text-base">📁</p>
+                      <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ capacity.name }}</p>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">SRP: {{ (capacity.sellPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
+                    </button>
+                  } @empty {
+                    <p class="text-sm text-gray-500 dark:text-gray-400">No capacities available.</p>
+                  }
+                </div>
+              </div>
+            </div>
+          }
+
+          @if (selectedNodeType === 'capacity' && selectedCapacity) {
+            <div class="mt-4 space-y-3">
+              <div class="flex items-center justify-end">
+                <button
+                  type="button"
+                  (click)="editSelectedCapacityDetails()"
+                  [disabled]="isUpdatingCapacity"
+                  class="rounded-lg border border-brand-300 px-3 py-2 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                >
+                  {{ isUpdatingCapacity ? 'Saving...' : 'Edit Capacity Details' }}
+                </button>
+              </div>
+
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Capacity Name</p>
+                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ selectedCapacity.name }}</p>
+                </div>
+                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</p>
+                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ (selectedCapacity.sellPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
+                </div>
+                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700 md:col-span-2">
+                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</p>
+                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ (selectedCapacity.unitPrice ?? 0) | currency:'PHP':'symbol':'1.2-2' }}</p>
+                </div>
+                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</p>
+                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ selectedCapacity.indoorModel || '-' }}</p>
+                </div>
+                <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                  <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</p>
+                  <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ selectedCapacity.outdoorModel || '-' }}</p>
+                </div>
+              </div>
+
+              <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                <div class="flex flex-wrap gap-2">
+                  @for (tab of capacitySerialTabs; track tab.key) {
+                    <button
+                      type="button"
+                      (click)="setActiveCapacitySerialTab(tab.key)"
+                      class="rounded-lg border px-3 py-2 text-sm font-medium transition"
+                      [ngClass]="activeCapacitySerialTab === tab.key
+                        ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+                        : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                    >
+                      {{ tab.label }} ({{ tab.count }})
+                    </button>
+                  }
+                </div>
+
+                @if (isLoadingCapacityStock) {
+                  <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">Loading stock summary...</p>
+                } @else if (capacityStockError) {
+                  <p class="mt-3 text-sm text-error-600 dark:text-error-400">{{ capacityStockError }}</p>
+                } @else {
+                  <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Serial Count</p>
+                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ activeTabSerialCount }}</p>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Set Count</p>
+                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ activeTabSetCount }}</p>
+                      @if (activeTabUnpairedCount > 0) {
+                        <p class="mt-1 text-xs text-warning-600 dark:text-warning-400">Unpaired Units: {{ activeTabUnpairedCount }}</p>
+                      }
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Selling Amount</p>
+                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ activeTabTotalSellingAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Cost Amount</p>
+                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ activeTabTotalCostAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
+                    </div>
+                  </div>
+
+                  <div class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                    <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Margin Amount</p>
+                    <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ activeTabMarginAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
+                  </div>
+
+                  <div class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Land Costing Report</p>
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Open the detailed report in a dedicated drawer.</p>
+                      </div>
+                      <button
+                        type="button"
+                        (click)="openLandCostingDrawer()"
+                        class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                      >
+                        Open Land Costing Report
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                    <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Serial Numbers</p>
+                    <div class="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <input
+                        type="text"
+                        [(ngModel)]="serialSearch"
+                        (ngModelChange)="onSerialSearchChange()"
+                        placeholder="Smart search serial or unit type..."
+                        class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 sm:max-w-xs"
+                      />
+                      <p class="text-xs text-gray-500 dark:text-gray-400">
+                        Showing {{ activeTabFilteredSerialCount }} of {{ activeTabSerialCount }}
+                      </p>
+                    </div>
+
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      @for (option of serialUnitTypeOptions; track option.value) {
+                        <button
+                          type="button"
+                          (click)="setSelectedSerialUnitType(option.value)"
+                          class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
+                          [ngClass]="selectedSerialUnitType === option.value
+                            ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+                            : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                        >
+                          {{ option.label }} ({{ option.count }})
+                        </button>
+                      }
+                    </div>
+
+                    <div class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+                      @for (serialEntry of paginatedActiveTabSerialList; track serialEntry.serialNumber + '::' + serialEntry.unitType) {
+                        <div class="rounded-md border border-gray-200 px-3 py-2 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                          <p>{{ serialEntry.serialNumber }}</p>
+                          @if (serialEntry.unitType) {
+                            <p class="mt-1 text-[11px] font-normal uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                              {{ serialEntry.unitType }}
+                            </p>
+                          }
+                        </div>
+                      } @empty {
+                        <p class="text-sm text-gray-500 dark:text-gray-400">
+                          {{ serialSearch ? 'No serial numbers match your search.' : 'No serial numbers in this status.' }}
+                        </p>
+                      }
+                    </div>
+
+                    <div class="mt-3 flex flex-col gap-2 border-t border-gray-200 pt-3 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-300 sm:flex-row sm:items-center sm:justify-between">
+                      <p>
+                        Page {{ serialCurrentPage }} of {{ serialTotalPages }}
+                        · Showing {{ serialPageRangeStart }}-{{ serialPageRangeEnd }}
+                      </p>
+
+                      <div class="flex items-center gap-2">
+                        <button
+                          type="button"
+                          (click)="goToPreviousSerialPage()"
+                          [disabled]="serialCurrentPage <= 1"
+                          class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                        >
+                          Previous
+                        </button>
+                        <button
+                          type="button"
+                          (click)="goToNextSerialPage()"
+                          [disabled]="serialCurrentPage >= serialTotalPages"
+                          class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        </section>
+      </div>
+    }
+
+  @if (isLandCostingDrawerOpen) {
+    <div class="fixed inset-0 z-[100010] bg-gray-900/50" (click)="closeLandCostingDrawer()"></div>
+  }
+
+  <aside
+    class="fixed right-0 top-0 z-[100011] h-full w-full max-w-6xl transform overflow-y-auto border-l border-gray-200 bg-white p-6 shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
+    [ngClass]="isLandCostingDrawerOpen ? 'translate-x-0' : 'translate-x-full'"
+  >
+    <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Land Costing Report (In-Stock Serials)</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          {{ selectedProduct?.name || '-' }} - {{ selectedCapacity?.name || '-' }}
+        </p>
+      </div>
+      <button
+        type="button"
+        (click)="closeLandCostingDrawer()"
+        class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+      >
+        Close
+      </button>
+    </div>
+
+    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+      <div class="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <div class="flex flex-wrap items-center gap-2">
+          <label class="text-xs text-gray-500 dark:text-gray-400" for="landCostingDateFromDrawer">Date From</label>
+          <input
+            id="landCostingDateFromDrawer"
+            type="date"
+            [(ngModel)]="landCostingDateFrom"
+            class="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+          />
+          <label class="text-xs text-gray-500 dark:text-gray-400" for="landCostingDateToDrawer">Date To</label>
+          <input
+            id="landCostingDateToDrawer"
+            type="date"
+            [(ngModel)]="landCostingDateTo"
+            class="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+          />
+          <button
+            type="button"
+            (click)="reloadLandCostingReport()"
+            [disabled]="isLoadingLandCostingReport"
+            class="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            {{ isLoadingLandCostingReport ? 'Loading...' : 'Apply' }}
+          </button>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            (click)="exportLandCostingAsExcel()"
+            [disabled]="landCostingGroups.length === 0"
+            class="rounded-md border border-brand-300 px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+          >
+            Export Excel
+          </button>
+          <button
+            type="button"
+            (click)="exportLandCostingAsPdf()"
+            [disabled]="landCostingGroups.length === 0"
+            class="rounded-md border border-brand-300 px-2.5 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+          >
+            Export PDF
+          </button>
+        </div>
+      </div>
+
+      <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        Air Summit
+        | Date Range: {{ landCostingDateFrom || '-' }} to {{ landCostingDateTo || '-' }}
+      </p>
+      <p class="mt-1 text-center text-sm font-semibold text-gray-700 dark:text-gray-200">Land Costing Report</p>
+
+      @if (landCostingError) {
+        <p class="mt-2 text-xs text-error-600 dark:text-error-400">{{ landCostingError }}</p>
+      }
+
+      @if (!landCostingError) {
+        <div class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-4">
+          <div class="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
+            <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Serials</p>
+            <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ landCostingTotals.serialCount }}</p>
+          </div>
+          <div class="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
+            <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Landed Cost</p>
+            <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ landCostingTotals.landedCost | currency:'PHP':'symbol':'1.2-2' }}</p>
+          </div>
+          <div class="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
+            <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Total SRP</p>
+            <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ landCostingTotals.srp | currency:'PHP':'symbol':'1.2-2' }}</p>
+          </div>
+          <div class="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
+            <p class="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400">Margin</p>
+            <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">
+              {{ landCostingTotals.marginAmount | currency:'PHP':'symbol':'1.2-2' }}
+              ({{ landCostingTotals.marginPercent | number:'1.2-2' }}%)
+            </p>
+          </div>
+        </div>
+
+        @for (group of landCostingGroups; track group.productName + '::' + group.capacityName + '::' + group.vendorName + '::' + group.poNumber) {
+          <div class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+            <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              Product (Capacity)
+            </p>
+            <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">
+              {{ group.productName || '-' }} ({{ group.capacityName || '-' }})
+            </p>
+            <p class="mt-2 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Vendor</p>
+            <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">{{ group.vendorName || '-' }}</p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              PO: {{ group.poNumber || '-' }} | Date: {{ group.poDate ? (group.poDate | date:'yyyy-MM-dd') : '-' }}
+            </p>
+
+            <div class="mt-3 overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+              <table class="w-full min-w-[920px]">
+                <thead>
+                  <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Number</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Indoor Serial</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Outdoor Serial</th>
+                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Landed Cost</th>
+                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">SRP</th>
+                    <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Margin</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (row of group.rows; track row.category + '::' + row.serialNumber + '::' + row.indoorSerial + '::' + row.outdoorSerial; let rowIndex = $index) {
+                    @if (isLandCostingCategoryBreak(group, rowIndex)) {
+                      <tr class="border-b border-gray-100 bg-gray-50/70 dark:border-gray-800/70 dark:bg-gray-800/40">
+                        <td colspan="6" class="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300">
+                          Unit Type: {{ row.category || 'Other' }}
+                        </td>
+                      </tr>
+                    }
+                    <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
+                      <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ row.serialNumber || '-' }}</td>
+                      <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ row.indoorSerial || '-' }}</td>
+                      <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ row.outdoorSerial || '-' }}</td>
+                      <td class="px-3 py-2 text-right text-xs text-gray-700 dark:text-gray-300">{{ row.landedCost | currency:'PHP':'symbol':'1.2-2' }}</td>
+                      <td class="px-3 py-2 text-right text-xs text-gray-700 dark:text-gray-300">{{ row.srp | currency:'PHP':'symbol':'1.2-2' }}</td>
+                      <td class="px-3 py-2 text-right text-xs font-medium" [ngClass]="row.marginAmount >= 0 ? 'text-success-700 dark:text-success-400' : 'text-error-700 dark:text-error-400'">
+                        {{ row.marginAmount | currency:'PHP':'symbol':'1.2-2' }}
+                      </td>
+                    </tr>
+                  } @empty {
+                    <tr>
+                      <td colspan="6" class="px-3 py-4 text-center text-xs text-gray-500 dark:text-gray-400">No rows in this group.</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        } @empty {
+          <div class="mt-3 rounded-lg border border-gray-200 p-4 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+            {{ isLoadingLandCostingReport ? 'Loading land costing report...' : 'No in-stock serials linked to PO in this period.' }}
+          </div>
+        }
+
+        <div class="mt-3 rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
+          <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Overall Total of Margin</p>
+          <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ landCostingTotals.marginAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
+        </div>
+      }
+    </div>
+  </aside>
+
+  @if (isCreationDrawerOpen) {
+    <div class="fixed inset-0 z-[100000] bg-gray-900/40" (click)="closeCreationDrawer()"></div>
+  }
+
+  <aside
+    class="fixed right-0 top-0 z-[100001] h-full w-full max-w-2xl transform overflow-y-auto border-l border-gray-200 bg-white p-6 shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
+    [ngClass]="isCreationDrawerOpen ? 'translate-x-0' : 'translate-x-full'"
+  >
+    <div class="mb-4 flex items-start justify-between gap-3">
+      <div>
+        <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Create Inventory Data</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Add brand, product, and capacity from one place.</p>
+      </div>
+      <button
+        type="button"
+        (click)="closeCreationDrawer()"
+        class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+      >
+        Close
+      </button>
+    </div>
+
+    <div class="mb-4 flex flex-wrap gap-2">
+      <button
+        type="button"
+        (click)="setCreationFormMode('all-in-one')"
+        class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
+        [ngClass]="creationFormMode === 'all-in-one'
+          ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+          : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+      >
+        All In One
+      </button>
+      <button
+        type="button"
+        (click)="setCreationFormMode('brand-only')"
+        class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
+        [ngClass]="creationFormMode === 'brand-only'
+          ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+          : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+      >
+        Brand Only
+      </button>
+      <button
+        type="button"
+        (click)="setCreationFormMode('product-capacity')"
+        class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
+        [ngClass]="creationFormMode === 'product-capacity'
+          ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+          : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+      >
+        Product + Capacity
+      </button>
+      @if (selectedProduct) {
+        <button
+          type="button"
+          (click)="setCreationFormMode('capacity-only')"
+          class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
+          [ngClass]="creationFormMode === 'capacity-only'
+            ? 'border-brand-300 bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+            : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+        >
+          Add Capacity Only
+        </button>
+      }
+    </div>
+
+    @if (creationFormMode === 'all-in-one') {
+      <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Brand Name</label>
+        <input
+          type="text"
+          [(ngModel)]="allInOneBrandName"
+          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 md:col-span-2"
+        />
+
+        <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
+          <input type="checkbox" [(ngModel)]="allInOneIncludeProduct" />
+          Include Product
+        </label>
+
+        @if (allInOneIncludeProduct) {
+          <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Product Name</label>
+          <input
+            type="text"
+            [(ngModel)]="allInOneProductName"
+            class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 md:col-span-2"
+          />
+
+          <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit</label>
+          <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Types</label>
+          <input
+            type="text"
+            [(ngModel)]="allInOneUnit"
+            class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+          />
+          <div class="space-y-2">
+            <div class="flex flex-wrap gap-2">
+              @for (unitType of allInOneSelectedUnitTypes; track unitType) {
+                <button
+                  type="button"
+                  (click)="toggleAllInOneUnitType(unitType)"
+                  class="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
+                >
+                  {{ unitType }}
+                  <span aria-hidden="true">x</span>
+                </button>
+              }
+            </div>
+            <div class="flex flex-wrap gap-2">
+              @for (unitType of availableUnitTypeOptions; track unitType) {
+                @if (!allInOneSelectedUnitTypes.includes(unitType)) {
+                  <button
+                    type="button"
+                    (click)="toggleAllInOneUnitType(unitType)"
+                    class="rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    + {{ unitType }}
+                  </button>
+                }
+              }
+            </div>
+          </div>
+
+          <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
+            <input type="checkbox" [(ngModel)]="allInOneIncludeCapacity" />
+            Include Initial Capacity
+          </label>
+
+          @if (allInOneIncludeCapacity) {
+            <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Capacity</label>
+            <div class="space-y-2 md:col-span-2">
+              <div class="flex flex-wrap gap-2">
+                @for (capacity of allInOneSelectedCapacities; track capacity) {
+                  <button
+                    type="button"
+                    (click)="toggleAllInOneCapacity(capacity)"
+                    class="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
+                  >
+                    {{ capacity }}
+                    <span aria-hidden="true">x</span>
+                  </button>
+                }
+              </div>
+              <div class="flex flex-wrap gap-2">
+                @for (option of availableCapacityOptions; track option) {
+                  @if (!allInOneSelectedCapacities.includes(option)) {
+                    <button
+                      type="button"
+                      (click)="toggleAllInOneCapacity(option)"
+                      class="rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                    >
+                      + {{ option }}
+                    </button>
+                  }
+                }
+              </div>
+            </div>
+
+            <div class="space-y-3 md:col-span-2">
+              @for (capacity of allInOneSelectedCapacities; track capacity) {
+                <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                  <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ capacity }}</p>
+                  <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
+                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
+                    <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].srp" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                    <input type="number" min="0" [(ngModel)]="allInOneCapacityDetails[capacity].netPrice" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+
+                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
+                    <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
+                    <input type="text" [(ngModel)]="allInOneCapacityDetails[capacity].indoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                    <input type="text" [(ngModel)]="allInOneCapacityDetails[capacity].outdoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  </div>
+                </div>
+              }
+            </div>
+          }
+        }
+      </div>
+    }
+
+    @if (creationFormMode === 'brand-only') {
+      <div class="grid grid-cols-1 gap-3">
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Brand Name</label>
+        <input
+          type="text"
+          [(ngModel)]="createBrandName"
+          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+        />
+      </div>
+    }
+
+    @if (creationFormMode === 'product-capacity') {
+      <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Brand</label>
+        <select
+          [(ngModel)]="productFormBrandName"
+          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 md:col-span-2"
+        >
+          <option value="" disabled>Select brand</option>
+          @for (brand of brandFolders; track brand.name) {
+            <option [value]="brand.name">{{ brand.name }}</option>
+          }
+        </select>
+
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Product Name</label>
+        <input
+          type="text"
+          [(ngModel)]="productFormProductName"
+          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 md:col-span-2"
+        />
+
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit</label>
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Types</label>
+        <input
+          type="text"
+          [(ngModel)]="productFormUnit"
+          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+        />
+        <div class="space-y-2">
+          <div class="flex flex-wrap gap-2">
+            @for (unitType of productFormSelectedUnitTypes; track unitType) {
+              <button
+                type="button"
+                (click)="toggleProductFormUnitType(unitType)"
+                class="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
+              >
+                {{ unitType }}
+                <span aria-hidden="true">x</span>
+              </button>
+            }
+          </div>
+          <div class="flex flex-wrap gap-2">
+            @for (unitType of availableUnitTypeOptions; track unitType) {
+              @if (!productFormSelectedUnitTypes.includes(unitType)) {
+                <button
+                  type="button"
+                  (click)="toggleProductFormUnitType(unitType)"
+                  class="rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  + {{ unitType }}
+                </button>
+              }
+            }
+          </div>
+        </div>
+
+        <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
+          <input type="checkbox" [(ngModel)]="productFormIncludeCapacity" />
+          Include Initial Capacity
+        </label>
+
+        @if (productFormIncludeCapacity) {
+          <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Capacity</label>
+          <div class="space-y-2 md:col-span-2">
+            <div class="flex flex-wrap gap-2">
+              @for (capacity of productFormSelectedCapacities; track capacity) {
+                <button
+                  type="button"
+                  (click)="toggleProductFormCapacity(capacity)"
+                  class="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
+                >
+                  {{ capacity }}
+                  <span aria-hidden="true">x</span>
+                </button>
+              }
+            </div>
+            <div class="flex flex-wrap gap-2">
+              @for (option of availableCapacityOptions; track option) {
+                @if (!productFormSelectedCapacities.includes(option)) {
+                  <button
+                    type="button"
+                    (click)="toggleProductFormCapacity(option)"
+                    class="rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    + {{ option }}
+                  </button>
+                }
+              }
+            </div>
+          </div>
+
+          <div class="space-y-3 md:col-span-2">
+            @for (capacity of productFormSelectedCapacities; track capacity) {
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ capacity }}</p>
+                <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
+                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
+                  <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].srp" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  <input type="number" min="0" [(ngModel)]="productFormCapacityDetails[capacity].netPrice" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+
+                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
+                  <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
+                  <input type="text" [(ngModel)]="productFormCapacityDetails[capacity].indoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                  <input type="text" [(ngModel)]="productFormCapacityDetails[capacity].outdoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                </div>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    }
+
+    @if (creationFormMode === 'capacity-only') {
+      <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Brand</label>
+        <div class="h-10 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-medium text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90 md:col-span-2 flex items-center">
+          {{ selectedBrandName || 'No brand selected' }}
+        </div>
+
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Product</label>
+        <div class="h-10 rounded-lg border border-gray-200 bg-gray-50 px-3 text-sm font-medium text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90 md:col-span-2 flex items-center">
+          {{ selectedProduct?.name || 'No product selected' }}
+        </div>
+
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Capacities</label>
+        <div class="space-y-2 md:col-span-2">
+          <div class="flex flex-wrap gap-2">
+            @for (capacity of capacityOnlySelectedCapacities; track capacity) {
+              <button
+                type="button"
+                (click)="toggleCapacityOnly(capacity)"
+                class="inline-flex items-center gap-1 rounded-full border border-brand-300 bg-brand-50 px-3 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
+              >
+                {{ capacity }}
+                <span aria-hidden="true">x</span>
+              </button>
+            }
+          </div>
+          <div class="flex flex-wrap gap-2">
+            @for (option of availableCapacityOptions; track option) {
+              @if (!capacityOnlySelectedCapacities.includes(option)) {
+                <button
+                  type="button"
+                  (click)="toggleCapacityOnly(option)"
+                  class="rounded-full border border-dashed border-gray-300 px-3 py-1 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  + {{ option }}
+                </button>
+              }
+            }
+          </div>
+        </div>
+
+        <div class="space-y-3 md:col-span-2">
+          @for (capacity of capacityOnlySelectedCapacities; track capacity) {
+            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+              <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ capacity }}</p>
+              <div class="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">SRP</label>
+                <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Net Price</label>
+                <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].srp" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                <input type="number" min="0" [(ngModel)]="capacityOnlyDetails[capacity].netPrice" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+
+                <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Indoor Model</label>
+                <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Outdoor Model</label>
+                <input type="text" [(ngModel)]="capacityOnlyDetails[capacity].indoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+                <input type="text" [(ngModel)]="capacityOnlyDetails[capacity].outdoorModel" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90" />
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+    }
+
+    @if (creationError) {
+      <p class="mt-3 text-xs text-error-600 dark:text-error-400">{{ creationError }}</p>
+    }
+    @if (creationSuccess) {
+      <p class="mt-3 text-xs text-success-600 dark:text-success-400">{{ creationSuccess }}</p>
+    }
+
+    <div class="mt-4 flex items-center justify-end gap-2 border-t border-gray-200 pt-4 dark:border-gray-800">
+      <button
+        type="button"
+        (click)="closeCreationDrawer()"
+        class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        (click)="submitCreationForm()"
+        [disabled]="isSubmittingCreation"
+        class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {{ isSubmittingCreation ? 'Saving...' : 'Submit' }}
+      </button>
+    </div>
+  </aside>
+
+  <app-entity-edit-modal
+    [isOpen]="isEditModalOpen"
+    [title]="editModalTitle"
+    [description]="editModalDescription"
+    [fields]="editModalFields"
+    [initialValues]="editModalInitialValues"
+    [submitLabel]="editModalSubmitLabel"
+    [isSubmitting]="isEditModalSubmitting"
+    (close)="closeEditModal()"
+    (save)="onEditModalSave($event)"
+  />
+</div>

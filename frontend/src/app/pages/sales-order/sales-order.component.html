@@ -1,0 +1,721 @@
+<div>
+  <app-page-breadcrumb pageTitle="Sales Order" />
+
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] xl:p-6">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">Sales Orders</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">PO-style drawer workflow with customer, split payment, and multiple product sections.</p>
+      </div>
+      @if (canCreateSalesOrder()) {
+        <button
+          type="button"
+          (click)="openCreateDrawer()"
+          class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-600"
+        >
+          Create SO
+        </button>
+      }
+    </div>
+
+    @if (uiMessage) {
+      <div class="mt-4 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-700 dark:border-brand-500/20 dark:bg-brand-500/10 dark:text-brand-300">
+        {{ uiMessage }}
+      </div>
+    }
+
+    @if (uiError) {
+      <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+        {{ uiError }}
+      </div>
+    }
+
+    <div class="border-b border-default mt-5">
+      <ul class="flex flex-wrap -mb-px text-sm font-medium text-center text-body">
+        @for (tab of getTabs(); track tab.key) {
+          <li class="me-2">
+            <button type="button" (click)="setTab(tab.key)" [ngClass]="{
+              'text-brand-700 border-brand-500 dark:text-brand-300': activeTab === tab.key,
+              'border-transparent text-gray-500 hover:text-brand-700 hover:border-brand-400 dark:text-gray-400 dark:hover:text-brand-300': activeTab !== tab.key
+            }" [attr.aria-current]="activeTab === tab.key ? 'page' : null" class="inline-flex items-center justify-center p-4 border-b rounded-t-base group transition-colors">
+              {{ tab.label }}
+            </button>
+          </li>
+        }
+      </ul>
+    </div>
+
+    <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <input
+        type="text"
+        [value]="search"
+        (input)="onSearchChange($any($event.target).value)"
+        placeholder="Search SO number, customer, status, or sales type"
+        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 sm:max-w-sm"
+      />
+      <div class="text-sm text-gray-500 dark:text-gray-400">
+        Showing {{ orders.length }} of {{ total }}
+      </div>
+    </div>
+
+    @if (isLoading) {
+      <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading sales orders...</div>
+    } @else if (errorMessage) {
+      <div class="rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+        {{ errorMessage }}
+      </div>
+    } @else {
+      <div class="mt-5 overflow-x-auto">
+        <table class="w-full min-w-[900px]">
+          <thead>
+            <tr class="border-b border-gray-200 dark:border-gray-800">
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">SO Number</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Customer</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Schedule Date</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Sales Type</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Count</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Created At</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (order of orders; track order.id) {
+              <tr class="border-b border-gray-100 dark:border-gray-800/70">
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.soNumber }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.customerName }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDateOnly(order.scheduleDate) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatAmount(order.totalAmount) }}</td>
+                <td class="px-4 py-3">
+                  <span class="rounded-full px-2 py-0.5 text-xs font-medium"
+                    [ngClass]="{
+                      'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-500': order.status.toLowerCase() === 'pending',
+                      'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400': order.status.toLowerCase() === 'in-progress',
+                      'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-500': order.status.toLowerCase().includes('approval'),
+                      'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': !['pending','in-progress'].includes(order.status.toLowerCase()) && !order.status.toLowerCase().includes('approval')
+                    }">
+                    {{ order.status }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.salesType || '-' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.serialCount ?? 0 }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDate(order.createdAt) }}</td>
+                <td class="px-4 py-3 text-right">
+                  <div class="inline-flex items-center gap-2">
+                    @if (activeTab === 'sales-receivable') {
+                      <button
+                        type="button"
+                        (click)="markOrderAsReceived(order)"
+                        [disabled]="receivingOrderIds.has(order.id)"
+                        class="rounded-lg border border-success-300 px-3 py-1.5 text-xs font-medium text-success-700 transition hover:bg-success-50 disabled:opacity-60 dark:border-success-700 dark:text-success-400 dark:hover:bg-success-500/10"
+                      >
+                        {{ receivingOrderIds.has(order.id) ? 'Processing...' : 'Received' }}
+                      </button>
+                    }
+                    @if (isForDeliveryStatus(order.status)) {
+                      <button
+                        type="button"
+                        (click)="markReturnedUnits(order)"
+                        [disabled]="returningOrderIds.has(order.id)"
+                        class="rounded-lg border border-warning-300 px-3 py-1.5 text-xs font-medium text-warning-700 transition hover:bg-warning-50 disabled:opacity-60 dark:border-warning-700 dark:text-warning-400 dark:hover:bg-warning-500/10"
+                      >
+                        {{ returningOrderIds.has(order.id) ? 'Processing...' : 'Returned Units' }}
+                      </button>
+                    }
+                    @if (canEditSalesOrder()) {
+                      <button
+                        type="button"
+                        (click)="openEditDrawer(order)"
+                        class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                      >
+                        {{ getRowActionLabel() }}
+                      </button>
+                    }
+                  </div>
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="9" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                  No sales orders found for this tab.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mt-4 flex items-center justify-between">
+        <button
+          type="button"
+          class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+          (click)="onPageChange(page - 1)"
+          [disabled]="page <= 1"
+        >
+          Previous
+        </button>
+
+        <span class="text-sm text-gray-500 dark:text-gray-400">Page {{ page }} of {{ totalPages }}</span>
+
+        <button
+          type="button"
+          class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+          (click)="onPageChange(page + 1)"
+          [disabled]="page >= totalPages"
+        >
+          Next
+        </button>
+      </div>
+    }
+  </div>
+
+  @if (isDrawerOpen) {
+    <div class="fixed inset-0 z-[100000] bg-gray-900/40" (click)="closeDrawer()"></div>
+  }
+
+  <aside class="fixed right-0 top-0 z-[100001] h-full w-full max-w-3xl transform border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
+    [ngClass]="isDrawerOpen ? 'translate-x-0' : 'translate-x-full'">
+    <form class="flex h-full flex-col" (ngSubmit)="saveDesignForm()">
+      <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ drawerMode === 'create' ? 'Create Sales Order' : 'Update Sales Order' }}</h3>
+          <p class="text-sm text-gray-500 dark:text-gray-400">Standardized layout matching Purchase Order flow.</p>
+        </div>
+        <button type="button" (click)="closeDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+      </div>
+
+      <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Customer</h4>
+          <div class="mb-3 flex gap-5 text-sm">
+            <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
+              <input type="radio" name="customerMode" [value]="'existing'" [(ngModel)]="customerMode" />
+              Existing Customer
+            </label>
+            <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
+              <input type="radio" name="customerMode" [value]="'new'" [(ngModel)]="customerMode" />
+              New Customer
+            </label>
+          </div>
+
+          @if (customerMode === 'existing') {
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Existing Customer</label>
+              <div class="relative">
+                <input
+                  type="text"
+                  [ngModel]="customerSearch"
+                  (ngModelChange)="onCustomerSearchChange($event)"
+                  name="customerSearch"
+                  placeholder="Search and select customer"
+                  autocomplete="off"
+                  (focus)="onCustomerComboboxFocus()"
+                  (blur)="onCustomerComboboxBlur()"
+                  class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                />
+
+                <input type="hidden" [(ngModel)]="form.customer_id" name="customer_id" required />
+
+                @if (isCustomerDropdownOpen) {
+                  <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                    @if (getFilteredCustomerOptions().length === 0) {
+                      <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No customers found.</p>
+                    } @else {
+                      @for (customer of getFilteredCustomerOptions(); track customer.id) {
+                        <button
+                          type="button"
+                          (mousedown)="$event.preventDefault()"
+                          (click)="selectCustomer(customer.id)"
+                          class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                        >
+                          <span>{{ customer.name }}</span>
+                        </button>
+                      }
+                    }
+                  </div>
+                }
+              </div>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Type customer name and pick one from the list.</p>
+
+              @if (form.customer_id) {
+                <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Customer Name</label>
+                    <input
+                      type="text"
+                      [(ngModel)]="form.customer.name"
+                      name="existing_customer_name"
+                      readonly
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+                    <input
+                      type="text"
+                      [(ngModel)]="form.customer.address"
+                      name="existing_customer_address"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
+                    <input
+                      type="text"
+                      [(ngModel)]="form.customer.contact_person"
+                      name="existing_customer_contact_person"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
+                    <input
+                      type="text"
+                      [(ngModel)]="form.customer.contact_number"
+                      name="existing_customer_contact_number"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Email</label>
+                    <input
+                      type="email"
+                      [(ngModel)]="form.customer.email"
+                      name="existing_customer_email"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">TIN Number</label>
+                    <input
+                      type="text"
+                      [(ngModel)]="form.customer.tin_number"
+                      name="existing_customer_tin_number"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                </div>
+              }
+            </div>
+          } @else {
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Customer Name</label>
+                <input type="text" [(ngModel)]="form.customer.name" name="customer_name" placeholder="Enter customer name" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+                <input type="text" [(ngModel)]="form.customer.address" name="customer_address" placeholder="Enter address" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
+                <input type="text" [(ngModel)]="form.customer.contact_person" name="customer_contact_person" placeholder="Enter contact person" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
+                <input type="text" [(ngModel)]="form.customer.contact_number" name="customer_contact_number" placeholder="Enter contact number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Email</label>
+                <input type="email" [(ngModel)]="form.customer.email" name="customer_email" placeholder="Enter email" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">TIN Number</label>
+                <input type="text" [(ngModel)]="form.customer.tin_number" name="customer_tin_number" placeholder="Enter TIN number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+            </div>
+          }
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Sales Order</h4>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Schedule Date</label>
+              <input type="date" [(ngModel)]="form.scheduleDate" name="scheduleDate" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Sales Type</label>
+              <select [(ngModel)]="form.salesType" name="salesType" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                @for (salesType of salesTypeOptions; track salesType) {
+                  <option [value]="salesType">{{ salesType }}</option>
+                }
+              </select>
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Installer</label>
+              <input type="text" [(ngModel)]="form.installer" name="installer" placeholder="Enter installer" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div class="md:col-span-2">
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Remarks</label>
+              <textarea [(ngModel)]="form.remarks" name="remarks" placeholder="Enter remarks" rows="3" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
+            </div>
+          </div>
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <div class="mb-3 flex items-center justify-between">
+            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Payment Details (Split Payment)</h4>
+            <button type="button" (click)="addPaymentDetail()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 dark:border-brand-500/40 dark:text-brand-300">
+              Add Payment
+            </button>
+          </div>
+
+          <div class="space-y-4">
+            @for (payment of form.paymentDetails; track $index; let pIndex = $index) {
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                <div class="mb-3 flex items-center justify-between">
+                  <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Payment {{ pIndex + 1 }}</p>
+                  <button type="button" (click)="removePaymentDetail(pIndex)" [disabled]="form.paymentDetails.length === 1" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
+                    Remove
+                  </button>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Method</label>
+                    <select [(ngModel)]="payment.method" [name]="'payment_method_' + pIndex" (ngModelChange)="onPaymentMethodChange(pIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                      @for (method of paymentMethodOptions; track method) {
+                        <option [value]="method">{{ method }}</option>
+                      }
+                    </select>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Amount</label>
+                    <input type="number" [(ngModel)]="payment.amount" [name]="'payment_amount_' + pIndex" placeholder="0.00" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
+                  </div>
+                  @if (shouldShowPaymentField(payment.method, 'terms')) {
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Terms (Days)</label>
+                      <input type="number" [(ngModel)]="payment.terms" (ngModelChange)="onTermsChanged(pIndex)" [name]="'payment_terms_' + pIndex" placeholder="30" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    </div>
+                  }
+                  @if (shouldShowPaymentField(payment.method, 'termsDueDate')) {
+                    <div>
+                      <div class="mb-1 flex items-center justify-between">
+                        <label class="block text-xs font-medium text-gray-600 dark:text-gray-300">Terms Due Date</label>
+                        <button
+                          type="button"
+                          (click)="toggleAutoTermsDueDate(pIndex)"
+                          class="rounded border border-gray-300 px-2 py-0.5 text-[11px] text-gray-600 dark:border-gray-700 dark:text-gray-300"
+                        >
+                          {{ isAutoTermsDueDate(pIndex) ? 'Auto' : 'Manual' }}
+                        </button>
+                      </div>
+                      <input
+                        type="date"
+                        [(ngModel)]="payment.termsDueDate"
+                        [name]="'payment_terms_due_' + pIndex"
+                        (focus)="openDatePicker($event)"
+                        (click)="openDatePicker($event)"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                      />
+                    </div>
+                  }
+                  @if (shouldShowPaymentField(payment.method, 'referenceNo')) {
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Reference No</label>
+                      <input type="text" [(ngModel)]="payment.referenceNo" [name]="'payment_reference_' + pIndex" placeholder="Reference number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    </div>
+                  }
+                  @if (shouldShowPaymentField(payment.method, 'paymentDate')) {
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payment Date</label>
+                      <input type="date" [(ngModel)]="payment.paymentDate" [name]="'payment_date_' + pIndex" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    </div>
+                  }
+                  @if (shouldShowPaymentField(payment.method, 'issuedBy')) {
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Issued By</label>
+                      <input type="text" [(ngModel)]="payment.issuedBy" [name]="'payment_issued_by_' + pIndex" placeholder="Issuer" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    </div>
+                  }
+                  @if (shouldShowPaymentField(payment.method, 'ccCharge')) {
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">CC Charge</label>
+                      <input type="text" [(ngModel)]="payment.ccCharge" [name]="'payment_cc_charge_' + pIndex" placeholder="Card charge" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    </div>
+                  }
+                  @if (shouldShowPaymentField(payment.method, 'checkNo')) {
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Check No</label>
+                      <input type="text" [(ngModel)]="payment.checkNo" [name]="'payment_check_no_' + pIndex" placeholder="Check number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    </div>
+                  }
+                  @if (shouldShowPaymentField(payment.method, 'bankName')) {
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Bank Name</label>
+                      <input type="text" [(ngModel)]="payment.bankName" [name]="'payment_bank_name_' + pIndex" placeholder="Bank" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    </div>
+                  }
+                  @if (shouldShowPaymentField(payment.method, 'bankAccount')) {
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Bank Account</label>
+                      <input type="text" [(ngModel)]="payment.bankAccount" [name]="'payment_bank_account_' + pIndex" placeholder="Account number" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    </div>
+                  }
+                  @if (shouldShowPaymentField(payment.method, 'postDated')) {
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Post Dated</label>
+                      <input type="text" [(ngModel)]="payment.postDated" [name]="'payment_post_dated_' + pIndex" placeholder="Post-dated details" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    </div>
+                  }
+                  @if (shouldShowPaymentField(payment.method, 'downPayment')) {
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Down Payment</label>
+                      <input type="number" [(ngModel)]="payment.downPayment" [name]="'payment_down_payment_' + pIndex" placeholder="0.00" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                    </div>
+                  }
+                  </div>
+                </div>
+            }
+          </div>
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <div class="mb-3 flex items-center justify-between">
+            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Product Items</h4>
+            <button type="button" (click)="addProductItem()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 dark:border-brand-500/40 dark:text-brand-300">
+              Add Product
+            </button>
+          </div>
+
+          <div class="mb-4 flex flex-wrap gap-2">
+            @for (item of form.productItems; track $index; let index = $index) {
+              <button
+                type="button"
+                (click)="setActiveProductTab(index)"
+                class="rounded-lg border px-3 py-1.5 text-xs font-medium"
+                [ngClass]="activeProductTabIndex === index
+                  ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
+                  : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+              >
+                Product {{ index + 1 }}
+              </button>
+            }
+          </div>
+
+          @if (getActiveProductItem(); as activeItem) {
+            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+              <div class="mb-3 flex items-center justify-between">
+                <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Item {{ activeProductTabIndex + 1 }}</p>
+                <button type="button" (click)="removeProductItem(activeProductTabIndex)" [disabled]="form.productItems.length === 1" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
+                  Remove
+                </button>
+              </div>
+
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product Name</label>
+                  <select [(ngModel)]="activeItem.productId" [name]="'productId_' + activeProductTabIndex" (ngModelChange)="onProductChanged(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
+                    <option value="">Select Product</option>
+                    @for (product of catalogProducts; track product.id) {
+                      <option [value]="product.id">{{ product.name }}{{ product.brandName ? ' (' + product.brandName + ')' : '' }}</option>
+                    }
+                  </select>
+                </div>
+
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Capacity</label>
+                  <select [(ngModel)]="activeItem.capacityId" [name]="'capacityId_' + activeProductTabIndex" (ngModelChange)="onCapacityChanged(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
+                    <option value="">Select Capacity</option>
+                    @for (capacity of getCapacitiesByProduct(activeItem.productId); track capacity.id) {
+                      <option [value]="capacity.id">{{ capacity.name }}</option>
+                    }
+                  </select>
+                </div>
+
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Sell Price</label>
+                  <input type="number" [(ngModel)]="activeItem.sellPrice" (ngModelChange)="recalculateTotalAmount()" [name]="'sellPrice_' + activeProductTabIndex" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
+                </div>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Discount Price</label>
+                  <input type="number" [(ngModel)]="activeItem.discountPrice" (ngModelChange)="recalculateTotalAmount()" [name]="'discountPrice_' + activeProductTabIndex" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                </div>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total Set Qty</label>
+                  <input type="number" [(ngModel)]="activeItem.totalSetQty" (ngModelChange)="onTotalSetQtyChange(activeProductTabIndex)" [name]="'totalSetQty_' + activeProductTabIndex" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
+                </div>
+
+                @if (drawerMode === 'edit') {
+                  <div class="md:col-span-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                    <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Types</p>
+                    <div class="mb-3 flex flex-wrap gap-2">
+                      @for (unitType of activeItem.unitTypes; track unitType.label) {
+                        <button
+                          type="button"
+                          (click)="selectUnitType(activeProductTabIndex, unitType.label)"
+                          class="rounded-lg border px-3 py-1 text-xs font-medium"
+                          [ngClass]="getSelectedUnitTypeLabel(activeProductTabIndex) === unitType.label
+                            ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
+                            : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                        >
+                          {{ unitType.label }}
+                        </button>
+                      }
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      @for (unitType of activeItem.unitTypes; track unitType.label) {
+                        <div>
+                          <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">{{ unitType.label }} Qty</label>
+                          <input type="number" [(ngModel)]="unitType.value" [name]="'unitTypeQty_' + activeProductTabIndex + '_' + unitType.label" (ngModelChange)="onUnitTypeQtyChange(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                        </div>
+                      }
+                    </div>
+                  </div>
+                }
+
+                @if (drawerMode === 'edit') {
+                  <div class="md:col-span-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                    <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                      Scan Serial ({{ getSelectedUnitTypeLabel(activeProductTabIndex) }})
+                    </p>
+
+                    @for (unitType of activeItem.unitTypes; track unitType.label) {
+                      @if (getSelectedUnitTypeLabel(activeProductTabIndex) === unitType.label) {
+                        <div class="space-y-3">
+                          <div class="flex gap-2">
+                            <input
+                              type="text"
+                              [(ngModel)]="unitType.scanInput"
+                              [id]="'scanInput_' + activeProductTabIndex + '_' + unitType.label"
+                              [name]="'scanInput_' + activeProductTabIndex + '_' + unitType.label"
+                              (ngModelChange)="onSerialScanInputChange(activeProductTabIndex, unitType.label, $event)"
+                              (keyup.enter)="scanSerialForSelectedUnit(activeProductTabIndex)"
+                              placeholder="Enter serial number"
+                              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                            />
+                          </div>
+
+                          @if (unitType.scanError) {
+                            <p class="text-xs text-error-600 dark:text-error-400">{{ unitType.scanError }}</p>
+                          }
+                          @if (unitType.scanSuccess) {
+                            <p class="text-xs text-success-700 dark:text-success-400">{{ unitType.scanSuccess }}</p>
+                          }
+                          @if (unitType.isScanning) {
+                            <p class="text-xs text-gray-500 dark:text-gray-400">Scanning serial...</p>
+                          }
+
+                          @if (unitType.serials.length > 0) {
+                            <div>
+                              <p class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">Scanned Serials</p>
+                              <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                                <table class="w-full min-w-[320px]">
+                                  <thead>
+                                    <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+                                      <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">#</th>
+                                      <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Number</th>
+                                      <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    @for (serial of unitType.serials; track serial; let serialIndex = $index) {
+                                      <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
+                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serialIndex + 1 }}</td>
+                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serial }}</td>
+                                        <td class="px-3 py-2 text-right">
+                                          <button
+                                            type="button"
+                                            (click)="removeScannedSerial(activeProductTabIndex, unitType.label, serial)"
+                                            [disabled]="unitType.isScanning"
+                                            class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                                          >
+                                            Remove
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    }
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          } @else {
+                            <p class="text-xs text-gray-500 dark:text-gray-400">No scanned serial numbers yet.</p>
+                          }
+                        </div>
+                      }
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          <div class="mt-3">
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total Amount</label>
+            <input type="number" [(ngModel)]="form.totalAmount" name="computedTotalAmount" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
+          </div>
+        </section>
+      </div>
+
+      <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button type="button" (click)="closeDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
+        @if (drawerMode === 'edit') {
+          <button
+            type="button"
+            (click)="printDeliveryReceiptFromDrawer()"
+              [disabled]="isSubmitting || isRemitting || !editingSalesId || printingOrderIds.has(editingSalesId)"
+            class="rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 transition hover:bg-brand-50 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+          >
+              {{ editingSalesId && printingOrderIds.has(editingSalesId) ? 'Printing...' : 'Print DR' }}
+          </button>
+          <button
+            type="button"
+            (click)="remitSales()"
+            [disabled]="isRemitting || isSubmitting"
+            class="rounded-lg border border-success-300 px-4 py-2 text-sm font-medium text-success-700 transition hover:bg-success-50 disabled:opacity-60 dark:border-success-700 dark:text-success-400 dark:hover:bg-success-500/10"
+          >
+            {{ isRemitting ? 'Remitting...' : 'Remit Sales' }}
+          </button>
+        }
+        <button type="submit" [disabled]="isSubmitting" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+          {{ isSubmitting ? 'Saving...' : (drawerMode === 'create' ? 'Create Sales Order' : 'Update Sales Order') }}
+        </button>
+      </div>
+    </form>
+  </aside>
+
+  @if (isDrPreviewOpen) {
+    <div class="fixed inset-0 z-[100100] bg-gray-900/70" (click)="closeDrPreview()">
+      <section
+        class="flex h-screen w-screen flex-col overflow-hidden bg-white dark:bg-gray-900"
+        (click)="$event.stopPropagation()"
+      >
+        <header class="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-800">
+          <div>
+            <h4 class="text-sm font-semibold text-gray-800 dark:text-white/90">Delivery Receipt Preview</h4>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ drPreviewFilename }}</p>
+          </div>
+          <div class="inline-flex items-center gap-2">
+            <button
+              type="button"
+              (click)="downloadDrPreview()"
+              class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+            >
+              Download
+            </button>
+            <button
+              type="button"
+              (click)="closeDrPreview()"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Close
+            </button>
+          </div>
+        </header>
+
+        <div class="min-h-0 flex-1 bg-gray-100 dark:bg-gray-950">
+          <iframe
+            title="Delivery Receipt PDF Preview"
+            [src]="drPreviewUrl"
+            class="h-full w-full border-0"
+          ></iframe>
+        </div>
+      </section>
+    </div>
+  }
+</div>

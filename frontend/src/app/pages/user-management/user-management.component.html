@@ -1,0 +1,569 @@
+<div>
+  <app-page-breadcrumb pageTitle="User Management" />
+
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] xl:p-6">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">Users</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Manage user accounts, assigned roles, and access in a simpler view for everyday operations.</p>
+      </div>
+
+      <app-button
+        *appCan="{ menu: 'user_management', permission: 'canCreate' }"
+        size="sm"
+        (btnClick)="openCreateDrawer()"
+      >
+        Create User
+      </app-button>
+    </div>
+
+    @if (errorMessage) {
+      <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+        {{ errorMessage }}
+      </div>
+    }
+
+    <div class="mt-5 grid grid-cols-1 gap-3 md:grid-cols-4">
+      <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Users</p>
+        <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ users.length }}</p>
+      </div>
+      <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Active</p>
+        <p class="mt-1 text-lg font-semibold text-success-700 dark:text-success-400">{{ activeUserCount }}</p>
+      </div>
+      <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Inactive</p>
+        <p class="mt-1 text-lg font-semibold text-warning-700 dark:text-warning-400">{{ inactiveUserCount }}</p>
+      </div>
+      <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Deleted</p>
+        <p class="mt-1 text-lg font-semibold text-error-700 dark:text-error-400">{{ deletedUserCount }}</p>
+      </div>
+    </div>
+
+    <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex w-full flex-col gap-2 sm:max-w-xl sm:flex-row sm:items-center">
+        <input
+          type="text"
+          [value]="userSearch"
+          (input)="onUserSearchChange($any($event.target).value)"
+          placeholder="Search username, name, role, or status"
+          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+        />
+
+        <label class="inline-flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+          <input
+            type="checkbox"
+            [ngModel]="showDeletedUsers"
+            (ngModelChange)="onToggleShowDeletedUsers($event)"
+            class="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 dark:border-gray-700"
+          />
+          Show deleted users
+        </label>
+      </div>
+      <div class="text-sm text-gray-500 dark:text-gray-400">
+        Showing {{ pagedUsers.length }} of {{ totalFilteredUsers }}
+      </div>
+    </div>
+
+    <div class="mt-5 overflow-x-auto">
+      <table class="w-full min-w-[900px]">
+        <thead>
+          <tr class="border-b border-gray-200 dark:border-gray-800">
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">User</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Role</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Access Summary</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          @if (isLoadingUsers) {
+            <tr>
+              <td colspan="5" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                Loading users...
+              </td>
+            </tr>
+          } @else {
+          @for (user of pagedUsers; track user.id) {
+            <tr class="border-b border-gray-100 transition-colors hover:bg-gray-50/70 dark:border-gray-800/70 dark:hover:bg-gray-800/30">
+              <td class="px-4 py-3">
+                <div class="flex flex-col gap-0.5">
+                  <span class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ user.fullName }}</span>
+                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ user.username }}</span>
+                </div>
+              </td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                <div class="flex flex-col gap-1">
+                  <span>{{ user.role }}</span>
+                  @if (hasFullAccess(user)) {
+                    <span class="inline-flex w-fit rounded-full bg-success-50 px-2 py-0.5 text-[11px] font-medium text-success-700 dark:bg-success-500/15 dark:text-success-400">
+                      Full Access
+                    </span>
+                  }
+                </div>
+              </td>
+              <td class="px-4 py-3">
+                <div class="flex flex-col gap-1.5">
+                  <span class="text-xs text-gray-600 dark:text-gray-400">{{ getAccessSummary(user) }}</span>
+                  <div class="flex flex-wrap gap-1">
+                    @for (token of getAccessTokenPreview(user); track token) {
+                      <span class="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+                        {{ token }}
+                      </span>
+                    }
+                    @if (getAccessTokenExtraCount(user) > 0) {
+                      <span class="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                        +{{ getAccessTokenExtraCount(user) }} more
+                      </span>
+                    }
+                  </div>
+                </div>
+              </td>
+              <td class="px-4 py-3">
+                <span
+                  class="rounded-full px-2.5 py-0.5 text-xs font-medium"
+                  [ngClass]="{
+                    'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-500': user.status === 'Active',
+                    'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-500': user.status === 'Inactive',
+                    'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400': user.status === 'Deleted'
+                  }"
+                >
+                  {{ user.status }}
+                </span>
+              </td>
+              <td class="px-4 py-3 text-right">
+                <div class="inline-flex items-center gap-1.5">
+                  @if (user.isDeleted) {
+                    <app-button
+                      *appCan="{ menu: 'user_management', permission: 'canUpdate' }"
+                      size="xs"
+                      variant="outline"
+                      className="min-w-[72px]"
+                      [disabled]="restoringUserIds.has(user.id)"
+                      (btnClick)="restoreUser(user)"
+                    >
+                      {{ restoringUserIds.has(user.id) ? 'Restoring...' : 'Restore' }}
+                    </app-button>
+                  } @else {
+                    <app-button
+                      *appCan="{ menu: 'user_management', permission: 'canUpdate' }"
+                      size="xs"
+                      variant="outline"
+                      className="min-w-[58px]"
+                      [disabled]="loadingEditUserId === user.id || isCreatingUser"
+                      (btnClick)="openEditDrawer(user)"
+                    >
+                      {{ loadingEditUserId === user.id ? 'Loading...' : 'Edit' }}
+                    </app-button>
+
+                    <app-button
+                      *appCan="{ menu: 'user_management', permission: 'canDelete' }"
+                      size="xs"
+                      variant="outline"
+                      className="min-w-[58px]"
+                      [disabled]="deletingUserIds.has(user.id)"
+                      (btnClick)="deleteUser(user)"
+                    >
+                      {{ deletingUserIds.has(user.id) ? 'Deleting...' : 'Delete' }}
+                    </app-button>
+                  }
+                </div>
+              </td>
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="5" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                No users found for this filter.
+              </td>
+            </tr>
+          }
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="mt-4 flex items-center justify-between">
+      <button
+        type="button"
+        class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+        (click)="onUserPageChange(page - 1)"
+        [disabled]="page <= 1"
+      >
+        Previous
+      </button>
+
+      <span class="text-sm text-gray-500 dark:text-gray-400">Page {{ page }} of {{ totalFilteredPages }}</span>
+
+      <button
+        type="button"
+        class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+        (click)="onUserPageChange(page + 1)"
+        [disabled]="page >= totalFilteredPages"
+      >
+        Next
+      </button>
+    </div>
+  </div>
+
+  @if (isCreateDrawerOpen) {
+    <div class="fixed inset-0 z-[100000] bg-gray-900/40" (click)="closeCreateDrawer()"></div>
+  }
+
+  <aside
+    class="fixed right-0 top-0 z-[100001] h-full w-full max-w-2xl transform border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
+    [ngClass]="isCreateDrawerOpen ? 'translate-x-0' : 'translate-x-full'"
+  >
+    <div class="flex h-full flex-col">
+      <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">
+            {{ drawerMode === 'create' ? 'Create User' : 'Edit User' }}
+          </h3>
+          <p class="text-sm text-gray-500 dark:text-gray-400">
+            {{ drawerMode === 'create' ? 'Create account and assign role from `tblrbac`.' : 'Update user details and RBAC role assignment.' }}
+          </p>
+        </div>
+        <button
+          type="button"
+          (click)="closeCreateDrawer()"
+          class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Close
+        </button>
+      </div>
+
+      <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">User Account</h4>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <label>
+              <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Username *</span>
+              <input
+                type="text"
+                [(ngModel)]="createForm.username"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                [disabled]="isCreatingUser"
+              />
+            </label>
+
+            <label>
+              <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Full Name *</span>
+              <input
+                type="text"
+                [(ngModel)]="createForm.fullname"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                [disabled]="isCreatingUser"
+              />
+            </label>
+
+            <label class="md:col-span-2">
+              <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Password {{ drawerMode === 'create' ? '*' : '' }}</span>
+              <input
+                type="password"
+                [(ngModel)]="createForm.password"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                [disabled]="isCreatingUser"
+              />
+              @if (drawerMode === 'edit') {
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Leave blank to keep the existing password.</p>
+              }
+            </label>
+          </div>
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Contact Information</h4>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <label class="md:col-span-2">
+              <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Email</span>
+              <input
+                type="email"
+                [(ngModel)]="createForm.email"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                [disabled]="isCreatingUser"
+              />
+            </label>
+
+            <label>
+              <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact</span>
+              <input
+                type="text"
+                [(ngModel)]="createForm.contact"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                [disabled]="isCreatingUser"
+              />
+            </label>
+
+            <label>
+              <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Birthdate</span>
+              <input
+                type="date"
+                [(ngModel)]="createForm.birthdate"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                [disabled]="isCreatingUser"
+              />
+            </label>
+
+            <label class="md:col-span-2">
+              <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</span>
+              <textarea
+                rows="3"
+                [(ngModel)]="createForm.address"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                [disabled]="isCreatingUser"
+              ></textarea>
+            </label>
+          </div>
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">RBAC Assignment</h4>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <label>
+              <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Role *</span>
+              <select
+                [ngModel]="createForm.roleId"
+                (ngModelChange)="onRoleChange($event)"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                [disabled]="isCreatingUser || isLoadingRoles"
+              >
+                <option [ngValue]="''">{{ isLoadingRoles ? 'Loading roles...' : 'Select role' }}</option>
+                @for (role of roleOptions; track role.id) {
+                  <option [ngValue]="role.id">{{ role.name }}</option>
+                }
+              </select>
+            </label>
+
+            <label>
+              <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Status</span>
+              <select
+                [(ngModel)]="createForm.status"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                [disabled]="isCreatingUser"
+              >
+                <option [ngValue]="1">Active</option>
+                <option [ngValue]="0">Inactive</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <div class="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <h4 class="mb-1 text-sm font-semibold text-gray-700 dark:text-gray-200">Normalized Role Permissions</h4>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                Permissions granted by selected role from normalized RBAC tables.
+              </p>
+            </div>
+            <span class="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+              {{ rolePermissionKeys.length }} granted
+            </span>
+          </div>
+
+          @if (isLoadingRolePermissions || isLoadingPermissionContext) {
+            <p class="text-sm text-gray-500 dark:text-gray-400">Loading role permissions...</p>
+          } @else {
+            <div class="flex flex-wrap gap-1.5">
+              @for (permissionKey of rolePermissionKeys; track permissionKey) {
+                <span class="rounded-full bg-brand-50 px-2 py-1 text-xs font-medium text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+                  {{ getPermissionLabel(permissionKey) }}
+                </span>
+              } @empty {
+                <span class="text-xs text-gray-400 dark:text-gray-500">No normalized role permissions found for this role.</span>
+              }
+            </div>
+          }
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <div class="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">User Permission Overrides</h4>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                Set per-user exceptions (`allow` or `deny`) on top of role permissions.
+              </p>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-gray-500 dark:text-gray-400">
+                Selected overrides: {{ selectedOverrideCount }}
+              </span>
+              <button
+                type="button"
+                class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                [disabled]="isCreatingUser || selectedOverrideCount === 0"
+                (click)="clearOverrideSelections()"
+              >
+                Reset Overrides
+              </button>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <input
+              type="text"
+              [ngModel]="permissionSearch"
+              (ngModelChange)="permissionSearch = $event"
+              placeholder="Search permission key, module, or label"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+              [disabled]="isCreatingUser || isLoadingPermissionKeys"
+            />
+          </div>
+
+          @if (isLoadingPermissionKeys) {
+            <p class="text-sm text-gray-500 dark:text-gray-400">Loading permission keys...</p>
+          } @else {
+            <div class="max-h-72 space-y-3 overflow-y-auto">
+              @for (group of groupedFilteredPermissionOptions; track group.module) {
+                <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                  <div class="mb-2 flex items-center justify-between">
+                    <h5 class="text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300">
+                      {{ formatPermissionModule(group.module) }}
+                    </h5>
+                    <span class="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                      {{ group.items.length }} keys
+                    </span>
+                  </div>
+
+                  <div class="space-y-2">
+                    @for (permission of group.items; track permission.key) {
+                      <div class="rounded-lg border border-gray-200 px-3 py-2 dark:border-gray-800">
+                        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <div class="text-xs font-medium text-gray-700 dark:text-gray-300">{{ permission.label }}</div>
+                            <div class="text-[11px] text-gray-500 dark:text-gray-400">{{ permission.key }}</div>
+                          </div>
+
+                          <div class="flex items-center gap-2">
+                            <span class="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                              {{ formatPermissionScope(permission.scope) }}
+                            </span>
+                            @if (isRoleGranted(permission.key)) {
+                              <span class="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-medium text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+                                Role Granted
+                              </span>
+                            }
+                          </div>
+                        </div>
+
+                        <div class="mt-2 flex flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            class="rounded-md border px-2 py-1 text-[11px] font-medium"
+                            [ngClass]="getOverrideEffect(permission.key) === 'inherit'
+                              ? 'border-gray-700 bg-gray-700 text-white dark:border-gray-500 dark:bg-gray-500'
+                              : 'border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                            [disabled]="isCreatingUser"
+                            (click)="setOverrideEffect(permission.key, 'inherit')"
+                          >
+                            Inherit
+                          </button>
+
+                          <button
+                            type="button"
+                            class="rounded-md border px-2 py-1 text-[11px] font-medium"
+                            [ngClass]="getOverrideEffect(permission.key) === 'allow'
+                              ? 'border-success-600 bg-success-600 text-white'
+                              : 'border-success-300 text-success-700 hover:bg-success-50 dark:border-success-700 dark:text-success-400 dark:hover:bg-success-500/10'"
+                            [disabled]="isCreatingUser"
+                            (click)="setOverrideEffect(permission.key, 'allow')"
+                          >
+                            Force Allow
+                          </button>
+
+                          <button
+                            type="button"
+                            class="rounded-md border px-2 py-1 text-[11px] font-medium"
+                            [ngClass]="getOverrideEffect(permission.key) === 'deny'
+                              ? 'border-error-600 bg-error-600 text-white'
+                              : 'border-error-300 text-error-700 hover:bg-error-50 dark:border-error-700 dark:text-error-400 dark:hover:bg-error-500/10'"
+                            [disabled]="isCreatingUser"
+                            (click)="setOverrideEffect(permission.key, 'deny')"
+                          >
+                            Force Deny
+                          </button>
+                        </div>
+                      </div>
+                    }
+                  </div>
+                </div>
+              } @empty {
+                <div class="rounded-lg border border-dashed border-gray-300 px-3 py-5 text-center text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  No permission keys found.
+                </div>
+              }
+            </div>
+          }
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 class="mb-1 text-sm font-semibold text-gray-700 dark:text-gray-200">Effective Permission Preview</h4>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                Preview after applying selected role + current override selections.
+              </p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="rounded-full bg-success-50 px-2 py-1 text-xs font-medium text-success-700 dark:bg-success-500/15 dark:text-success-400">
+                {{ effectivePreviewKeys.length }} allowed
+              </span>
+              @if (drawerMode === 'edit') {
+                <span class="rounded-full bg-warning-50 px-2 py-1 text-xs font-medium text-warning-700 dark:bg-warning-500/15 dark:text-warning-400">
+                  {{ previewChangedCount }} changed
+                </span>
+              }
+            </div>
+          </div>
+
+          <div class="flex flex-wrap gap-1.5">
+            @for (permissionKey of effectivePreviewKeys; track permissionKey) {
+              <span class="rounded-full bg-success-50 px-2 py-1 text-xs font-medium text-success-700 dark:bg-success-500/15 dark:text-success-400">
+                {{ getPermissionLabel(permissionKey) }}
+              </span>
+            } @empty {
+              <span class="text-xs text-gray-400 dark:text-gray-500">No effective permissions in preview.</span>
+            }
+          </div>
+
+          @if (drawerMode === 'edit') {
+            <div class="mt-4">
+              <p class="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">Currently Saved Effective Permissions</p>
+              <div class="flex flex-wrap gap-1.5">
+                @for (item of savedEffectivePermissions; track item.permissionKey) {
+                  <span class="rounded-full bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                    {{ item.permissionLabel || item.permissionKey }}
+                  </span>
+                } @empty {
+                  <span class="text-xs text-gray-400 dark:text-gray-500">No saved effective permissions found.</span>
+                }
+              </div>
+            </div>
+          }
+        </section>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button
+          type="button"
+          (click)="closeCreateDrawer()"
+          class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          [disabled]="isCreatingUser"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          (click)="submitCreateUser()"
+          class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+          [disabled]="isCreatingUser"
+        >
+          {{ isCreatingUser ? (drawerMode === 'create' ? 'Creating...' : 'Saving...') : (drawerMode === 'create' ? 'Create User' : 'Save Changes') }}
+        </button>
+      </div>
+    </div>
+  </aside>
+</div>

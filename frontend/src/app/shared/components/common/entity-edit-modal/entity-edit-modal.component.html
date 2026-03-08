@@ -1,0 +1,74 @@
+<app-modal
+  [isOpen]="isOpen"
+  (close)="onClose()"
+  className="max-w-[640px] p-5 lg:p-6"
+  [showCloseButton]="!isSubmitting"
+>
+  <form (ngSubmit)="onSubmit()" class="space-y-4" autocomplete="off">
+    <div>
+      <h4 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ title }}</h4>
+      @if (description) {
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ description }}</p>
+      }
+    </div>
+
+    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+      @for (field of fields; track field.key) {
+        <div [ngClass]="(field.type ?? 'text') === 'textarea' ? 'md:col-span-2' : ''">
+          <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">{{ field.label }}</label>
+
+          @if ((field.type ?? 'text') === 'textarea') {
+            <textarea
+              rows="3"
+              [(ngModel)]="formValues[field.key]"
+              [name]="field.key"
+              [placeholder]="field.placeholder || ''"
+              [disabled]="isSubmitting"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            ></textarea>
+          } @else {
+            <input
+              [type]="(field.type ?? 'text') === 'number' ? 'number' : 'text'"
+              [(ngModel)]="formValues[field.key]"
+              [name]="field.key"
+              [placeholder]="field.placeholder || ''"
+              [required]="field.required === true"
+              [attr.min]="field.type === 'number' && field.min !== undefined ? field.min : null"
+              [attr.step]="field.type === 'number' && field.step !== undefined ? field.step : null"
+              [disabled]="isSubmitting"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            />
+          }
+
+          @if (field.helpText) {
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ field.helpText }}</p>
+          }
+        </div>
+      }
+    </div>
+
+    @if (formError) {
+      <div class="rounded-lg border border-error-300 bg-error-50 px-3 py-2 text-sm text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+        {{ formError }}
+      </div>
+    }
+
+    <div class="flex items-center justify-end gap-3 pt-2">
+      <button
+        type="button"
+        (click)="onClose()"
+        [disabled]="isSubmitting"
+        class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+      >
+        {{ cancelLabel }}
+      </button>
+      <button
+        type="submit"
+        [disabled]="isSubmitting"
+        class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+      >
+        {{ isSubmitting ? 'Saving...' : submitLabel }}
+      </button>
+    </div>
+  </form>
+</app-modal>
