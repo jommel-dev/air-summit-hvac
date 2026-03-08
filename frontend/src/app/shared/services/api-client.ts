@@ -14,17 +14,18 @@ type RetryConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 const appEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
 const configuredApiBaseUrl = String(appEnv?.['NG_APP_API_BASE_URL'] ?? '').trim();
 const nodeEnv = String(appEnv?.['NODE_ENV'] ?? '').trim().toLowerCase();
-const isProductionBuild =
-  nodeEnv === 'production' ||
-  String(globalThis.location?.hostname ?? '').trim().toLowerCase() !== 'localhost';
+const hostName = String(globalThis.location?.hostname ?? '').trim().toLowerCase();
+const isLocalHost = hostName === 'localhost' || hostName === '127.0.0.1';
+const isProductionBuild = nodeEnv === 'production' || !isLocalHost;
+const fallbackProductionApiBaseUrl = 'https://air-summit-hvac.onrender.com';
 
 if (!configuredApiBaseUrl && isProductionBuild) {
-  throw new Error(
-    'Missing NG_APP_API_BASE_URL. Set this environment variable in your deployment platform and rebuild.',
+  console.warn(
+    'NG_APP_API_BASE_URL is missing. Falling back to the configured production API URL.',
   );
 }
 
-const API_BASE_URL = configuredApiBaseUrl || 'http://localhost:3000';
+const API_BASE_URL = configuredApiBaseUrl || (isLocalHost ? 'http://localhost:3000' : fallbackProductionApiBaseUrl);
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
