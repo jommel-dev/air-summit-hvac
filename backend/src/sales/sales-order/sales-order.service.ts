@@ -5,6 +5,7 @@ import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
 import { randomUUID } from 'crypto';
 import { ListSalesOrderQueryDto } from './dto/list-sales-order-query.dto';
+import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 
 type SalesMode =
   | 'deliveries'
@@ -28,7 +29,10 @@ type SalesPaymentMethod =
 
 @Injectable()
 export class SalesOrderService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly materialStockService: MaterialStockService,
+  ) {}
 
   private async getTableColumns(
     executor: { query: PoolClient['query'] },
@@ -1797,11 +1801,20 @@ export class SalesOrderService {
           await this.updateLinkedSalesSerialStatuses(client, id, 'installed');
         }
 
+        const materialSync = await this.materialStockService.applyFromSalesStatusChange(client, {
+          salesOrderId: id,
+          previousStatus: existingSales.status,
+          nextStatus: status,
+          remarks: String(payload.remarks ?? ''),
+          userId,
+        });
+
         return {
           salesOrderId: id,
           customerId,
           totalAmount,
           status,
+          materialSync,
         };
       });
 

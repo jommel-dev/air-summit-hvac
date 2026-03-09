@@ -24,6 +24,7 @@ import { SalesOrderComponent } from './pages/sales-order/sales-order.component';
 import { PurchaseOrderComponent } from './pages/purchase-order/purchase-order.component';
 import { ScheduleTodaySalesOrderComponent } from './pages/schedule-today-sales-order/schedule-today-sales-order.component';
 import { InventoryComponent } from './pages/inventory/inventory.component';
+import { QuotationComponent } from './pages/quotation/quotation.component';
 
 export const routes: Routes = [
   {
@@ -81,6 +82,16 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         title: 'Air Summit Aircon Services | Inventory',
+      },
+      {
+        path: 'quotation',
+        component: QuotationComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'quotation',
+          permission: 'canRead',
+        },
+        title: 'Air Summit Aircon Services | Quotation',
       },
       {
         path: 'user-management',

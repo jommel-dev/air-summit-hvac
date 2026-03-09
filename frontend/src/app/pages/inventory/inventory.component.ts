@@ -212,6 +212,43 @@ export class InventoryComponent implements OnInit {
 
   constructor(private readonly salesOrderService: SalesOrderService) {}
 
+  // Material creation modal state
+  isMaterialModalOpen = false;
+  materialForm = { code: '', name: '', unit: '' };
+  materialError = '';
+  materialSuccess = '';
+  openMaterialModal(): void {
+    this.isMaterialModalOpen = true;
+    this.materialForm = { code: '', name: '', unit: '' };
+    this.materialError = '';
+    this.materialSuccess = '';
+  }
+
+  closeMaterialModal(): void {
+    this.isMaterialModalOpen = false;
+  }
+
+  async submitMaterial(): Promise<void> {
+    this.materialError = '';
+    this.materialSuccess = '';
+    try {
+      const response = await axios.post('/material-items', {
+        code: this.materialForm.code,
+        name: this.materialForm.name,
+        unit: this.materialForm.unit || 'pcs',
+      });
+      if (response.data) {
+        this.materialSuccess = 'Material added successfully!';
+        this.closeMaterialModal();
+        // Optionally reload inventory or show new material
+      } else {
+        this.materialError = 'Failed to add material.';
+      }
+    } catch (err: any) {
+      this.materialError = err?.response?.data?.message || 'Error adding material.';
+    }
+  }
+
   ngOnInit(): void {
     this.initializeLandCostingDateRange();
     void this.loadInventoryFolders();

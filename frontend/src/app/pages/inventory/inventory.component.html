@@ -15,6 +15,39 @@
       >
         Create Brand/Product/Capacity
       </button>
+      <!-- <button
+        type="button"
+        (click)="openMaterialModal()"
+        class="inline-flex items-center rounded-lg bg-green-500 px-4 py-2 text-sm font-medium text-white hover:bg-green-600 ml-2"
+      >
+        Create Material
+      </button> -->
+    <!-- Material Creation Modal -->
+    <!-- <div *ngIf="isMaterialModalOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+      <div class="bg-white rounded-xl shadow-lg p-6 w-full max-w-md">
+        <h3 class="text-lg font-semibold mb-4">Add Material</h3>
+        <form (ngSubmit)="submitMaterial()">
+          <div class="mb-3">
+            <label class="block text-sm font-medium mb-1">Code</label>
+            <input type="text" [(ngModel)]="materialForm.code" name="code" required class="w-full border rounded px-3 py-2" />
+          </div>
+          <div class="mb-3">
+            <label class="block text-sm font-medium mb-1">Name</label>
+            <input type="text" [(ngModel)]="materialForm.name" name="name" required class="w-full border rounded px-3 py-2" />
+          </div>
+          <div class="mb-3">
+            <label class="block text-sm font-medium mb-1">Unit</label>
+            <input type="text" [(ngModel)]="materialForm.unit" name="unit" class="w-full border rounded px-3 py-2" placeholder="pcs" />
+          </div>
+          <div class="flex gap-2 mt-4">
+            <button type="submit" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">Add</button>
+            <button type="button" (click)="closeMaterialModal()" class="bg-gray-300 px-4 py-2 rounded hover:bg-gray-400">Cancel</button>
+          </div>
+          <div *ngIf="materialError" class="mt-2 text-red-600 text-sm">{{ materialError }}</div>
+          <div *ngIf="materialSuccess" class="mt-2 text-green-600 text-sm">{{ materialSuccess }}</div>
+        </form>
+      </div>
+    </div> -->
     </div>
   </div>
 

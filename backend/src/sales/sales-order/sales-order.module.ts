@@ -3,9 +3,10 @@ import { SalesOrderService } from './sales-order.service';
 import { SalesOrderController } from './sales-order.controller';
 import { DatabaseModule } from 'src/database/database.module';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { MaterialStockModule } from 'src/inventory/material-stock/material-stock.module';
 
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, MaterialStockModule],
   controllers: [SalesOrderController],
   providers: [SalesOrderService, JwtAuthGuard],
 })

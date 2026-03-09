@@ -1,0 +1,553 @@
+<div>
+  <app-page-breadcrumb pageTitle="Quotation" />
+
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] xl:p-6">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">Quotation List</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Create customer quotations and convert finalized records directly into Sales Order.</p>
+      </div>
+      @if (canCreateQuotation()) {
+        <button
+          type="button"
+          (click)="openCreateDrawer()"
+          class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-600"
+        >
+          New Quotation
+        </button>
+      }
+    </div>
+
+    @if (uiMessage) {
+      <div class="mt-4 rounded-lg border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-700 dark:border-brand-500/20 dark:bg-brand-500/10 dark:text-brand-300">
+        {{ uiMessage }}
+      </div>
+    }
+
+    @if (uiError) {
+      <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+        {{ uiError }}
+      </div>
+    }
+
+    <div class="border-b border-default mt-5">
+      <ul class="flex flex-wrap -mb-px text-sm font-medium text-center text-body">
+        @for (tab of getTabs(); track tab.key) {
+          <li class="me-2">
+            <button type="button" (click)="setTab(tab.key)" [ngClass]="{
+              'text-brand-700 border-brand-500 dark:text-brand-300': activeTab === tab.key,
+              'border-transparent text-gray-500 hover:text-brand-700 hover:border-brand-400 dark:text-gray-400 dark:hover:text-brand-300': activeTab !== tab.key
+            }" [attr.aria-current]="activeTab === tab.key ? 'page' : null" class="inline-flex items-center justify-center p-4 border-b rounded-t-base group transition-colors">
+              {{ tab.label }}
+            </button>
+          </li>
+        }
+      </ul>
+    </div>
+
+    <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <input
+        type="text"
+        [value]="search"
+        (input)="onSearchChange($any($event.target).value)"
+        placeholder="Search quotation number, customer, or status"
+        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 sm:max-w-sm"
+      />
+      <div class="text-sm text-gray-500 dark:text-gray-400">
+        Showing {{ quotations.length }} of {{ total }}
+      </div>
+    </div>
+
+    @if (isLoading) {
+      <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading quotations...</div>
+    } @else if (errorMessage) {
+      <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+        {{ errorMessage }}
+      </div>
+    } @else {
+      <div class="mt-5 overflow-x-auto">
+        <table class="w-full min-w-[980px]">
+          <thead>
+            <tr class="border-b border-gray-200 dark:border-gray-800">
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Quote No</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Date</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Customer</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Converted SO</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (item of quotations; track item.id) {
+              <tr class="border-b border-gray-100 dark:border-gray-800/70">
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.quoteNo }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDateOnly(item.quoteDate) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.customerName || '-' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatAmount(item.totalAmount) }}</td>
+                <td class="px-4 py-3">
+                  <span class="rounded-full px-2 py-0.5 text-xs font-medium" [ngClass]="{
+                    'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-500': item.status.toLowerCase() === 'draft',
+                    'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400': item.status.toLowerCase() === 'finalized',
+                    'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-500': item.status.toLowerCase() === 'converted',
+                    'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': !['draft','finalized','converted'].includes(item.status.toLowerCase())
+                  }">
+                    {{ item.status }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.convertedSalesId || '-' }}</td>
+                <td class="px-4 py-3 text-right">
+                  <div class="inline-flex items-center gap-2">
+                    @if (canEditQuotation()) {
+                      <button
+                        type="button"
+                        (click)="openEditDrawer(item)"
+                        class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                      >
+                        View/Edit
+                      </button>
+                    }
+                    <button
+                      type="button"
+                      (click)="previewQuotation(item)"
+                      class="rounded-lg border border-orange-300 px-3 py-1.5 text-xs font-medium text-orange-700 transition hover:bg-orange-50 dark:border-orange-700 dark:text-orange-400 dark:hover:bg-orange-500/10"
+                    >
+                      Preview Print
+                    </button>
+                    @if (canFinalizeQuotation() && !isFinalized(item) && !isConverted(item)) {
+                      <button
+                        type="button"
+                        (click)="finalizeQuotation(item)"
+                        [disabled]="finalizingIds.has(item.id)"
+                        class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 disabled:opacity-60 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                      >
+                        {{ finalizingIds.has(item.id) ? 'Finalizing...' : 'Finalize' }}
+                      </button>
+                    }
+                    @if (canConvertQuotation() && isFinalized(item) && !isConverted(item)) {
+                      <button
+                        type="button"
+                        (click)="convertToSalesOrder(item)"
+                        [disabled]="convertingIds.has(item.id)"
+                        class="rounded-lg border border-success-300 px-3 py-1.5 text-xs font-medium text-success-700 transition hover:bg-success-50 disabled:opacity-60 dark:border-success-700 dark:text-success-400 dark:hover:bg-success-500/10"
+                      >
+                        {{ convertingIds.has(item.id) ? 'Converting...' : 'Convert to SO' }}
+                      </button>
+                    }
+                  </div>
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                  No quotations found.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mt-4 flex items-center justify-between">
+        <button
+          type="button"
+          class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+          (click)="onPageChange(page - 1)"
+          [disabled]="page <= 1"
+        >
+          Previous
+        </button>
+
+        <span class="text-sm text-gray-500 dark:text-gray-400">Page {{ page }} of {{ totalPages }}</span>
+
+        <button
+          type="button"
+          class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+          (click)="onPageChange(page + 1)"
+          [disabled]="page >= totalPages"
+        >
+          Next
+        </button>
+      </div>
+    }
+  </div>
+
+  @if (isDrawerOpen) {
+    <div class="fixed inset-0 z-[100000] bg-gray-900/40" (click)="closeDrawer()"></div>
+  }
+
+  <aside
+    class="fixed right-0 top-0 z-[100001] h-full w-full max-w-4xl transform border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
+    [ngClass]="isDrawerOpen ? 'translate-x-0' : 'translate-x-full'"
+  >
+    <div class="flex h-full flex-col">
+      <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ drawerMode === 'create' ? 'Create Quotation' : 'Update Quotation' }}</h3>
+          <p class="text-sm text-gray-500 dark:text-gray-400">Quotation form based on legacy workflow and modernized for current SO/PO style UI.</p>
+        </div>
+        <button
+          type="button"
+          (click)="closeDrawer()"
+          class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Close
+        </button>
+      </div>
+
+      <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Quotation Header</h4>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Quotation Date</label>
+              <input type="date" [(ngModel)]="form.quoteDate" name="quoteDate" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div class="md:col-span-2">
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Remarks</label>
+              <textarea [(ngModel)]="form.remarks" name="remarks" rows="2" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
+            </div>
+          </div>
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Customer</h4>
+          <div class="mb-3 flex gap-5 text-sm">
+            <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
+              <input type="radio" name="customerMode" [value]="'existing'" [(ngModel)]="customerMode" />
+              Existing Customer
+            </label>
+            <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
+              <input type="radio" name="customerMode" [value]="'new'" [(ngModel)]="customerMode" />
+              New Customer
+            </label>
+          </div>
+
+          @if (customerMode === 'existing') {
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Existing Customer</label>
+              <div class="relative">
+                <input
+                  type="text"
+                  [ngModel]="customerSearch"
+                  (ngModelChange)="onCustomerSearchChange($event)"
+                  name="customerSearch"
+                  placeholder="Search customer"
+                  autocomplete="off"
+                  (focus)="onCustomerComboboxFocus()"
+                  (blur)="onCustomerComboboxBlur()"
+                  class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                />
+
+                @if (isCustomerDropdownOpen) {
+                  <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                    @if (getFilteredCustomerOptions().length === 0) {
+                      <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No customers found.</p>
+                    } @else {
+                      @for (customer of getFilteredCustomerOptions(); track customer.id) {
+                        <button
+                          type="button"
+                          (mousedown)="$event.preventDefault()"
+                          (click)="selectCustomer(customer.id)"
+                          class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                        >
+                          <span>{{ customer.name }}</span>
+                        </button>
+                      }
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Customer Name</label>
+              <input type="text" [(ngModel)]="form.customer.name" name="customerName" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
+              <input type="text" [(ngModel)]="form.customer.contact_number" name="customerContact" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
+              <input type="text" [(ngModel)]="form.customer.contact_person" name="customerContactPerson" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Email</label>
+              <input type="email" [(ngModel)]="form.customer.email" name="customerEmail" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div class="md:col-span-2">
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+              <input type="text" [(ngModel)]="form.customer.address" name="customerAddress" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+          </div>
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <div class="mb-3 flex items-center justify-between">
+            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Quotation Items</h4>
+            <button
+              type="button"
+              (click)="addProductItem()"
+              class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-500/10"
+            >
+              Add Item
+            </button>
+          </div>
+
+          <div class="space-y-3">
+            @for (item of form.productItems; track $index; let itemIndex = $index) {
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                <div class="mb-2 flex items-center justify-between">
+                  <p class="text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300">Item {{ itemIndex + 1 }}</p>
+                  <button
+                    type="button"
+                    (click)="removeProductItem(itemIndex)"
+                    [disabled]="form.productItems.length <= 1"
+                    class="rounded-md border border-error-300 px-2 py-1 text-xs font-medium text-error-700 disabled:opacity-50 dark:border-error-700 dark:text-error-400"
+                  >
+                    Remove
+                  </button>
+                </div>
+
+                <div class="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-800/40 dark:bg-blue-900/20 dark:text-blue-200">
+                  Item Grouping: Set section/category before adding item details. Items with same section are grouped together in printed quotation.
+                </div>
+
+                <div class="mb-3">
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Section/Category (Location of Installation)</label>
+                  <input
+                    type="text"
+                    [(ngModel)]="item.grouping"
+                    name="grouping_{{ itemIndex }}"
+                    placeholder="e.g., FOOD HALL, TOILET, ADMIN"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                  />
+                  <div class="mt-2 flex flex-wrap gap-2">
+                    @for (preset of groupingSuggestions; track preset) {
+                      <button
+                        type="button"
+                        (click)="setGrouping(itemIndex, preset)"
+                        class="rounded-md border border-brand-300 px-2 py-1 text-[11px] font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                      >
+                        {{ preset }}
+                      </button>
+                    }
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product</label>
+                    <select [(ngModel)]="item.productId" name="product_{{ itemIndex }}" (ngModelChange)="onProductChanged(itemIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                      <option value="" disabled>Select product</option>
+                      @for (product of catalogProducts; track product.id) {
+                        <option [value]="product.id">{{ product.name }}{{ product.brandName ? ' (' + product.brandName + ')' : '' }}</option>
+                      }
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Capacity</label>
+                    <select [(ngModel)]="item.capacityId" name="capacity_{{ itemIndex }}" (ngModelChange)="onCapacityChanged(itemIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                      <option value="" disabled>Select capacity</option>
+                      @for (cap of getCapacitiesByProduct(item.productId); track cap.id) {
+                        <option [value]="cap.id">{{ cap.name }}</option>
+                      }
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Sell Price</label>
+                    <input type="number" min="0" [(ngModel)]="item.sellPrice" name="sellPrice_{{ itemIndex }}" (ngModelChange)="onItemPriceOrQtyChanged()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Discount Price</label>
+                    <input type="number" min="0" [(ngModel)]="item.discountPrice" name="discountPrice_{{ itemIndex }}" (ngModelChange)="onItemPriceOrQtyChanged()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total Set Qty</label>
+                    <input type="number" min="0" [(ngModel)]="item.totalSetQty" name="totalSetQty_{{ itemIndex }}" (ngModelChange)="onItemPriceOrQtyChanged()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Line Total</label>
+                    <div class="h-10 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-medium text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100">
+                      {{ formatAmount(getLineTotal(item)) }}
+                    </div>
+                  </div>
+
+                  <div class="md:col-span-2">
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Item Remarks</label>
+                    <input type="text" [(ngModel)]="item.remarks" name="itemRemarks_{{ itemIndex }}" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+                </div>
+
+                <div class="mt-4 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                  <div class="mb-2 flex items-center justify-between">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300">Installation Details</p>
+                    <button
+                      type="button"
+                      (click)="addInstallationDetail(itemIndex)"
+                      class="rounded-md border border-brand-300 px-2 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                    >
+                      Add Installation Detail
+                    </button>
+                  </div>
+
+                  <div class="space-y-2">
+                    @for (detail of item.installationDetails; track $index; let detailIndex = $index) {
+                      <div class="grid grid-cols-1 gap-2 md:grid-cols-12">
+                        <div class="md:col-span-5">
+                          <label class="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-300">Description</label>
+                          <input
+                            type="text"
+                            [(ngModel)]="detail.description"
+                            name="installDesc_{{ itemIndex }}_{{ detailIndex }}"
+                            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
+                          />
+                        </div>
+                        <div class="md:col-span-2">
+                          <label class="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-300">Unit Price</label>
+                          <input
+                            type="number"
+                            min="0"
+                            [(ngModel)]="detail.unitPrice"
+                            (ngModelChange)="onItemPriceOrQtyChanged()"
+                            name="installPrice_{{ itemIndex }}_{{ detailIndex }}"
+                            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
+                          />
+                        </div>
+                        <div class="md:col-span-1">
+                          <label class="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-300">Excess</label>
+                          <input
+                            type="number"
+                            min="0"
+                            [(ngModel)]="detail.excessQty"
+                            (ngModelChange)="onItemPriceOrQtyChanged()"
+                            name="installExcess_{{ itemIndex }}_{{ detailIndex }}"
+                            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
+                          />
+                        </div>
+                        <div class="md:col-span-1">
+                          <label class="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-300">Free</label>
+                          <input
+                            type="number"
+                            min="0"
+                            [(ngModel)]="detail.freeQty"
+                            name="installFree_{{ itemIndex }}_{{ detailIndex }}"
+                            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
+                          />
+                        </div>
+                        <div class="md:col-span-1">
+                          <label class="mb-1 block text-[11px] font-medium text-gray-600 dark:text-gray-300">Unit</label>
+                          <input
+                            type="text"
+                            [(ngModel)]="detail.unit"
+                            name="installUnit_{{ itemIndex }}_{{ detailIndex }}"
+                            class="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
+                          />
+                        </div>
+                        <div class="md:col-span-2 md:flex md:items-end md:justify-end">
+                          <button
+                            type="button"
+                            (click)="removeInstallationDetail(itemIndex, detailIndex)"
+                            [disabled]="item.installationDetails.length <= 1"
+                            class="w-full rounded-md border border-error-300 px-2 py-2 text-xs font-medium text-error-700 disabled:opacity-50 dark:border-error-700 dark:text-error-400"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    }
+                  </div>
+                </div>
+              </div>
+            }
+          </div>
+
+          <div class="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100">
+            Total Amount: {{ formatAmount(form.totalAmount) }}
+          </div>
+        </section>
+      </div>
+
+      <div class="flex items-center justify-end gap-2 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button
+          type="button"
+          (click)="closeDrawer()"
+          class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          (click)="previewQuotationFromDrawer()"
+          class="rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+        >
+          Preview
+        </button>
+        <button
+          type="button"
+          (click)="saveQuotation()"
+          [disabled]="isSubmitting"
+          class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60"
+        >
+          {{ isSubmitting ? 'Saving...' : 'Save Quotation' }}
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  @if (isQuotationPreviewOpen) {
+    <div class="fixed inset-0 z-[100100] bg-gray-900/70" (click)="closeQuotationPreview()">
+      <section
+        class="flex h-screen w-screen flex-col overflow-hidden bg-white dark:bg-gray-900"
+        (click)="$event.stopPropagation()"
+      >
+        <header class="flex items-center justify-between border-b border-gray-200 px-4 py-3 dark:border-gray-800">
+          <div>
+            <h4 class="text-sm font-semibold text-gray-800 dark:text-white/90">Quotation Preview</h4>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ quotationPreviewFilename }}</p>
+          </div>
+          <div class="inline-flex items-center gap-2">
+            <button
+              type="button"
+              (click)="printQuotationPreview()"
+              class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+            >
+              Print
+            </button>
+            <!-- <button
+              type="button"
+              (click)="downloadQuotationPreview()"
+              class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+            >
+              Download PDF
+            </button> -->
+            <button
+              type="button"
+              (click)="closeQuotationPreview()"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Close
+            </button>
+          </div>
+        </header>
+
+        <div class="min-h-0 flex-1 bg-gray-100 dark:bg-gray-950">
+          <iframe
+            id="quotation-preview-frame"
+            title="Quotation Preview"
+            [src]="quotationPreviewUrl"
+            class="h-full w-full border-0"
+          ></iframe>
+        </div>
+      </section>
+    </div>
+  }
+</div>

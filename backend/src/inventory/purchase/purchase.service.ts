@@ -7,6 +7,7 @@ import { ListPurchaseQueryDto } from './dto/list-purchase-query.dto';
 import { PurchaseListResponseDto } from './dto/purchase-list-response.dto';
 import { PoolClient } from 'pg';
 import { randomUUID } from 'crypto';
+import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 
 type PurchaseRow = {
   id: number;
@@ -88,7 +89,10 @@ type CapacityPriceUpdateColumns = {
 
 @Injectable()
 export class PurchaseService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly materialStockService: MaterialStockService,
+  ) {}
 
   private async getTableColumns(
     executor: { query: PoolClient['query'] },
@@ -1131,6 +1135,8 @@ export class PurchaseService {
 
         let updatedSerialCount = 0;
         let recordedNetPriceItems = 0;
+        let postedMaterialMovements = 0;
+        let skippedMaterialMovements = 0;
         if (shouldUpdateSerials) {
           const serialColumns = await this.getTableColumns(client, 'tblserial_numbers');
           const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
@@ -1170,6 +1176,15 @@ export class PurchaseService {
             id,
             userId,
           );
+
+          const materialResult = await this.materialStockService.applyInboundFromPo(
+            client,
+            id,
+            nextStatus,
+            userId,
+          );
+          postedMaterialMovements = materialResult.posted;
+          skippedMaterialMovements = materialResult.skipped;
         }
 
         return {
@@ -1177,6 +1192,8 @@ export class PurchaseService {
           status: nextStatus,
           updatedSerialCount,
           recordedNetPriceItems,
+          postedMaterialMovements,
+          skippedMaterialMovements,
           updatedBy: userId ?? null,
         };
       });
