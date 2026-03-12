@@ -1,0 +1,496 @@
+<div class="space-y-6">
+  <app-page-breadcrumb pageTitle="Customers"></app-page-breadcrumb>
+
+  <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+    <div class="flex flex-wrap gap-2 items-center">
+      <button
+        (click)="onTabChange('regular')"
+        [class]="
+          'px-4 py-2 rounded-lg border text-sm font-semibold ' +
+          (activeTab === 'regular'
+            ? 'bg-brand-500 text-white border-brand-500'
+            : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-700')
+        "
+      >
+        Regular Customers
+      </button>
+      <button
+        (click)="onTabChange('sub_dealer')"
+        [class]="
+          'px-4 py-2 rounded-lg border text-sm font-semibold ' +
+          (activeTab === 'sub_dealer'
+            ? 'bg-brand-500 text-white border-brand-500'
+            : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-700')
+        "
+      >
+        Sub-Dealers
+      </button>
+    </div>
+
+    <div class="flex flex-col md:flex-row gap-2 items-stretch md:items-center">
+      <div class="relative w-full md:w-72">
+        <input
+          type="text"
+          class="w-full rounded-lg border-gray-200 bg-white py-2 pl-10 pr-4 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+          placeholder="Search customers..."
+          [(ngModel)]="search"
+          (ngModelChange)="onSearchChange($event)"
+        />
+        <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center">
+          <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 1116.65 16.65z"
+            />
+          </svg>
+        </span>
+      </div>
+
+      <button
+        *appCan="{ menu: 'customers', permission: 'canCreate' }"
+        (click)="openCreateModal()"
+        class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
+      >
+        Add Customer
+      </button>
+    </div>
+  </div>
+
+  <div *ngIf="uiError" class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+    {{ uiError }}
+  </div>
+
+  <div class="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-300">
+          <tr>
+            <th class="px-4 py-3">Name</th>
+            <th class="px-4 py-3">Type</th>
+            <th class="px-4 py-3">Contact</th>
+            <th class="px-4 py-3">Balance</th>
+            <th class="px-4 py-3">Terms</th>
+            <th class="px-4 py-3">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+          <tr *ngFor="let customer of customers" class="hover:bg-gray-50 dark:hover:bg-gray-800">
+            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ customer.name }}</td>
+            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ customer.customer_type }}</td>
+            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
+              {{ customer.contact_person || customer.contact_number || customer.email }}
+            </td>
+            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ customer.current_balance | number:'1.2-2' }}</td>
+            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ customer.payment_terms }}</td>
+            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
+              <button
+                class="mr-2 text-sm font-semibold text-brand-500 hover:text-brand-700"
+                (click)="openDetailsModal(customer)"
+              >
+                View
+              </button>
+              <button
+                *appCan="{ menu: 'customers', permission: 'canUpdate' }"
+                class="mr-2 text-sm font-semibold text-gray-600 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white"
+                (click)="openEditModal(customer)"
+              >
+                Edit
+              </button>
+              <button
+                *appCan="{ menu: 'customers', permission: 'canDelete' }"
+                class="text-sm font-semibold text-red-600 hover:text-red-700"
+                (click)="deleteCustomer(customer)"
+              >
+                Delete
+              </button>
+            </td>
+          </tr>
+          <tr *ngIf="!isLoading && customers.length === 0">
+            <td colspan="7" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+              No customers found.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div class="text-xs text-gray-500 dark:text-gray-400">
+        Showing {{ customers.length }} of {{ total }} customers
+      </div>
+      <div class="flex items-center gap-2">
+        <button
+          class="rounded border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          [disabled]="page <= 1"
+          (click)="onPageChange(page - 1)"
+        >
+          Previous
+        </button>
+        <span class="text-sm text-gray-600 dark:text-gray-300">
+          Page {{ page }} / {{ totalPages }}
+        </span>
+        <button
+          class="rounded border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          [disabled]="page >= totalPages"
+          (click)="onPageChange(page + 1)"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<app-modal [isOpen]="isModalOpen" (close)="closeModal()" [showCloseButton]="false" className="max-w-3xl">
+  <div class="max-h-[85vh] overflow-y-auto p-6">
+    <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+      <div>
+        <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">
+          {{ modalMode === 'create' ? 'Add Customer' : modalMode === 'edit' ? 'Edit Customer' : 'Customer Details' }}
+        </h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          {{ isDrawerOpen
+            ? 'Review customer activity, statements, orders, payments, and concerns.'
+            : 'Enter customer details and billing settings.' }}
+        </p>
+      </div>
+      <button
+        class="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+        (click)="closeModal()"
+      >
+        Close
+      </button>
+    </div>
+
+    <div class="my-5 h-px bg-gray-200 dark:bg-gray-700"></div>
+
+    <div *ngIf="modalMode === 'create' || modalMode === 'edit'" class="space-y-4">
+      <div class="grid gap-4 md:grid-cols-2">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Name</label>
+          <input
+            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            [(ngModel)]="form.name"
+            placeholder="Customer name"
+          />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Type</label>
+          <select
+            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            [(ngModel)]="form.customer_type"
+          >
+            <option value="regular">Regular</option>
+            <option value="sub_dealer">Sub-Dealer</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Contact Person</label>
+          <input
+            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            [(ngModel)]="form.contact_person"
+            placeholder="Contact person"
+          />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Contact Number</label>
+          <input
+            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            [(ngModel)]="form.contact_number"
+            placeholder="Contact number"
+          />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Email</label>
+          <input
+            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            [(ngModel)]="form.email"
+            placeholder="Email"
+          />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">TIN</label>
+          <input
+            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            [(ngModel)]="form.tin_number"
+            placeholder="TIN number"
+          />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Payment Terms (days)</label>
+          <input
+            type="number"
+            min="0"
+            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            [(ngModel)]="form.payment_terms"
+            placeholder="0"
+          />
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Address</label>
+          <textarea
+            class="mt-1 w-full resize-none rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            rows="3"
+            [(ngModel)]="form.address"
+            placeholder="Address"
+          ></textarea>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end gap-2">
+        <button
+          class="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+          (click)="closeModal()"
+        >
+          Cancel
+        </button>
+        <button
+          class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
+          [disabled]="isSaving"
+          (click)="saveCustomer()"
+        >
+          {{ modalMode === 'edit' ? 'Save Changes' : 'Create Customer' }}
+        </button>
+      </div>
+    </div>
+
+  </div>
+</app-modal>
+
+<!-- Drawer for customer view (extra extra large) -->
+<aside
+  *ngIf="isDrawerOpen"
+  class="fixed inset-0 z-[100100] flex items-start justify-end bg-black/40 p-4"
+  (click)="closeDrawer()"
+>
+  <div
+    class="relative h-full w-full max-w-[90vw] overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl dark:bg-gray-900"
+    (click)="$event.stopPropagation()"
+  >
+    <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+      <div>
+        <div class="text-xl font-semibold text-gray-900 dark:text-gray-100">
+          {{ selectedCustomer?.name }}
+        </div>
+        <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          Type: {{ selectedCustomer?.customer_type }}
+        </div>
+      </div>
+      <button
+        class="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+        (click)="closeDrawer()"
+      >
+        Close
+      </button>
+    </div>
+
+    <div class="my-5 h-px bg-gray-200 dark:bg-gray-700"></div>
+
+    <div class="rounded-xl border border-gray-200 bg-gray-50 p-2 dark:border-gray-700 dark:bg-gray-800">
+      <div class="flex flex-wrap gap-2">
+        <button
+          class="rounded-lg px-4 py-2 text-sm font-semibold transition"
+          [ngClass]="{
+            'bg-brand-500 text-white shadow': detailTab === 'orders',
+            'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'orders'
+          }"
+          (click)="detailTab = 'orders'"
+        >
+          Orders
+        </button>
+        <button
+          class="rounded-lg px-4 py-2 text-sm font-semibold transition"
+          [ngClass]="{
+            'bg-brand-500 text-white shadow': detailTab === 'payments',
+            'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'payments'
+          }"
+          (click)="detailTab = 'payments'"
+        >
+          Payments
+        </button>
+        <button
+          class="rounded-lg px-4 py-2 text-sm font-semibold transition"
+          [ngClass]="{
+            'bg-brand-500 text-white shadow': detailTab === 'statement',
+            'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'statement'
+          }"
+          (click)="detailTab = 'statement'"
+        >
+          Statement of Account
+        </button>
+        <button
+          class="rounded-lg px-4 py-2 text-sm font-semibold transition"
+          [ngClass]="{
+            'bg-brand-500 text-white shadow': detailTab === 'concerns',
+            'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'concerns'
+          }"
+          (click)="detailTab = 'concerns'"
+        >
+          Concerns
+        </button>
+      </div>
+    </div>
+
+    <div *ngIf="detailTab === 'orders'" class="space-y-3">
+      <div *ngIf="orders.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+        No orders found.
+      </div>
+      <div *ngIf="orders.length > 0" class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-300">
+            <tr>
+              <th class="px-4 py-3">SO Number</th>
+              <th class="px-4 py-3">Type</th>
+              <th class="px-4 py-3">Amount</th>
+              <th class="px-4 py-3">Status</th>
+              <th class="px-4 py-3">Created</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+            <tr *ngFor="let order of orders" class="hover:bg-gray-50 dark:hover:bg-gray-800">
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.soNumber }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.salesType }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.totalAmount | number:'1.2-2' }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.status }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.createdAt }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div *ngIf="detailTab === 'payments'" class="space-y-3">
+      <div *ngIf="payments.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+        No payments found.
+      </div>
+      <div *ngIf="payments.length > 0" class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-300">
+            <tr>
+              <th class="px-4 py-3">Date</th>
+              <th class="px-4 py-3">Amount</th>
+              <th class="px-4 py-3">Method</th>
+              <th class="px-4 py-3">Reference</th>
+              <th class="px-4 py-3">Notes</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+            <tr *ngFor="let payment of payments" class="hover:bg-gray-50 dark:hover:bg-gray-800">
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ payment.paymentDate }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ payment.paymentAmount | number:'1.2-2' }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ payment.paymentMethod }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ payment.referenceNo }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ payment.paymentNotes }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div *ngIf="detailTab === 'statement'" class="space-y-3">
+      <div class="grid gap-4 md:grid-cols-4">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Period From</label>
+          <input
+            type="date"
+            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            [(ngModel)]="soaForm.periodFrom"
+          />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Period To</label>
+          <input
+            type="date"
+            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            [(ngModel)]="soaForm.periodTo"
+          />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Due Date</label>
+          <input
+            type="date"
+            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            [(ngModel)]="soaForm.dueDate"
+          />
+        </div>
+        <div class="flex items-end">
+          <button
+            class="w-full rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
+            [disabled]="isGeneratingSoa || !soaForm.periodFrom || !soaForm.periodTo"
+            (click)="generateStatementOfAccount()"
+          >
+            Generate SOA
+          </button>
+        </div>
+      </div>
+
+      <div *ngIf="statements.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+        No statements found.
+      </div>
+      <div *ngIf="statements.length > 0" class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-300">
+            <tr>
+              <th class="px-4 py-3">SOA #</th>
+              <th class="px-4 py-3">Period</th>
+              <th class="px-4 py-3">Opening</th>
+              <th class="px-4 py-3">Charges</th>
+              <th class="px-4 py-3">Payments</th>
+              <th class="px-4 py-3">Closing</th>
+              <th class="px-4 py-3">Status</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+            <tr *ngFor="let soa of statements" class="hover:bg-gray-50 dark:hover:bg-gray-800">
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.soaNumber }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
+                {{ soa.periodFrom }} - {{ soa.periodTo }}
+              </td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.openingBalance | number:'1.2-2' }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.totalCharges | number:'1.2-2' }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.totalPayments | number:'1.2-2' }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.closingBalance | number:'1.2-2' }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.status }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div *ngIf="detailTab === 'concerns'" class="space-y-3">
+      <div *ngIf="concerns.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
+        No concerns found.
+      </div>
+      <div *ngIf="concerns.length > 0" class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-300">
+            <tr>
+              <th class="px-4 py-3">SO Number</th>
+              <th class="px-4 py-3">Type</th>
+              <th class="px-4 py-3">Subject</th>
+              <th class="px-4 py-3">Status</th>
+              <th class="px-4 py-3">Priority</th>
+              <th class="px-4 py-3">Resolved At</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+            <tr *ngFor="let concern of concerns" class="hover:bg-gray-50 dark:hover:bg-gray-800">
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.soNumber }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.concernType }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.concernSubject }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.concernStatus }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.priority }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.resolvedAt }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div *ngIf="uiError" class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+      {{ uiError }}
+    </div>
+  </div>
+</aside>

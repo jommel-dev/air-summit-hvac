@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { apiClient } from './api-client';
+import { MaterialTransactionItem } from './sales-order-material.service';
 
 export interface SalesCustomerOption {
   id: string;
@@ -13,6 +14,7 @@ export interface SalesCustomerOption {
 
 export interface SalesCustomerPayload {
   name: string;
+  customer_type?: 'regular' | 'sub_dealer';
   address?: string;
   contact_person?: string;
   contact_number?: string;
@@ -51,17 +53,60 @@ export interface SalesProductItemPayload {
   serialNumbers?: Record<string, unknown>;
 }
 
+export interface SalesOrderServiceItemPayload {
+  serviceName?: string;
+  unitPrice?: number;
+  qty?: number;
+  total?: number;
+}
+
+export interface SalesOrderTransferDetailsPayload {
+  fromBranchId?: number;
+  toBranchId?: number;
+  transferDate?: string | null;
+  expectedDeliveryDate?: string | null;
+  actualDeliveryDate?: string | null;
+  transferStatus?: string;
+  transferNotes?: string;
+}
+
+export interface SalesOrderConcernDetailsPayload {
+  concernType?: string;
+  concernSubject?: string;
+  concernDescription?: string;
+  concernStatus?: string;
+  priority?: string;
+  resolutionNotes?: string;
+  resolvedAt?: string | null;
+}
+
+export interface SalesOrderExpenseDetailsPayload {
+  expenseType?: string;
+  expenseDescription?: string;
+  amount?: number;
+  expenseDate?: string | null;
+  paidTo?: string;
+  paymentMethod?: string;
+  referenceNo?: string;
+}
+
 export interface SalesOrderPayload {
   customer_id?: string | null;
   customer?: SalesCustomerPayload;
   paymentDetails?: SalesPaymentDetailsPayload | SalesPaymentDetailsPayload[];
   productItems: SalesProductItemPayload[];
+  serviceItems?: SalesOrderServiceItemPayload[];
+  expenseDetails?: SalesOrderExpenseDetailsPayload[];
   so_number?: string;
   totalAmount?: number;
   scheduleDate?: string | null;
   salesType?: string;
+  projectName?: string;
+  projectCode?: string;
   installer?: string;
   remarks?: string;
+  transferDetails?: SalesOrderTransferDetailsPayload;
+  concernDetails?: SalesOrderConcernDetailsPayload;
   status?: string;
 }
 
@@ -84,9 +129,93 @@ export interface SalesOrderListItem {
   totalAmount: number;
   status: string;
   salesType?: string;
+  projectName?: string;
+  projectCode?: string;
   scheduleDate: string | null;
   createdAt: string | null;
   serialCount: number;
+}
+
+export interface SalesCustomerDetail {
+  id: string;
+  name: string;
+  customer_type: 'regular' | 'sub_dealer';
+  current_balance: number;
+  payment_terms: number;
+  address: string;
+  contact_person: string;
+  contact_number: string;
+  email: string;
+  tin_number: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface SalesCustomerOrder {
+  id: number;
+  soNumber: string;
+  totalAmount: number;
+  status: string;
+  salesType: string;
+  createdAt: string | null;
+}
+
+export interface SalesCustomerPayment {
+  id: string;
+  paymentDate: string | null;
+  paymentAmount: number;
+  paymentMethod: string;
+  referenceNo: string;
+  paymentNotes: string;
+  createdAt: string | null;
+}
+
+export interface SalesCustomerConcern {
+  id: number;
+  salesId: number;
+  soNumber: string;
+  concernType: string;
+  concernSubject: string;
+  concernDescription: string;
+  concernStatus: string;
+  priority: string;
+  resolutionNotes: string;
+  resolvedAt: string | null;
+}
+
+export interface SalesStatementOfAccountItem {
+  id: number;
+  soaNumber: string;
+  periodFrom: string | null;
+  periodTo: string | null;
+  openingBalance: number;
+  totalCharges: number;
+  totalPayments: number;
+  closingBalance: number;
+  status: string;
+  dueDate: string | null;
+  notes: string;
+  generatedAt: string | null;
+}
+
+export interface SalesCustomerCreatePayload {
+  name: string;
+  address?: string;
+  contactPerson?: string;
+  contactNumber?: string;
+  email?: string;
+  tinNumber?: string;
+  customerType?: 'regular' | 'sub_dealer';
+  paymentTerms?: number;
+}
+
+export interface SalesCustomerUpdatePayload extends Partial<SalesCustomerCreatePayload> {}
+
+export interface CustomerQueryParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  type?: 'regular' | 'sub_dealer';
 }
 
 export interface SalesOrderDetailPayment extends SalesPaymentDetailsPayload {
@@ -124,6 +253,13 @@ export interface SalesOrderDetailProductItem {
   status: string;
   serialNumbers: Record<string, string[]>;
 }
+export interface SalesOrderDetailServiceItem {
+  id: number;
+  serviceName: string;
+  unitPrice: number;
+  qty: number;
+  total: number;
+}
 
 export interface SalesOrderDetailItem {
   id: number;
@@ -139,10 +275,17 @@ export interface SalesOrderDetailItem {
   status: string;
   scheduleDate: string | null;
   salesType: string;
+  projectName: string;
+  projectCode: string;
   installer: string;
   remarks: string;
   paymentDetails: SalesOrderDetailPayment[];
   productItems: SalesOrderDetailProductItem[];
+  serviceItems: SalesOrderDetailServiceItem[];
+  transferDetails?: SalesOrderTransferDetailsPayload | null;
+  concernDetails?: SalesOrderConcernDetailsPayload | null;
+  expenseDetails?: SalesOrderExpenseDetailsPayload[];
+  materialItems?: MaterialTransactionItem[];
   createdAt: string | null;
 }
 
@@ -159,6 +302,7 @@ export interface ProductOption {
   id: number;
   name: string;
   brandName?: string;
+  brandType?: string;
   unit?: string;
   unitTypes?: string[];
   capacities: ProductCapacityOption[];
@@ -281,13 +425,17 @@ export class SalesOrderService {
     };
   }
 
-  async getSalesOrderById(id: number): Promise<SalesOrderDetailItem | null> {
+  async getSalesOrderById(id: number): Promise<SalesOrderDetailItem> {
     const response = await apiClient.get<SalesOrderDetailResponse>(`/sales-order/${id}`);
     if (!response.data.success) {
-      return null;
+      throw new Error(response.data.message || 'Failed to load sales order detail');
     }
 
-    return response.data.item ?? null;
+    if (!response.data.item) {
+      throw new Error('Sales order not found');
+    }
+
+    return response.data.item;
   }
 
   async getCustomers(search?: string): Promise<SalesCustomerOption[]> {
@@ -298,6 +446,138 @@ export class SalesOrderService {
     });
 
     return response.data.items ?? [];
+  }
+
+  async listCustomers(
+    params: CustomerQueryParams,
+  ): Promise<{ items: SalesCustomerDetail[]; meta: SalesListMeta }> {
+    const response = await apiClient.get<{ success: boolean; items?: SalesCustomerDetail[]; meta?: SalesListMeta }>(
+      '/sales-order/customers',
+      { params },
+    );
+
+    return {
+      items: response.data.items ?? [],
+      meta: response.data.meta ?? { page: params.page ?? 1, limit: params.limit ?? 50, total: 0, totalPages: 1 },
+    };
+  }
+
+  async getCustomer(id: string): Promise<SalesCustomerDetail> {
+    const response = await apiClient.get<{ success: boolean; message?: string; data?: SalesCustomerDetail }>(
+      `/sales-order/customers/${id}`,
+    );
+
+    if (!response.data.success || !response.data.data) {
+      throw new Error(response.data?.message || 'Failed to load customer');
+    }
+
+    return response.data.data;
+  }
+
+  async createCustomer(
+    payload: SalesCustomerCreatePayload,
+  ): Promise<{ success: boolean; message?: string; data?: { id?: string } }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; data?: { id?: string } }>(
+      '/sales-order/customers',
+      payload,
+    );
+
+    return response.data;
+  }
+
+  async updateCustomer(
+    id: string,
+    payload: SalesCustomerUpdatePayload,
+  ): Promise<{ success: boolean; message?: string; data?: any }> {
+    const response = await apiClient.patch<{ success: boolean; message?: string; data?: any }>(
+      `/sales-order/customers/${id}`,
+      payload,
+    );
+
+    return response.data;
+  }
+
+  async deleteCustomer(id: string): Promise<{ success: boolean; message?: string; data?: any }> {
+    const response = await apiClient.delete<{ success: boolean; message?: string; data?: any }>(
+      `/sales-order/customers/${id}`,
+    );
+
+    return response.data;
+  }
+
+  async getCustomerOrders(
+    id: string,
+    params: SalesQueryParams,
+  ): Promise<{ items: SalesCustomerOrder[]; meta: SalesListMeta }> {
+    const response = await apiClient.get<{ success: boolean; items?: SalesCustomerOrder[]; meta?: SalesListMeta }>(
+      `/sales-order/customers/${id}/orders`,
+      { params },
+    );
+
+    return {
+      items: response.data.items ?? [],
+      meta: response.data.meta ?? { page: params.page ?? 1, limit: params.limit ?? 50, total: 0, totalPages: 1 },
+    };
+  }
+
+  async getCustomerPayments(id: string): Promise<{ success: boolean; items?: SalesCustomerPayment[]; message?: string }> {
+    const response = await apiClient.get<{ success: boolean; items?: SalesCustomerPayment[]; message?: string }>(
+      `/sales-order/customers/${id}/payments`,
+    );
+
+    return response.data;
+  }
+
+  async getCustomerConcerns(id: string): Promise<{ success: boolean; items?: SalesCustomerConcern[]; message?: string }> {
+    const response = await apiClient.get<{ success: boolean; items?: SalesCustomerConcern[]; message?: string }>(
+      `/sales-order/customers/${id}/concerns`,
+    );
+
+    return response.data;
+  }
+
+  async getCustomerStatementOfAccounts(
+    id: string,
+    params: SalesQueryParams,
+  ): Promise<{ items: SalesStatementOfAccountItem[]; meta: SalesListMeta }> {
+    const response = await apiClient.get<{ success: boolean; items?: SalesStatementOfAccountItem[]; meta?: SalesListMeta }>(
+      `/sales-order/customers/${id}/statement-of-account`,
+      { params },
+    );
+
+    return {
+      items: response.data.items ?? [],
+      meta: response.data.meta ?? { page: params.page ?? 1, limit: params.limit ?? 50, total: 0, totalPages: 1 },
+    };
+  }
+
+  async createCustomerStatementOfAccount(
+    id: string,
+    payload: { periodFrom: string; periodTo: string; dueDate?: string; notes?: string },
+  ): Promise<{ success: boolean; message?: string; data?: { statementOfAccountId?: number } }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; data?: { statementOfAccountId?: number } }>(
+      `/sales-order/customers/${id}/statement-of-account`,
+      payload,
+    );
+
+    return response.data;
+  }
+
+  async getBranches(): Promise<{ id: number; branchName: string }[]> {
+    const response = await apiClient.get<{ success: boolean; items?: { id: number; branchName: string }[] }>('/sales-order/branches');
+    return response.data.items ?? [];
+  }
+
+  async createStatementOfAccount(
+    salesOrderId: number,
+    payload: { periodFrom: string; periodTo: string; dueDate?: string; notes?: string },
+  ): Promise<{ success: boolean; message?: string; data?: { statementOfAccountId?: number } }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; data?: { statementOfAccountId?: number } }>(
+      `/sales-order/${salesOrderId}/statement-of-account`,
+      payload,
+    );
+
+    return response.data;
   }
 
   async getProducts(): Promise<ProductOption[]> {

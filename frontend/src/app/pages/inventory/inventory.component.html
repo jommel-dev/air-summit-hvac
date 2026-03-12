@@ -109,7 +109,15 @@
                                   ? 'text-brand-700 dark:text-brand-300'
                                   : 'text-gray-600 dark:text-gray-400'"
                               >
-                                📄 {{ capacity.name }}
+                                <span class="inline-flex items-center gap-1">
+                                  <span>📄</span>
+                                  <span>{{ capacity.name }}</span>
+                                  @if (getCapacityStockLabel(capacity.id)) {
+                                    <span class="text-xs text-gray-500 dark:text-gray-400">
+                                      ({{ getCapacityStockLabel(capacity.id) }})
+                                    </span>
+                                  }
+                                </span>
                               </button>
                             } @empty {
                               <p class="px-2 py-1 text-xs text-gray-500 dark:text-gray-400">No capacities</p>

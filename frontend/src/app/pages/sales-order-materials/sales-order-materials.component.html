@@ -1,0 +1,324 @@
+<div class="min-h-screen bg-gray-50 dark:bg-gray-950">
+  <app-page-breadcrumb pageTitle="Sales Order Materials" />
+
+  <!-- Search and Filter Section -->
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] xl:p-6">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">Sales Orders</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Select a sales order to manage its materials.</p>
+      </div>
+      <div class="flex gap-2">
+        <input
+          type="text"
+          class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+          placeholder="Search by order or customer..."
+          [(ngModel)]="salesOrderSearch"
+        />
+        <button
+          type="button"
+          (click)="loadSalesOrders()"
+          class="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
+        >
+          Search
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sales Orders Table -->
+  <div class="mt-6 rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03]">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-gray-200 text-left text-sm text-gray-600 dark:divide-gray-800 dark:text-gray-300">
+        <thead class="bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:bg-gray-900 dark:text-gray-400">
+          <tr>
+            <th class="px-6 py-4">Order Number</th>
+            <th class="px-6 py-4">Customer</th>
+            <th class="px-6 py-4">Status</th>
+            <th class="px-6 py-4">Total Amount</th>
+            <th class="px-6 py-4">Materials</th>
+            <th class="px-6 py-4">Action</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-200 dark:divide-gray-800">
+          <tr *ngFor="let order of salesOrders" [class.bg-blue-50]="order.id === selectedSalesOrderId" [class.dark:bg-blue-900/20]="order.id === selectedSalesOrderId" class="hover:bg-gray-50 dark:hover:bg-gray-900">
+            <td class="px-6 py-4 font-medium text-gray-900 dark:text-white">{{ order.soNumber }}</td>
+            <td class="px-6 py-4">{{ order.customerName }}</td>
+            <td class="px-6 py-4">
+              <span class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold" [ngClass]="getStatusClass(order.status)">
+                {{ order.status }}
+              </span>
+            </td>
+            <td class="px-6 py-4">{{ formatCurrency(order.totalAmount) }}</td>
+            <td class="px-6 py-4">{{ order.serialCount || 0 }}</td>
+            <td class="px-6 py-4">
+              <button
+                type="button"
+                (click)="selectAndOpenDrawer(order.id)"
+                class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand-600"
+              >
+                Add Materials
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Empty State -->
+    <div *ngIf="!isLoadingSalesOrders && salesOrders.length === 0" class="flex flex-col items-center justify-center px-6 py-12">
+      <p class="text-sm text-gray-500 dark:text-gray-400">No sales orders found.</p>
+    </div>
+
+    <!-- Loading State -->
+    <div *ngIf="isLoadingSalesOrders" class="flex flex-col items-center justify-center px-6 py-12">
+      <p class="text-sm text-gray-500 dark:text-gray-400">Loading sales orders...</p>
+    </div>
+
+    <!-- Pagination -->
+    <div *ngIf="!isLoadingSalesOrders && salesOrders.length > 0" class="flex items-center justify-between border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+      <p class="text-sm text-gray-600 dark:text-gray-400">
+        Showing {{ (salesOrdersMeta.page - 1) * salesOrdersMeta.limit + 1 }} to {{ Math.min(salesOrdersMeta.page * salesOrdersMeta.limit, salesOrdersMeta.total) }} of {{ salesOrdersMeta.total }} orders
+      </p>
+      <div class="flex gap-2">
+        <button
+          type="button"
+          (click)="loadSalesOrders(salesOrdersMeta.page - 1)"
+          [disabled]="salesOrdersMeta.page === 1"
+          class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Previous
+        </button>
+        <div class="flex items-center gap-1">
+          <span class="text-sm text-gray-600 dark:text-gray-400">Page {{ salesOrdersMeta.page }} of {{ salesOrdersMeta.totalPages }}</span>
+        </div>
+        <button
+          type="button"
+          (click)="loadSalesOrders(salesOrdersMeta.page + 1)"
+          [disabled]="salesOrdersMeta.page === salesOrdersMeta.totalPages"
+          class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+
+  <!-- Add Materials Drawer -->
+  <ng-container *ngIf="isAddDrawerOpen">
+    <div class="fixed inset-0 z-[100010] bg-gray-900/50" (click)="closeAddDrawer()"></div>
+    <aside
+      class="fixed right-0 top-0 z-[100011] h-full w-full max-w-3xl transform overflow-y-auto border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
+      [ngClass]="isAddDrawerOpen ? 'translate-x-0' : 'translate-x-full'"
+    >
+      <form class="flex h-full flex-col" (ngSubmit)="saveMaterialItem()">
+        <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+          <div>
+            <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Material Sales</h3>
+            <p class="text-sm text-gray-500 dark:text-gray-400">Select material and enter details before saving.</p>
+          </div>
+          <button
+            type="button"
+            (click)="closeAddDrawer()"
+            class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            Close
+          </button>
+        </div>
+
+        <!-- Selected Order Details and Materials Section -->
+        <div *ngIf="selectedSalesOrder" class="px-6 py-4">
+          <!-- Order Info Card -->
+          <div class="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-white/[0.03]">
+            <div class="mb-4 flex flex-col justify-between sm:flex-row sm:items-center">
+              <div>
+                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ selectedSalesOrder.soNumber }}</h3>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ selectedSalesOrder.customerName }}</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div class="rounded-lg bg-gray-50 p-4 dark:bg-gray-900">
+                <p class="text-xs font-medium text-gray-600 dark:text-gray-400">Status</p>
+                <p class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{{ selectedSalesOrder.status }}</p>
+              </div>
+              <div class="rounded-lg bg-gray-50 p-4 dark:bg-gray-900">
+                <p class="text-xs font-medium text-gray-600 dark:text-gray-400">Total Amount</p>
+                <p class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">{{ formatCurrency(selectedSalesOrder.totalAmount) }}</p>
+              </div>
+              <div class="rounded-lg bg-gray-50 p-4 dark:bg-gray-900">
+                <p class="text-xs font-medium text-gray-600 dark:text-gray-400">Schedule Date</p>
+                <p class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">
+                  {{ selectedSalesOrder.scheduleDate ? (selectedSalesOrder.scheduleDate | date: 'MMM dd, yyyy') : '–' }}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Existing Materials in this Order -->
+        <div class="border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+          <div class="flex items-center justify-between">
+            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Materials Added</h4>
+            <span class="text-xs text-gray-500 dark:text-gray-400">Total: {{ formatCurrency(getTotalAmount()) }}</span>
+          </div>
+
+          <div *ngIf="isLoading" class="mt-4 text-sm text-gray-500 dark:text-gray-400">Loading materials...</div>
+          <div *ngIf="!isLoading && materialItems.length === 0" class="mt-4 text-sm text-gray-500 dark:text-gray-400">No materials have been added to this order yet.</div>
+
+          <div *ngIf="!isLoading && materialItems.length > 0" class="mt-4 overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-left text-sm text-gray-600 dark:divide-gray-800 dark:text-gray-300">
+              <thead class="bg-gray-50 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:bg-gray-900 dark:text-gray-400">
+                <tr>
+                  <th class="px-3 py-2">Material</th>
+                  <th class="px-3 py-2">Qty</th>
+                  <th class="px-3 py-2">Total</th>
+                  <th class="px-3 py-2">Action</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-200 dark:divide-gray-800">
+                <tr *ngFor="let item of groupedMaterialItems" class="hover:bg-gray-50 dark:hover:bg-gray-900">
+                  <td class="px-3 py-2 font-medium text-gray-900 dark:text-white">{{ item.material_name || '–' }}</td>
+                  <td class="px-3 py-2">{{ item.quantity }}</td>
+                  <td class="px-3 py-2 font-semibold text-gray-900 dark:text-white">{{ formatCurrency(item.total) }}</td>
+                  <td class="px-3 py-2">
+                    <button
+                      type="button"
+                      (click)="removeGroupedMaterialItem(item.material_id)"
+                      class="inline-flex rounded-lg border border-red-300 bg-red-50 px-2 py-1 text-xs font-medium text-red-600 transition hover:bg-red-100 dark:border-red-700/40 dark:bg-red-900 dark:text-red-200 dark:hover:bg-red-800"
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="flex-1 space-y-6 overflow-y-auto px-6 py-6">
+          <div class="mb-3 flex items-center justify-between">
+            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Material List</h4>
+            <button type="button" (click)="addMaterialRow()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 dark:border-brand-500/40 dark:text-brand-300">
+              Add Material
+            </button>
+          </div>
+          <div class="space-y-4">
+            <ng-container *ngFor="let row of materialFormRows; let index = index">
+              <div class="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
+                <div class="mb-4 flex items-center justify-between">
+                  <div class="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                    <select
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                      [(ngModel)]="row.material_id"
+                      [name]="'material_id_' + index"
+                      (change)="onMaterialSelect(index)"
+                    >
+                      <option [value]="0" disabled>-- Select Material --</option>
+                      <ng-container *ngFor="let material of availableMaterials">
+                        <option [value]="material.id">{{ material.material_name }}</option>
+                      </ng-container>
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    (click)="removeMaterialRow(index)"
+                    [disabled]="materialFormRows.length <= 1"
+                    class="rounded-lg border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    Remove
+                  </button>
+                </div>
+
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Quantity *</label>
+                    <input
+                      type="number"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                      [(ngModel)]="row.quantity"
+                      [name]="'quantity_' + index"
+                      min="1"
+                      placeholder="Enter quantity"
+                    />
+                  </div>
+
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Unit Price</label>
+                    <div class="flex items-center gap-2">
+                      <span class="inline-flex h-10 items-center rounded-lg border border-gray-300 bg-gray-100 px-3 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800">₱</span>
+                      <input
+                        type="number"
+                        class="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                        [(ngModel)]="row.unit_price"
+                        [name]="'unit_price_' + index"
+                        step="0.01"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Sell Price</label>
+                    <div class="flex items-center gap-2">
+                      <span class="inline-flex h-10 items-center rounded-lg border border-gray-300 bg-gray-100 px-3 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800">₱</span>
+                      <input
+                        type="number"
+                        class="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                        [(ngModel)]="row.sell_price"
+                        [name]="'sell_price_' + index"
+                        step="0.01"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Discount Price</label>
+                    <div class="flex items-center gap-2">
+                      <span class="inline-flex h-10 items-center rounded-lg border border-gray-300 bg-gray-100 px-3 text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800">₱</span>
+                      <input
+                        type="number"
+                        class="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                        [(ngModel)]="row.discount_price"
+                        [name]="'discount_price_' + index"
+                        step="0.01"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <ng-container *ngIf="materialFormRows.some((row) => row.material_id > 0 && row.quantity > 0)">
+                  <div class="rounded-xl border border-gray-200 bg-white p-6 mt-2 dark:border-gray-800 dark:bg-gray-900">
+                    <div class="flex items-center justify-between">
+                      <div class="text-sm text-gray-500 dark:text-gray-400">Estimated Total</div>
+                      <div class="text-xl font-semibold text-brand-700 dark:text-brand-200">{{ formatCurrency(calculatePreviewTotal()) }}</div>
+                    </div>
+                  </div>
+                </ng-container>
+              </div>
+            </ng-container>
+          </div>
+        </div>
+
+        <div class="border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          <div class="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              (click)="closeAddDrawer()"
+              class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              class="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-700"
+            >
+              Create Material SO
+            </button>
+          </div>
+        </div>
+      </form>
+    </aside>
+  </ng-container>
+</div>

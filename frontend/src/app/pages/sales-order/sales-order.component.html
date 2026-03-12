@@ -75,6 +75,8 @@
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Sales Type</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Project Code</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Project Name</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Count</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Created At</th>
               <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
@@ -99,6 +101,8 @@
                   </span>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.salesType || '-' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.projectCode || '-' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.projectName || '-' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.serialCount ?? 0 }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDate(order.createdAt) }}</td>
                 <td class="px-4 py-3 text-right">
@@ -186,6 +190,42 @@
       </div>
 
       <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Sales Order</h4>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Schedule Date</label>
+              <input type="date" [(ngModel)]="form.scheduleDate" name="scheduleDate" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Sales Type</label>
+              <select [(ngModel)]="form.salesType" name="salesType" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                @for (salesType of salesTypeOptions; track salesType) {
+                  <option [value]="salesType">{{ salesType }}</option>
+                }
+              </select>
+            </div>
+            @if (form.salesType === 'project') {
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Code</label>
+                <input type="text" [(ngModel)]="form.projectCode" name="projectCode" placeholder="Enter project code" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Name</label>
+                <input type="text" [(ngModel)]="form.projectName" name="projectName" placeholder="Enter project name" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+            }
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Installer</label>
+              <input type="text" [(ngModel)]="form.installer" name="installer" placeholder="Enter installer" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div class="md:col-span-2">
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Remarks</label>
+              <textarea [(ngModel)]="form.remarks" name="remarks" placeholder="Enter remarks" rows="3" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
+            </div>
+          </div>
+        </section>
+
         <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
           <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Customer</h4>
           <div class="mb-3 flex gap-5 text-sm">
@@ -329,32 +369,6 @@
         </section>
 
         <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
-          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Sales Order</h4>
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div>
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Schedule Date</label>
-              <input type="date" [(ngModel)]="form.scheduleDate" name="scheduleDate" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-            </div>
-            <div>
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Sales Type</label>
-              <select [(ngModel)]="form.salesType" name="salesType" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
-                @for (salesType of salesTypeOptions; track salesType) {
-                  <option [value]="salesType">{{ salesType }}</option>
-                }
-              </select>
-            </div>
-            <div>
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Installer</label>
-              <input type="text" [(ngModel)]="form.installer" name="installer" placeholder="Enter installer" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-            </div>
-            <div class="md:col-span-2">
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Remarks</label>
-              <textarea [(ngModel)]="form.remarks" name="remarks" placeholder="Enter remarks" rows="3" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
-            </div>
-          </div>
-        </section>
-
-        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
           <div class="mb-3 flex items-center justify-between">
             <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Payment Details (Split Payment)</h4>
             <button type="button" (click)="addPaymentDetail()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 dark:border-brand-500/40 dark:text-brand-300">
@@ -473,37 +487,38 @@
           </div>
         </section>
 
-        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
-          <div class="mb-3 flex items-center justify-between">
-            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Product Items</h4>
-            <button type="button" (click)="addProductItem()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 dark:border-brand-500/40 dark:text-brand-300">
-              Add Product
-            </button>
-          </div>
-
-          <div class="mb-4 flex flex-wrap gap-2">
-            @for (item of form.productItems; track $index; let index = $index) {
-              <button
-                type="button"
-                (click)="setActiveProductTab(index)"
-                class="rounded-lg border px-3 py-1.5 text-xs font-medium"
-                [ngClass]="activeProductTabIndex === index
-                  ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
-                  : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
-              >
-                Product {{ index + 1 }}
+        @if (!['service', 'concern'].includes(form.salesType)) {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <div class="mb-3 flex items-center justify-between">
+              <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Product Items</h4>
+              <button type="button" (click)="addProductItem()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 dark:border-brand-500/40 dark:text-brand-300">
+                Add Product
               </button>
-            }
-          </div>
+            </div>
 
-          @if (getActiveProductItem(); as activeItem) {
-            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
-              <div class="mb-3 flex items-center justify-between">
-                <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Item {{ activeProductTabIndex + 1 }}</p>
-                <button type="button" (click)="removeProductItem(activeProductTabIndex)" [disabled]="form.productItems.length === 1" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
-                  Remove
+            <div class="mb-4 flex flex-wrap gap-2">
+              @for (item of form.productItems; track $index; let index = $index) {
+                <button
+                  type="button"
+                  (click)="setActiveProductTab(index)"
+                  class="rounded-lg border px-3 py-1.5 text-xs font-medium"
+                  [ngClass]="activeProductTabIndex === index
+                    ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
+                    : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                >
+                  Product {{ index + 1 }}
                 </button>
-              </div>
+              }
+            </div>
+
+            @if (getActiveProductItem(); as activeItem) {
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                <div class="mb-3 flex items-center justify-between">
+                  <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Item {{ activeProductTabIndex + 1 }}</p>
+                  <button type="button" (click)="removeProductItem(activeProductTabIndex)" [disabled]="form.productItems.length === 1" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
+                    Remove
+                  </button>
+                </div>
 
               <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
@@ -650,6 +665,258 @@
             <input type="number" [(ngModel)]="form.totalAmount" name="computedTotalAmount" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
           </div>
         </section>
+
+        @if (form.salesType === 'transfer') {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <div class="mb-3 flex items-center justify-between">
+              <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Transfer Details</h4>
+            </div>
+
+            <div class="grid gap-3 md:grid-cols-2">
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">From Branch</label>
+                <select [(ngModel)]="form.transferDetails.fromBranchId" name="fromBranchId" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                  <option value="">Select branch</option>
+                  @for (branch of branchOptions; track branch.id) {
+                    <option [value]="branch.id">{{ branch.branchName }}</option>
+                  }
+                </select>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">To Branch</label>
+                <select [(ngModel)]="form.transferDetails.toBranchId" name="toBranchId" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                  <option value="">Select branch</option>
+                  @for (branch of branchOptions; track branch.id) {
+                    <option [value]="branch.id">{{ branch.branchName }}</option>
+                  }
+                </select>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Transfer Date</label>
+                <input type="date" [(ngModel)]="form.transferDetails.transferDate" name="transferDate" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Expected Delivery</label>
+                <input type="date" [(ngModel)]="form.transferDetails.expectedDeliveryDate" name="expectedDeliveryDate" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Actual Delivery</label>
+                <input type="date" [(ngModel)]="form.transferDetails.actualDeliveryDate" name="actualDeliveryDate" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Transfer Notes</label>
+                <textarea [(ngModel)]="form.transferDetails.transferNotes" name="transferNotes" rows="3" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
+              </div>
+            </div>
+
+            <div class="mt-4">
+              <div class="mb-3 flex items-center justify-between">
+                <h5 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Expenses</h5>
+                <button type="button" (click)="addTransferExpenseItem()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 dark:border-brand-500/40 dark:text-brand-300">
+                  Add Expense
+                </button>
+              </div>
+
+              <div class="space-y-3">
+                @for (expense of form.expenseDetails; track $index; let index = $index) {
+                  <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                    <div class="flex items-center justify-between pb-3">
+                      <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Expense {{ index + 1 }}</p>
+                      <button type="button" (click)="removeTransferExpenseItem(index)" [disabled]="form.expenseDetails.length === 1" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
+                        Remove
+                      </button>
+                    </div>
+
+                    <div class="grid gap-3 md:grid-cols-2">
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Expense Type</label>
+                        <input type="text" [(ngModel)]="expense.expenseType" name="expenseType_{{index}}" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Amount</label>
+                        <input type="number" [(ngModel)]="expense.amount" name="expenseAmount_{{index}}" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Paid To</label>
+                        <input type="text" [(ngModel)]="expense.paidTo" name="expensePaidTo_{{index}}" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Reference No</label>
+                        <input type="text" [(ngModel)]="expense.referenceNo" name="expenseReferenceNo_{{index}}" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payment Method</label>
+                        <input type="text" [(ngModel)]="expense.paymentMethod" name="expensePaymentMethod_{{index}}" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Expense Date</label>
+                        <input type="date" [(ngModel)]="expense.expenseDate" name="expenseDate_{{index}}" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                      <div class="md:col-span-2">
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Description</label>
+                        <textarea [(ngModel)]="expense.expenseDescription" name="expenseDescription_{{index}}" rows="2" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
+                      </div>
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          </section>
+        }
+
+        @if (form.salesType === 'concern') {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Concern Details</h4>
+            <div class="grid gap-3 md:grid-cols-2">
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Concern Type</label>
+                <input type="text" [(ngModel)]="form.concernDetails.concernType" name="concernType" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Subject</label>
+                <input type="text" [(ngModel)]="form.concernDetails.concernSubject" name="concernSubject" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div class="md:col-span-2">
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Description</label>
+                <textarea [(ngModel)]="form.concernDetails.concernDescription" name="concernDescription" rows="3" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Status</label>
+                <input type="text" [(ngModel)]="form.concernDetails.concernStatus" name="concernStatus" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Priority</label>
+                <input type="text" [(ngModel)]="form.concernDetails.priority" name="priority" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div class="md:col-span-2">
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Resolution Notes</label>
+                <textarea [(ngModel)]="form.concernDetails.resolutionNotes" name="resolutionNotes" rows="2" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Resolved At</label>
+                <input type="date" [(ngModel)]="form.concernDetails.resolvedAt" name="resolvedAt" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+            </div>
+          </section>
+        }
+
+      }
+
+        @if (drawerMode === 'edit') {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <div class="mb-3 flex items-center justify-between">
+              <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Material Items</h4>
+            </div>
+
+            @if (materialItems.length === 0) {
+              <p class="text-xs text-gray-500 dark:text-gray-400">No materials have been added to this sales order.</p>
+            } @else {
+              <div class="overflow-x-auto">
+                <table class="w-full min-w-[600px]">
+                  <thead>
+                    <tr class="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-700 dark:bg-gray-800/40 dark:text-gray-400">
+                      <th class="px-3 py-2">Material</th>
+                      <th class="px-3 py-2">Qty</th>
+                      <th class="px-3 py-2">Unit Price</th>
+                      <th class="px-3 py-2">Discount</th>
+                      <th class="px-3 py-2">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (item of materialItems; track item.id) {
+                      <tr class="border-b border-gray-100 dark:border-gray-800">
+                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ item.material_name || item.material_id }}</td>
+                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ item.quantity }}</td>
+                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ item.unit_price | number:'1.2-2' }}</td>
+                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ item.discount_price | number:'1.2-2' }}</td>
+                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ (item.sell_price || item.unit_price) * item.quantity | number:'1.2-2' }}</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            }
+          </section>
+        }
+
+        @if (['sales and service', 'service'].includes(form.salesType)) {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <div class="mb-3 flex items-center justify-between">
+              <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Sevice Details</h4>
+              <button type="button" (click)="addServiceItem()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 dark:border-brand-500/40 dark:text-brand-300">
+                Add Service
+              </button>
+            </div>
+
+            <div class="mb-4 flex flex-wrap gap-2">
+              @for (item of form.serviceItems; track $index; let index = $index) {
+                <button
+                  type="button"
+                  (click)="setActiveServiceTab(index)"
+                  class="rounded-lg border px-3 py-1.5 text-xs font-medium"
+                  [ngClass]="activeServiceTabIndex === index
+                    ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
+                    : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                >
+                  Service {{ index + 1 }}
+                </button>
+              }
+            </div>
+
+            @if (getActiveServiceItem(); as activeItem) {
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                <div class="mb-3 flex items-center justify-between">
+                  <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Item {{ activeServiceTabIndex + 1 }}</p>
+                  <button type="button" (click)="removeServiceItem(activeServiceTabIndex)" [disabled]="form.serviceItems.length === 1" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
+                    Remove
+                  </button>
+                </div>
+
+                <div class="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Service Name</label>
+                    <input
+                      type="text"
+                      [(ngModel)]="activeItem.serviceName"
+                      (ngModelChange)="recalculateTotalAmount()"
+                      name="serviceName_{{activeServiceTabIndex}}"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Unit Price</label>
+                    <input
+                      type="number"
+                      [(ngModel)]="activeItem.unitPrice"
+                      (ngModelChange)="recalculateTotalAmount()"
+                      name="serviceUnitPrice_{{activeServiceTabIndex}}"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Qty / Hours</label>
+                    <input
+                      type="number"
+                      [(ngModel)]="activeItem.qty"
+                      (ngModelChange)="recalculateTotalAmount()"
+                      name="serviceQty_{{activeServiceTabIndex}}"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total</label>
+                    <input
+                      type="number"
+                      [value]="((+activeItem.unitPrice || 0) * (+activeItem.qty || 0))"
+                      readonly
+                      class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
+                    />
+                  </div>
+                </div>
+              </div>
+            }
+          </section>
+        }
       </div>
 
       <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">

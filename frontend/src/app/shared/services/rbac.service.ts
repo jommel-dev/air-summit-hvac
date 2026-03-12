@@ -14,10 +14,13 @@ import {
 export type MenuKey =
   | 'dashboard'
   | 'sales_order'
+  | 'customers'
   | 'quotation'
   | 'today_schedule'
   | 'purchase_order'
   | 'inventory'
+  | 'material_inventory'
+  | 'sales_order_materials'
   | 'user_management'
   | 'settings';
 
@@ -50,11 +53,14 @@ export class RbacService {
   private readonly moduleToMenuMap: Record<string, MenuKey> = {
     dashboard: 'dashboard',
     'sales-order': 'sales_order',
+    customers: 'customers',
     quotation: 'quotation',
     'today-schedule': 'today_schedule',
     'schedule-today-sales-order': 'today_schedule',
     'purchase-order': 'purchase_order',
     inventory: 'inventory',
+    'material-inventory': 'material_inventory',
+    'sales-order-materials': 'sales_order_materials',
     'user-management': 'user_management',
     settings: 'settings',
   };

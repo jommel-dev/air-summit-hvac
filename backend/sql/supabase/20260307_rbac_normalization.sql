@@ -120,7 +120,12 @@ VALUES
   ('purchase-order.edit', 'Edit Purchase Order', 'purchase-order', 'action'),
   ('purchase-order.approve', 'Approve Purchase Order', 'purchase-order', 'action'),
   ('purchase-order.tab.local', 'PO Tab: Local', 'purchase-order', 'tab'),
-  ('purchase-order.tab.imported', 'PO Tab: Imported', 'purchase-order', 'tab')
+  ('purchase-order.tab.imported', 'PO Tab: Imported', 'purchase-order', 'tab'),
+
+  ('customers.view', 'View Customers', 'customers', 'feature'),
+  ('customers.create', 'Create Customer', 'customers', 'action'),
+  ('customers.edit', 'Edit Customer', 'customers', 'action'),
+  ('customers.delete', 'Delete Customer', 'customers', 'action')
 ON CONFLICT (key) DO NOTHING;
 
 -- 7) Backfill role->permission links from legacy CSV strings in tblrbac.

@@ -15,6 +15,8 @@ import { SerialNumberModule } from './inventory/serial-number/serial-number.modu
 import { SalesOrderModule } from './sales/sales-order/sales-order.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { QuotationModule } from './sales/quotation/quotation.module';
+import { MaterialsModule } from './inventory/materials/materials.module';
+import { MaterialTransactionsModule } from './inventory/material-transactions/material-transactions.module';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { QuotationModule } from './sales/quotation/quotation.module';
     ProductsModule,
     CapacityModule,
     MaterialItemsModule,
+    MaterialsModule, // NEW: Material Inventory Module
+    MaterialTransactionsModule, // NEW: Material Transactions Module
     UsersModule,
     PurchaseModule,
     VendorModule,
