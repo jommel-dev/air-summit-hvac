@@ -8,11 +8,15 @@ import {
   ProductCapacityOption,
   ProductOption,
   SalesCustomerOption,
+  SalesOrderConcernDetailsPayload,
   SalesOrderDetailItem,
   SalesOrderDetailProductItem,
+  SalesOrderDetailUnitType,
+  SalesOrderExpenseDetailsPayload,
   SalesOrderListItem,
   SalesOrderPayload,
   SalesOrderService,
+  SalesOrderTransferDetailsPayload,
 } from '../../shared/services/sales-order.service';
 import { MaterialTransactionItem } from '../../shared/services/sales-order-material.service';
 import { RbacService } from '../../shared/services/rbac.service';
@@ -34,6 +38,8 @@ interface SalesOrderRow {
   totalAmount: number;
   status: string;
   salesType: string;
+  projectCode?: string;
+  projectName?: string;
   scheduleDate: string;
   serialCount?: number;
   createdAt?: string | null;
@@ -159,14 +165,37 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   activeServiceTabIndex = 0;
   selectedUnitTypeByProduct: Record<number, string> = {};
   materialItems: MaterialTransactionItem[] = [];
+  branchOptions: Array<{ id: number; branchName: string }> = [];
+  activeExpenseTabIndex = 0;
 
-  form = {
+  form: any = {
     customer_id: '',
     totalAmount: 0,
     scheduleDate: '',
     salesType: 'sales',
+    projectName: '',
+    projectCode: '',
     installer: '',
     remarks: '',
+    transferDetails: {
+      fromBranchId: undefined as number | undefined,
+      toBranchId: undefined as number | undefined,
+      transferDate: '',
+      expectedDeliveryDate: '',
+      actualDeliveryDate: '',
+      transferStatus: '',
+      transferNotes: '',
+    },
+    concernDetails: {
+      concernType: '',
+      concernSubject: '',
+      concernDescription: '',
+      concernStatus: '',
+      priority: '',
+      resolutionNotes: '',
+      resolvedAt: '',
+    },
+    expenseDetails: [this.createEmptyExpenseItem()],
     customer: {
       name: '',
       address: '',
@@ -964,6 +993,8 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       totalAmount: Number(item.totalAmount ?? 0),
       status: item.status ?? 'pending',
       salesType: item.salesType ?? '',
+      projectCode: item.projectCode ?? '',
+      projectName: item.projectName ?? '',
       scheduleDate: item.scheduleDate ?? '-',
       serialCount: Number(item.serialCount ?? 0),
       createdAt: item.createdAt ?? null,
@@ -1039,7 +1070,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
   removePaymentDetail(index: number): void {
     if (this.form.paymentDetails.length <= 1) return;
-    this.form.paymentDetails = this.form.paymentDetails.filter((_, itemIndex) => itemIndex !== index);
+    this.form.paymentDetails = this.form.paymentDetails.filter((_: unknown, itemIndex: number) => itemIndex !== index);
   }
 
   addProductItem(): void {
@@ -1056,7 +1087,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
   removeProductItem(index: number): void {
     if (this.form.productItems.length <= 1) return;
-    this.form.productItems = this.form.productItems.filter((_, itemIndex) => itemIndex !== index);
+    this.form.productItems = this.form.productItems.filter((_: unknown, itemIndex: number) => itemIndex !== index);
     delete this.selectedUnitTypeByProduct[index];
     this.selectedUnitTypeByProduct = Object.fromEntries(
       Object.entries(this.selectedUnitTypeByProduct).map(([itemIndex, label]) => {
@@ -1075,11 +1106,23 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
   removeServiceItem(index: number): void {
     if (this.form.serviceItems.length <= 1) return;
-    this.form.serviceItems = this.form.serviceItems.filter((_, itemIndex) => itemIndex !== index);
+    this.form.serviceItems = this.form.serviceItems.filter((_: unknown, itemIndex: number) => itemIndex !== index);
     this.activeServiceTabIndex = Math.max(
       0,
       Math.min(this.activeServiceTabIndex, this.form.serviceItems.length - 1),
     );
+  }
+
+  addTransferExpenseItem(): void {
+    this.form.expenseDetails = [
+      ...this.form.expenseDetails,
+      this.createEmptyExpenseItem(),
+    ];
+  }
+
+  removeTransferExpenseItem(index: number): void {
+    if (this.form.expenseDetails.length <= 1) return;
+    this.form.expenseDetails = this.form.expenseDetails.filter((_: unknown, itemIndex: number) => itemIndex !== index);
   }
 
   getCapacitiesByProduct(productId: string): ProductCapacityOption[] {
@@ -1268,9 +1311,9 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     const item = this.form.productItems[productIndex];
     if (!item) return;
 
-    const normalizedValues = item.unitTypes.map((entry) => Math.max(0, Math.floor(Number(entry.value) || 0)));
+    const normalizedValues = item.unitTypes.map((entry: SalesUnitTypeFormItem) => Math.max(0, Math.floor(Number(entry.value) || 0)));
     const derivedTotalSetQty =
-      normalizedValues.find((value) => value > 0) ?? Math.max(0, Math.floor(Number(item.totalSetQty) || 0));
+      normalizedValues.find((value: number) => value > 0) ?? Math.max(0, Math.floor(Number(item.totalSetQty) || 0));
 
     this.applyTotalSetQtyToUnitTypes(item, derivedTotalSetQty);
 
@@ -1289,14 +1332,14 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
   private applyTotalSetQtyToUnitTypes(item: SalesProductFormItem, totalSetQty: number): void {
     item.totalSetQty = totalSetQty;
-    item.unitTypes = item.unitTypes.map((entry) => ({
+    item.unitTypes = item.unitTypes.map((entry: SalesUnitTypeFormItem) => ({
       ...entry,
       value: totalSetQty,
     }));
   }
 
   recalculateTotalAmount(): void {
-    const total = this.form.productItems.reduce((sum, item) => {
+    const productTotal = this.form.productItems.reduce((sum: number, item: SalesProductFormItem) => {
       const unitPrice = Number(item.unitPrice) || 0;
       const sellPrice = Number(item.sellPrice) || 0;
       const discountPrice = Number(item.discountPrice) || 0;
@@ -1305,14 +1348,26 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       return sum + priceToUse * qty;
     }, 0);
 
-    this.form.totalAmount = total;
+    let serviceTotal = 0;
+    this.form.serviceItems = this.form.serviceItems.map((item: SalesServiceFormItem) => {
+      const unitPrice = Number(item.unitPrice) || 0;
+      const qty = Math.max(0, Math.floor(Number(item.qty) || 0));
+      const total = unitPrice * qty;
+      serviceTotal += total;
+      return {
+        ...item,
+        total,
+      };
+    });
+
+    this.form.totalAmount = productTotal + serviceTotal;
     this.syncPaymentAmounts();
   }
 
   onSerialScanInputChange(productIndex: number, unitLabel: string, value: string): void {
     const item = this.form.productItems[productIndex];
     if (!item) return;
-    const unitEntry = item.unitTypes.find((entry) => entry.label === unitLabel);
+    const unitEntry = item.unitTypes.find((entry: SalesUnitTypeFormItem) => entry.label === unitLabel);
     if (!unitEntry) return;
 
     unitEntry.scanInput = value;
@@ -1339,7 +1394,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     if (!item) return;
 
     const unitLabel = this.getSelectedUnitTypeLabel(productIndex);
-    const unitEntry = item.unitTypes.find((entry) => entry.label === unitLabel);
+    const unitEntry = item.unitTypes.find((entry: SalesUnitTypeFormItem) => entry.label === unitLabel);
     if (!unitEntry) return;
 
     const serialNumber = this.normalizeSerial(unitEntry.scanInput);
@@ -1370,10 +1425,10 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     }
 
     const normalizedIncoming = serialNumber.toLowerCase();
-    const existsInOtherUnitType = item.unitTypes.some((entry) => {
+    const existsInOtherUnitType = item.unitTypes.some((entry: SalesUnitTypeFormItem) => {
       if (entry.label === unitLabel) return false;
       return entry.serials.some(
-        (serial) => this.normalizeSerial(serial).toLowerCase() === normalizedIncoming,
+        (serial: string) => this.normalizeSerial(serial).toLowerCase() === normalizedIncoming,
       );
     });
 
@@ -1400,7 +1455,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
       const normalizedSerial = this.normalizeSerial(response.item?.serialNumber ?? serialNumber);
       const existingSerialsLower = new Set(
-        unitEntry.serials.map((entry) => this.normalizeSerial(entry).toLowerCase()),
+        unitEntry.serials.map((entry: string) => this.normalizeSerial(entry).toLowerCase()),
       );
 
       if (!existingSerialsLower.has(normalizedSerial.toLowerCase())) {
@@ -1430,7 +1485,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
     const item = this.form.productItems[productIndex];
     if (!item) return;
-    const unitEntry = item.unitTypes.find((entry) => entry.label === unitLabel);
+    const unitEntry = item.unitTypes.find((entry: SalesUnitTypeFormItem) => entry.label === unitLabel);
     if (!unitEntry) return;
 
     unitEntry.scanError = '';
@@ -1451,7 +1506,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
       const normalizedTarget = this.normalizeSerial(serialNumber).toLowerCase();
       unitEntry.serials = unitEntry.serials.filter(
-        (entry) => this.normalizeSerial(entry).toLowerCase() !== normalizedTarget,
+        (entry: string) => this.normalizeSerial(entry).toLowerCase() !== normalizedTarget,
       );
       unitEntry.serialInput = unitEntry.serials.join('\n');
       unitEntry.scanSuccess = response.message ?? 'Serial number removed successfully';
@@ -1472,6 +1527,44 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   async saveDesignForm(): Promise<void> {
     if (this.isSubmitting) {
       return;
+    }
+
+    const salesType = this.form.salesType;
+
+    if (salesType === 'transfer') {
+      const td = this.form.transferDetails ?? {};
+      if (!td.fromBranchId || !td.toBranchId) {
+        this.uiError = 'Please select both source and destination branches for transfer.';
+        return;
+      }
+      if (td.fromBranchId === td.toBranchId) {
+        this.uiError = 'From and To branch must be different for transfer.';
+        return;
+      }
+    }
+
+    if (['service', 'sales and service'].includes(salesType)) {
+      const hasService = (this.form.serviceItems ?? []).some((item: any) =>
+        String(item.serviceName ?? '').trim().length > 0 ||
+        Number(item.unitPrice) > 0 ||
+        Number(item.qty) > 0,
+      );
+      if (!hasService) {
+        this.uiError = 'Add at least one service item.';
+        return;
+      }
+    }
+
+    if (salesType === 'concern') {
+      const cd = this.form.concernDetails ?? {};
+      if (!String(cd.concernType ?? '').trim() && !String(cd.concernSubject ?? '').trim()) {
+        this.uiError = 'Please provide concern type or subject.';
+        return;
+      }
+      if (!String(cd.concernDescription ?? '').trim()) {
+        this.uiError = 'Please provide a concern description.';
+        return;
+      }
     }
 
     const payload = this.buildPayload();
@@ -1563,17 +1656,68 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   }
 
   private buildPayload(): SalesOrderPayload {
+    const customerType = this.form.salesType === 'sub-dealer' ? 'sub_dealer' : 'regular';
     const normalizedCustomerName = String(this.form.customer.name ?? '').trim();
-    const customerPayload = normalizedCustomerName
-      ? {
-          name: normalizedCustomerName,
-          address: this.form.customer.address || undefined,
-          contact_person: this.form.customer.contact_person || undefined,
-          contact_number: this.form.customer.contact_number || undefined,
-          email: this.form.customer.email || undefined,
-          tin_number: this.form.customer.tin_number || undefined,
-        }
-      : undefined;
+    const customerPayload: any = {
+      customer_type: customerType,
+    };
+
+    if (normalizedCustomerName) {
+      customerPayload.name = normalizedCustomerName;
+      customerPayload.address = this.form.customer.address || undefined;
+      customerPayload.contact_person = this.form.customer.contact_person || undefined;
+      customerPayload.contact_number = this.form.customer.contact_number || undefined;
+      customerPayload.email = this.form.customer.email || undefined;
+      customerPayload.tin_number = this.form.customer.tin_number || undefined;
+    }
+
+    const transferDetailsPayload = (() => {
+      const td = this.form.transferDetails ?? {};
+      const hasTransferInfo =
+        Boolean(td.fromBranchId) ||
+        Boolean(td.toBranchId) ||
+        String(td.transferNotes ?? '').trim().length > 0 ||
+        String(td.transferStatus ?? '').trim().length > 0 ||
+        Boolean(td.transferDate) ||
+        Boolean(td.expectedDeliveryDate) ||
+        Boolean(td.actualDeliveryDate);
+
+      if (!hasTransferInfo) return undefined;
+
+      return {
+        fromBranchId: td.fromBranchId ?? undefined,
+        toBranchId: td.toBranchId ?? undefined,
+        transferDate: td.transferDate || undefined,
+        expectedDeliveryDate: td.expectedDeliveryDate || undefined,
+        actualDeliveryDate: td.actualDeliveryDate || undefined,
+        transferStatus: td.transferStatus || undefined,
+        transferNotes: td.transferNotes || undefined,
+      };
+    })();
+
+    const concernDetailsPayload = (() => {
+      const cd = this.form.concernDetails ?? {};
+      const hasConcernInfo =
+        String(cd.concernType ?? '').trim().length > 0 ||
+        String(cd.concernSubject ?? '').trim().length > 0 ||
+        String(cd.concernDescription ?? '').trim().length > 0 ||
+        String(cd.concernStatus ?? '').trim().length > 0 ||
+        String(cd.priority ?? '').trim().length > 0 ||
+        String(cd.resolutionNotes ?? '').trim().length > 0 ||
+        Boolean(cd.resolvedAt);
+
+      if (!hasConcernInfo) return undefined;
+
+      return {
+        concernType: cd.concernType || undefined,
+        concernSubject: cd.concernSubject || undefined,
+        concernDescription: cd.concernDescription || undefined,
+        concernStatus: cd.concernStatus || undefined,
+        priority: cd.priority || undefined,
+        resolutionNotes: cd.resolutionNotes || undefined,
+        resolvedAt: cd.resolvedAt || undefined,
+      };
+    })();
 
     const payload: SalesOrderPayload = {
       customer_id: this.customerMode === 'existing' ? this.form.customer_id || null : null,
@@ -1581,9 +1725,18 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       totalAmount: Number(this.form.totalAmount) || 0,
       scheduleDate: this.form.scheduleDate || null,
       salesType: this.form.salesType || this.getSalesTypeFromActiveTab(),
+      projectName: this.form.projectName || undefined,
+      projectCode: this.form.projectCode || undefined,
       installer: this.form.installer || undefined,
       remarks: this.form.remarks,
-      paymentDetails: this.form.paymentDetails.map((payment) => ({
+      transferDetails: transferDetailsPayload,
+      concernDetails: concernDetailsPayload,
+      expenseDetails: (this.form.expenseDetails ?? []).filter((item: SalesOrderExpenseDetailsPayload) =>
+        String(item.expenseType ?? '').trim().length > 0 ||
+        Number(item.amount) > 0 ||
+        String(item.expenseDescription ?? '').trim().length > 0,
+      ),
+      paymentDetails: this.form.paymentDetails.map((payment: any) => ({
         method: payment.method || undefined,
         amount: Number(payment.amount) || 0,
         terms: payment.terms || undefined,
@@ -1599,22 +1752,38 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         postDated: payment.postDated || undefined,
         downPayment: Number(payment.downPayment) || 0,
       })),
-      productItems: this.form.productItems.map((item) => ({
-        transType: 'sales',
-        productId: item.productId ? Number(item.productId) : undefined,
-        capacityId: item.capacityId ? Number(item.capacityId) : undefined,
-        unitPrice: Number(item.unitPrice) || 0,
-        sellPrice: item.sellPrice === '' ? '' : Number(item.sellPrice) || 0,
-        discountPrice: item.discountPrice === '' ? '' : Number(item.discountPrice) || 0,
-        unitTypesQty: item.unitTypes.map((entry) => ({
-          label: entry.label,
-          value: Number(entry.value) || 0,
+      productItems: this.form.productItems
+        .filter((item: any) => Boolean(item.productId) && Boolean(item.capacityId))
+        .map((item: any) => ({
+          transType: 'sales',
+          productId: item.productId ? Number(item.productId) : undefined,
+          capacityId: item.capacityId ? Number(item.capacityId) : undefined,
+          unitPrice: Number(item.unitPrice) || 0,
+          sellPrice: item.sellPrice === '' ? '' : Number(item.sellPrice) || 0,
+          discountPrice: item.discountPrice === '' ? '' : Number(item.discountPrice) || 0,
+          unitTypesQty: item.unitTypes.map((entry: any) => ({
+            label: entry.label,
+            value: Number(entry.value) || 0,
+          })),
+          totalSetQty: Number(item.totalSetQty) || 0,
+          purchaseId: null,
+          salesId: this.editingSalesId,
+          serialNumbers: this.buildSerialNumbersPayload(item),
         })),
-        totalSetQty: Number(item.totalSetQty) || 0,
-        purchaseId: null,
-        salesId: this.editingSalesId,
-        serialNumbers: this.buildSerialNumbersPayload(item),
-      })),
+      serviceItems: this.form.serviceItems
+        .filter(
+          (item: any) =>
+            String(item.serviceName ?? '').trim().length > 0 ||
+            Number(item.unitPrice) > 0 ||
+            Number(item.qty) > 0,
+        )
+        .map((item: any) => ({
+          serviceName: item.serviceName || undefined,
+          serviceCost: Number(item.unitPrice) || 0,
+          serviceDurationHours: Number(item.qty) || 0,
+          serviceNotes: '',
+          serviceStatus: '',
+        })),
       status: this.form.status || 'pending',
     };
 
@@ -1628,8 +1797,29 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       totalAmount: 0,
       scheduleDate: '',
       salesType: this.getSalesTypeFromActiveTab(),
+      projectName: '',
+      projectCode: '',
       installer: '',
       remarks: '',
+      transferDetails: {
+        fromBranchId: undefined as number | undefined,
+        toBranchId: undefined as number | undefined,
+        transferDate: '',
+        expectedDeliveryDate: '',
+        actualDeliveryDate: '',
+        transferStatus: '',
+        transferNotes: '',
+      },
+      concernDetails: {
+        concernType: '',
+        concernSubject: '',
+        concernDescription: '',
+        concernStatus: '',
+        priority: '',
+        resolutionNotes: '',
+        resolvedAt: '',
+      },
+      expenseDetails: [this.createEmptyExpenseItem()],
       customer: {
         name: '',
         address: '',
@@ -1719,12 +1909,24 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     };
   }
 
+  private createEmptyExpenseItem(): SalesOrderExpenseDetailsPayload {
+    return {
+      expenseType: '',
+      expenseDescription: '',
+      amount: 0,
+      expenseDate: '',
+      paidTo: '',
+      paymentMethod: '',
+      referenceNo: '',
+    };
+  }
+
   private ensureSelectedUnitType(productIndex: number): void {
     const item = this.form.productItems[productIndex];
     if (!item || item.unitTypes.length === 0) return;
 
     const current = this.selectedUnitTypeByProduct[productIndex];
-    const exists = item.unitTypes.some((entry) => entry.label === current);
+    const exists = item.unitTypes.some((entry: SalesUnitTypeFormItem) => entry.label === current);
     if (!exists) {
       this.selectedUnitTypeByProduct[productIndex] = item.unitTypes[0].label;
     }
@@ -1734,7 +1936,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     const item = this.form.productItems[productIndex];
     if (!item) return;
 
-    const unitEntry = item.unitTypes.find((entry) => entry.label === unitLabel);
+    const unitEntry = item.unitTypes.find((entry: SalesUnitTypeFormItem) => entry.label === unitLabel);
     if (!unitEntry) return;
 
     const timerKey = `${productIndex}::${unitLabel}`;
@@ -1746,7 +1948,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
     this.serialScanErrorTimers[timerKey] = setTimeout(() => {
       const currentItem = this.form.productItems[productIndex];
-      const currentUnit = currentItem?.unitTypes.find((entry) => entry.label === unitLabel);
+      const currentUnit = currentItem?.unitTypes.find((entry: SalesUnitTypeFormItem) => entry.label === unitLabel);
       if (currentUnit && currentUnit.scanError === message) {
         currentUnit.scanError = '';
       }
@@ -1769,7 +1971,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   private parseSerials(rawValue: string): string[] {
     return String(rawValue ?? '')
       .split(/\r?\n|,/)
-      .map((value) => value.trim())
+      .map((value: string) => value.trim())
       .filter((value) => value.length > 0);
   }
 
@@ -1825,7 +2027,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
     const savedTotalSetQty = Math.max(0, Math.floor(Number(product.totalSetQty) || 0));
     const payloadMaxQty = unitTypesFromPayload.reduce(
-      (maxQty, entry) => Math.max(maxQty, Math.max(0, Math.floor(Number(entry.value) || 0))),
+      (maxQty: number, entry: SalesOrderDetailUnitType) => Math.max(maxQty, Math.max(0, Math.floor(Number(entry.value) || 0))),
       0,
     );
     const serialMaxQty = normalizedLabelsFromSerial.reduce((maxQty, label) => {
@@ -1893,19 +2095,48 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         : [this.createEmptyProductItem()];
 
     const serviceItems =
-      detail.serviceItems.length > 0
+      Array.isArray(detail.serviceItems) && detail.serviceItems.length > 0
         ? detail.serviceItems.map((service) => service)
         : [this.createEmptyServiceItem()];
 
     this.materialItems = detail.materialItems ?? [];
+
+    const transferDetails = detail.transferDetails ?? {
+      fromBranchId: undefined,
+      toBranchId: undefined,
+      transferDate: '',
+      expectedDeliveryDate: '',
+      actualDeliveryDate: '',
+      transferStatus: '',
+      transferNotes: '',
+    };
+
+    const concernDetails = detail.concernDetails ?? {
+      concernType: '',
+      concernSubject: '',
+      concernDescription: '',
+      concernStatus: '',
+      priority: '',
+      resolutionNotes: '',
+      resolvedAt: '',
+    };
+
+    const expenseDetails = Array.isArray(detail.expenseDetails) && detail.expenseDetails.length > 0
+      ? detail.expenseDetails
+      : [this.createEmptyExpenseItem()];
 
     this.form = {
       customer_id: detail.customerId ?? '',
       totalAmount: Number(detail.totalAmount) || Number(fallbackItem.totalAmount) || 0,
       scheduleDate: this.toDateInputValue(detail.scheduleDate),
       salesType: detail.salesType || this.getSalesTypeFromActiveTab(),
+      projectName: detail.projectName ?? '',
+      projectCode: detail.projectCode ?? '',
       installer: detail.installer ?? '',
       remarks: detail.remarks ?? '',
+      transferDetails,
+      concernDetails,
+      expenseDetails,
       customer: {
         name: detail.customerName ?? fallbackItem.customerName ?? '',
         address: detail.customerAddress ?? '',
@@ -1938,7 +2169,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
     this.activeProductTabIndex = 0;
     this.selectedUnitTypeByProduct = {};
-    this.form.productItems.forEach((_, index) => this.ensureSelectedUnitType(index));
+    this.form.productItems.forEach((_: unknown, index: number) => this.ensureSelectedUnitType(index));
     this.recalculateTotalAmount();
   }
 
@@ -1977,7 +2208,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
   private syncPaymentAmounts(): void {
     const computedAmount = Number(this.form.totalAmount) || 0;
-    this.form.paymentDetails = this.form.paymentDetails.map((payment) => ({
+    this.form.paymentDetails = this.form.paymentDetails.map((payment: any) => ({
       ...payment,
       amount: computedAmount,
       status: this.getAutoPaymentStatus(payment.method),
@@ -2002,6 +2233,13 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       this.catalogProducts = Array.isArray(products) ? products : [];
     } catch {
       this.catalogProducts = [];
+    }
+
+    try {
+      const branches = await this.salesOrderService.getBranches();
+      this.branchOptions = Array.isArray(branches) ? branches : [];
+    } catch {
+      this.branchOptions = [];
     }
   }
 

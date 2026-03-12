@@ -570,40 +570,99 @@ CREATE TRIGGER trg_update_material_stock_on_po_approval
 COMMENT ON FUNCTION update_material_stock_on_po_approval() IS 'Automatically update material stock when PO is approved';
 
 
--- Function to update customer balance
-CREATE OR REPLACE FUNCTION update_customer_balance()
-RETURNS TRIGGER AS $$
+-- Helper: Recalculate a customer balance based on sales orders and payments
+CREATE OR REPLACE FUNCTION recalc_customer_balance(p_customer_id UUID)
+RETURNS VOID AS $$
 BEGIN
-  -- Update customer balance based on sales and payments
   UPDATE public.tblcustomer
   SET current_balance = (
-    SELECT COALESCE(SUM(so.total_amount), 0) - COALESCE(SUM(cp.payment_amount), 0)
-    FROM public.tblsales_order so
-    LEFT JOIN public.tblcustomer_payments cp ON cp.customer_id = so.customer_id
-    WHERE so.customer_id = NEW.customer_id
+    -- total sales for the customer
+    COALESCE(
+      (SELECT SUM(total_amount) FROM public.tblsales_order WHERE customer_id = p_customer_id),
+      0
+    )
+    -- subtract customer payments (legacy table)
+    - COALESCE(
+      (SELECT SUM(payment_amount) FROM public.tblcustomer_payments WHERE customer_id = p_customer_id),
+      0
+    )
+    -- subtract sales order payments (current table, only paid ones)
+    - COALESCE(
+      (
+        SELECT SUM(COALESCE(sp.amount, 0))
+        FROM public.tblso_payments sp
+        JOIN public.tblsales_order so ON so.id = sp.so_id
+        WHERE so.customer_id = p_customer_id
+          AND LOWER(COALESCE(sp.status, 'paid')) = 'paid'
+          AND LOWER(COALESCE(sp.payment_type, 'sales')) = 'sales'
+      ),
+      0
+    )
   ),
   updated_at = NOW()
-  WHERE id = NEW.customer_id;
-  
+  WHERE id = p_customer_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger: Update balance when a sales order changes
+CREATE OR REPLACE FUNCTION update_customer_balance_on_sales()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.customer_id IS NOT NULL THEN
+    PERFORM recalc_customer_balance(NEW.customer_id);
+  END IF;
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Create trigger for customer balance update on sales
 DROP TRIGGER IF EXISTS trg_update_customer_balance_on_sales ON public.tblsales_order;
 CREATE TRIGGER trg_update_customer_balance_on_sales
   AFTER INSERT OR UPDATE ON public.tblsales_order
   FOR EACH ROW
-  EXECUTE FUNCTION update_customer_balance();
+  EXECUTE FUNCTION update_customer_balance_on_sales();
 
--- Create trigger for customer balance update on payments
+-- Trigger: Update balance when a customer payment record changes (legacy table)
+CREATE OR REPLACE FUNCTION update_customer_balance_on_customer_payment()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.customer_id IS NOT NULL THEN
+    PERFORM recalc_customer_balance(NEW.customer_id);
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 DROP TRIGGER IF EXISTS trg_update_customer_balance_on_payment ON public.tblcustomer_payments;
 CREATE TRIGGER trg_update_customer_balance_on_payment
   AFTER INSERT OR UPDATE ON public.tblcustomer_payments
   FOR EACH ROW
-  EXECUTE FUNCTION update_customer_balance();
+  EXECUTE FUNCTION update_customer_balance_on_customer_payment();
 
-COMMENT ON FUNCTION update_customer_balance() IS 'Automatically update customer balance on sales and payments';
+-- Trigger: Update balance when a sales order payment is recorded/updated
+CREATE OR REPLACE FUNCTION update_customer_balance_on_so_payment()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_customer_id UUID;
+BEGIN
+  -- Find customer for the associated sales order
+  SELECT customer_id INTO v_customer_id FROM public.tblsales_order WHERE id = NEW.so_id;
+  IF v_customer_id IS NOT NULL THEN
+    PERFORM recalc_customer_balance(v_customer_id);
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_update_customer_balance_on_so_payment ON public.tblso_payments;
+CREATE TRIGGER trg_update_customer_balance_on_so_payment
+  AFTER INSERT OR UPDATE ON public.tblso_payments
+  FOR EACH ROW
+  EXECUTE FUNCTION update_customer_balance_on_so_payment();
+
+COMMENT ON FUNCTION recalc_customer_balance(UUID) IS 'Recalculates a customer''s current balance based on sales orders and paid payments';
+COMMENT ON FUNCTION update_customer_balance_on_sales() IS 'Trigger: recalc balance when a sales order changes';
+COMMENT ON FUNCTION update_customer_balance_on_customer_payment() IS 'Trigger: recalc balance when a customer payment record changes (legacy)';
+COMMENT ON FUNCTION update_customer_balance_on_so_payment() IS 'Trigger: recalc balance when a sales order payment record changes';
 
 
 -- =====================================================

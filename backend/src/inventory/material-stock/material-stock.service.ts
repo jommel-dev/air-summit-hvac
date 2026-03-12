@@ -37,7 +37,8 @@ export class MaterialStockService {
    * - Inserts a movement row (idempotent if you prefer: uses unique constraint)
    * - Updates/creates the balance row inside a transaction
    */
-  async recordMovement(dto: {
+  async recordMovement(
+    dto: {
       materialId: number;
       movementType: string;
       qty: number;
@@ -47,7 +48,9 @@ export class MaterialStockService {
       statusSnapshot?: string;
       remarks?: string;
       createdBy?: number;
-  }) {
+    },
+    options?: { client?: { query: (text: string, params?: unknown[]) => Promise<any> } },
+  ) {
     if (!dto.materialId || !dto.movementType || !dto.qty || !dto.sourceType || dto.sourceId === undefined || !dto.sourceLineKey) {
       throw new Error('Missing required movement fields');
     }
@@ -55,11 +58,16 @@ export class MaterialStockService {
       throw new Error('Quantity must be > 0');
     }
 
+    const executor = options?.client ?? this.db;
+    const isExternalClient = Boolean(options?.client);
+
     try {
-      await this.db.query('BEGIN');
+      if (!isExternalClient) {
+        await this.db.query('BEGIN');
+      }
 
       // Insert movement — let unique constraint error bubble or handle idempotency by ON CONFLICT if desired
-      const insertRes = await this.db.query(
+      const insertRes = await executor.query(
         `INSERT INTO tblmaterial_stock_movement
          (material_id, movement_type, qty, source_type, source_id, source_line_key, status_snapshot, remarks, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -79,34 +87,34 @@ export class MaterialStockService {
       const movement = insertRes.rows[0];
 
       // Lock balance row for update; create if missing
-      const balRes = await this.db.query(
+      const balRes = await executor.query(
         `SELECT id, material_id, on_hand, reserved FROM tblmaterial_stock_balance WHERE material_id = $1 FOR UPDATE`,
         [dto.materialId],
       );
       if (balRes.rowCount === 0) {
-        await this.db.query(`INSERT INTO tblmaterial_stock_balance (material_id, on_hand, reserved) VALUES ($1, 0, 0)`, [
+        await executor.query(`INSERT INTO tblmaterial_stock_balance (material_id, on_hand, reserved) VALUES ($1, 0, 0)`, [
           dto.materialId,
         ]);
       }
 
       // Apply movement
       if (['IN', 'RETURN', 'ADJUST'].includes(dto.movementType)) {
-        await this.db.query(`UPDATE tblmaterial_stock_balance SET on_hand = on_hand + $1, updated_at = now() WHERE material_id = $2`, [
+        await executor.query(`UPDATE tblmaterial_stock_balance SET on_hand = on_hand + $1, updated_at = now() WHERE material_id = $2`, [
           dto.qty,
           dto.materialId,
         ]);
       } else if (dto.movementType === 'OUT') {
-        await this.db.query(`UPDATE tblmaterial_stock_balance SET on_hand = on_hand - $1, updated_at = now() WHERE material_id = $2`, [
+        await executor.query(`UPDATE tblmaterial_stock_balance SET on_hand = on_hand - $1, updated_at = now() WHERE material_id = $2`, [
           dto.qty,
           dto.materialId,
         ]);
       } else if (dto.movementType === 'RESERVE') {
-        await this.db.query(`UPDATE tblmaterial_stock_balance SET reserved = reserved + $1, updated_at = now() WHERE material_id = $2`, [
+        await executor.query(`UPDATE tblmaterial_stock_balance SET reserved = reserved + $1, updated_at = now() WHERE material_id = $2`, [
           dto.qty,
           dto.materialId,
         ]);
       } else if (dto.movementType === 'RELEASE') {
-        await this.db.query(
+        await executor.query(
           `UPDATE tblmaterial_stock_balance SET reserved = GREATEST(reserved - $1, 0), updated_at = now() WHERE material_id = $2`,
           [dto.qty, dto.materialId],
         );
@@ -115,14 +123,18 @@ export class MaterialStockService {
         throw new Error(`Unsupported movementType: ${dto.movementType}`);
       }
 
-      await this.db.query('COMMIT');
+      if (!isExternalClient) {
+        await this.db.query('COMMIT');
+      }
 
       // Return current balance and movement
-      const balanceRow = (await this.db.query(`SELECT material_id, on_hand, reserved, available, updated_at FROM tblmaterial_stock_balance WHERE material_id = $1`, [dto.materialId])).rows[0];
+      const balanceRow = (await executor.query(`SELECT material_id, on_hand, reserved, available, updated_at FROM tblmaterial_stock_balance WHERE material_id = $1`, [dto.materialId])).rows[0];
       return { movement, balance: balanceRow };
     } catch (err) {
-      await this.db.query('ROLLBACK');
+      if (!isExternalClient) {
+        await this.db.query('ROLLBACK');
+      }
       throw err;
-    }``
+    }
   }
 }

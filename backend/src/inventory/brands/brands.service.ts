@@ -90,6 +90,7 @@ export class BrandsService {
       const result = await this.databaseService.query<{
         id: number;
         name_value: string | null;
+        type_value: string | null;
       }>(
         `SELECT
            b.id,
@@ -97,7 +98,12 @@ export class BrandsService {
              to_jsonb(b)->>'name',
              to_jsonb(b)->>'brandName',
              to_jsonb(b)->>'brand_name'
-           ) AS name_value
+           ) AS name_value,
+           COALESCE(
+             to_jsonb(b)->>'type',
+             to_jsonb(b)->>'brandType',
+             to_jsonb(b)->>'brand_type'
+           ) AS type_value
          FROM tblbrands b
          ORDER BY b.id DESC`,
       );
@@ -107,6 +113,7 @@ export class BrandsService {
         items: result.rows.map((row) => ({
           id: row.id,
           name: row.name_value ?? `Brand ${row.id}`,
+          type: String(row.type_value ?? '').trim(),
         })),
       };
     } catch (error) {

@@ -14,6 +14,7 @@ import {
 export type MenuKey =
   | 'dashboard'
   | 'sales_order'
+  | 'customers'
   | 'quotation'
   | 'today_schedule'
   | 'purchase_order'
@@ -52,6 +53,7 @@ export class RbacService {
   private readonly moduleToMenuMap: Record<string, MenuKey> = {
     dashboard: 'dashboard',
     'sales-order': 'sales_order',
+    customers: 'customers',
     quotation: 'quotation',
     'today-schedule': 'today_schedule',
     'schedule-today-sales-order': 'today_schedule',

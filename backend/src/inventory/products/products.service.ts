@@ -457,6 +457,21 @@ export class ProductsService {
              )
              LIMIT 1
            ) AS brand_name,
+           (
+             SELECT COALESCE(
+               to_jsonb(b)->>'type',
+               to_jsonb(b)->>'brandType',
+               to_jsonb(b)->>'brand_type',
+               ''
+             )
+             FROM tblbrands b
+             WHERE b.id::text = COALESCE(
+               to_jsonb(p)->>'brandId',
+               to_jsonb(p)->>'brand_id',
+               to_jsonb(p)->>'brandid'
+             )
+             LIMIT 1
+           ) AS brand_type,
            COALESCE(
              to_jsonb(p)->>'unit',
              ''

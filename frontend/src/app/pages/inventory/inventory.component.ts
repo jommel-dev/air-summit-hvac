@@ -23,6 +23,7 @@ interface BrandFolder {
 interface BrandOption {
   id: number;
   name: string;
+  type?: string;
 }
 
 interface ApiMutationResponse {
@@ -159,6 +160,21 @@ export class InventoryComponent implements OnInit {
   serialCurrentPage = 1;
   capacityStockSummary: CapacityStockSummary | null = null;
 
+  // Cached stock counts for capacities to display in the folder tree
+  isLoadingCapacityCounts = false;
+  capacityCountsError = '';
+  capacityStockCounts: Record<
+    number,
+    {
+      inStock: number;
+      reserved: number;
+      installed: number;
+      total: number;
+      unit: string;
+      unitTypeCount: number;
+    }
+  > = {};
+
   expandedBrands = new Set<string>();
   expandedProducts = new Set<string>();
 
@@ -259,6 +275,7 @@ export class InventoryComponent implements OnInit {
     this.selectedProductId = null;
     this.selectedCapacityId = null;
     this.isLandCostingDrawerOpen = false;
+    this.capacityStockCounts = {};
     this.expandedBrands.add(name);
     this.closeBrandContextMenu();
   }
@@ -271,12 +288,16 @@ export class InventoryComponent implements OnInit {
     this.resetCapacityFormMessages();
     this.capacityStockSummary = null;
     this.capacityStockError = '';
+    this.capacityCountsError = '';
+    this.capacityStockCounts = {};
     this.activeCapacitySerialTab = 'in-stock';
     this.serialSearch = '';
     this.selectedSerialUnitType = 'all';
     this.serialCurrentPage = 1;
     this.expandedBrands.add(brandName);
     this.expandedProducts.add(this.getProductTreeKey(brandName, productId));
+
+    void this.loadCapacityStockCountsForProduct(productId);
   }
 
   selectCapacity(brandName: string, productId: number, capacityId: number): void {
@@ -1720,13 +1741,24 @@ export class InventoryComponent implements OnInit {
     const requestedCapacityId = selection?.capacityId ?? this.selectedCapacityId;
 
     try {
-      const [products, brands] = await Promise.all([
+      const [products, rawBrands] = await Promise.all([
         this.salesOrderService.getProducts(),
         this.getBrands(),
       ]);
+
+      // Hide material brands from the inventory folder tree.
+      const brands = rawBrands.filter(
+        (brand) => String(brand.type ?? '').toLowerCase() !== 'mat',
+      );
+
+      // Do not include material brands in the inventory tree.
+      const inventoryProducts = products.filter(
+        (product) => String(product.brandType ?? '').toLowerCase() !== 'mat',
+      );
+
       const grouped = new Map<string, ProductOption[]>();
 
-      for (const product of products) {
+      for (const product of inventoryProducts) {
         const brandName = String(product.brandName ?? 'Uncategorized').trim() || 'Uncategorized';
         const current = grouped.get(brandName) ?? [];
         current.push(product);
@@ -1990,6 +2022,113 @@ export class InventoryComponent implements OnInit {
     } finally {
       this.isLoadingCapacityStock = false;
     }
+
+    // Cache counts so the folder tree can show stock at a glance without selecting the capacity.
+    this.capacityStockCounts[normalizedCapacityId] = {
+      inStock: this.capacityStockSummary?.counts.inStock ?? 0,
+      reserved: this.capacityStockSummary?.counts.reserved ?? 0,
+      installed: this.capacityStockSummary?.counts.installed ?? 0,
+      total:
+        (this.capacityStockSummary?.counts.inStock ?? 0) +
+        (this.capacityStockSummary?.counts.reserved ?? 0) +
+        (this.capacityStockSummary?.counts.installed ?? 0),
+      unit: String(this.capacityStockSummary?.unit ?? '').trim(),
+      unitTypeCount: Number(this.capacityStockSummary?.unitTypeCount ?? 0),
+    };
+  }
+
+  private async loadCapacityStockCountsForProduct(productId: number): Promise<void> {
+    const normalizedProductId = Number(productId);
+    if (!Number.isFinite(normalizedProductId) || normalizedProductId <= 0) {
+      return;
+    }
+
+    const capacities = this.selectedProduct?.capacities ?? [];
+    if (capacities.length === 0) {
+      this.capacityStockCounts = {};
+      return;
+    }
+
+    this.isLoadingCapacityCounts = true;
+    this.capacityCountsError = '';
+
+    const results = await Promise.allSettled(
+      capacities.map((capacity) =>
+        apiClient
+          .get<{
+            success: boolean;
+            message?: string;
+            item?: {
+              counts?: {
+                inStock?: number;
+                reserved?: number;
+                installed?: number;
+              };
+              unit?: string;
+              unitTypeCount?: number;
+            };
+          }>('/serial-number/capacity-stock-summary', {
+            params: {
+              productId: normalizedProductId,
+              capacityId: capacity.id,
+            },
+          })
+          .then((response) => ({ capacityId: capacity.id, data: response.data }))
+          .catch((error) => ({ capacityId: capacity.id, error })),
+      ),
+    );
+
+    const counts: typeof this.capacityStockCounts = {};
+    for (const result of results) {
+      if (result.status !== 'fulfilled') {
+        continue;
+      }
+
+      const resolved = result.value;
+      if (!('data' in resolved) || !resolved.data) {
+        continue;
+      }
+
+      const { capacityId, data } = resolved;
+      if (!data.success || !data.item?.counts) {
+        continue;
+      }
+
+      const inStock = Number(data.item.counts.inStock ?? 0);
+      const reserved = Number(data.item.counts.reserved ?? 0);
+      const installed = Number(data.item.counts.installed ?? 0);
+      const unit = String(data.item.unit ?? '').trim();
+      const unitTypeCount = Number(data.item.unitTypeCount ?? 0);
+
+      counts[capacityId] = {
+        inStock,
+        reserved,
+        installed,
+        total: inStock + reserved + installed,
+        unit,
+        unitTypeCount,
+      };
+    }
+
+    this.capacityStockCounts = counts;
+    this.isLoadingCapacityCounts = false;
+  }
+
+  getCapacityStockLabel(capacityId: number): string | null {
+    const counts = this.capacityStockCounts[capacityId];
+    if (!counts) {
+      return null;
+    }
+
+    const normalizedUnit = String(counts.unit ?? '').trim().toLowerCase();
+    const divisor = Number(counts.unitTypeCount ?? 0);
+
+    if (normalizedUnit === 'set' && divisor > 0) {
+      const setCount = Math.floor(counts.inStock / divisor);
+      return `${setCount} SET`;
+    }
+
+    return `${counts.inStock} in stock`;
   }
 
   private async loadLandCostingReport(productId: number, capacityId: number): Promise<void> {

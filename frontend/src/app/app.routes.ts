@@ -6,6 +6,7 @@ import { SignInComponent } from './pages/auth-pages/sign-in/sign-in.component';
 import { authChildGuard, guestOnlyGuard, guestOnlyMatchGuard, rbacGuard } from './shared/guards/auth.guards';
 import { UserManagementComponent } from './pages/user-management/user-management.component';
 import { SalesOrderComponent } from './pages/sales-order/sales-order.component';
+import { CustomersComponent } from './pages/customers/customers.component';
 import { PurchaseOrderComponent } from './pages/purchase-order/purchase-order.component';
 import { ScheduleTodaySalesOrderComponent } from './pages/schedule-today-sales-order/schedule-today-sales-order.component';
 import { InventoryComponent } from './pages/inventory/inventory.component';
@@ -39,6 +40,16 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         title: 'Air Summit Aircon Services | Sales Order',
+      },
+      {
+        path: 'customers',
+        component: CustomersComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'customers',
+          permission: 'canRead',
+        },
+        title: 'Air Summit Aircon Services | Customers',
       },
       {
         path: 'schedule-today-sales-order',

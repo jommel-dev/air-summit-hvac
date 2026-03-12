@@ -1,5 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
+import { CreateStatementOfAccountDto } from './dto/create-statement-of-account.dto';
+import { CreateCustomerDto } from './dto/create-customer.dto';
+import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { UpdateSalesOrderDto } from './dto/update-sales-order.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
@@ -7,6 +10,7 @@ import { randomUUID } from 'crypto';
 import { ListSalesOrderQueryDto } from './dto/list-sales-order-query.dto';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 import { MaterialTransactionsService } from 'src/inventory/material-transactions/material-transactions.service';
+import { MaterialsService } from 'src/inventory/materials/materials.service';
 
 type SalesMode =
   | 'deliveries'
@@ -34,6 +38,7 @@ export class SalesOrderService {
     private readonly databaseService: DatabaseService,
     private readonly materialStockService: MaterialStockService,
     private readonly materialTransactionsService: MaterialTransactionsService,
+    private readonly materialsService: MaterialsService,
   ) {}
 
   private async getTableColumns(
@@ -332,11 +337,34 @@ export class SalesOrderService {
         'sales_and_service'
       )`);
     } else if (mode === 'services') {
-      whereParts.push(`LOWER(COALESCE(base.sales_type, '')) = 'services'`);
+      whereParts.push(`(
+        LOWER(COALESCE(base.sales_type, '')) IN (
+          'service',
+          'services',
+          'sales and service',
+          'sales & service',
+          'sales-and-service',
+          'sales_and_service'
+        )
+        OR EXISTS (SELECT 1 FROM tblservice_details sd WHERE sd.sales_id = base.id)
+      )`);
     } else if (mode === 'projects') {
-      whereParts.push(`LOWER(COALESCE(base.sales_type, '')) = 'projects'`);
+      whereParts.push(`(
+        LOWER(COALESCE(base.sales_type, '')) IN ('project', 'projects')
+        OR EXISTS (SELECT 1 FROM tblproject_details pd WHERE pd.sales_id = base.id)
+      )`);
     } else if (mode === 'distribution') {
-      whereParts.push(`LOWER(COALESCE(base.sales_type, '')) = 'distribution'`);
+      whereParts.push(`(
+        LOWER(COALESCE(base.sales_type, '')) IN (
+          'distribution',
+          'transfer',
+          'transfers',
+          'sub-dealer',
+          'sub dealer',
+          'sub_dealer'
+        )
+        OR EXISTS (SELECT 1 FROM tbltransfer_details td WHERE td.sales_id = base.id)
+      )`);
     } else if (mode === 'sales-receivable') {
       whereParts.push(`COALESCE(base.remaining_amount, 0) > 0`);
       whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN (
@@ -453,6 +481,16 @@ export class SalesOrderService {
             to_jsonb(so)->>'sales_type',
             ''
           ) AS sales_type,
+          COALESCE(
+            to_jsonb(so)->>'projectName',
+            to_jsonb(so)->>'project_name',
+            ''
+          ) AS project_name,
+          COALESCE(
+            to_jsonb(so)->>'projectCode',
+            to_jsonb(so)->>'project_code',
+            ''
+          ) AS project_code,
           COALESCE(sc.serial_count, 0)::int AS serial_count,
           COALESCE(pt.paid_amount, 0) AS paid_amount,
           GREATEST(
@@ -509,6 +547,8 @@ export class SalesOrderService {
         COALESCE(base.total_amount, '0')::numeric AS "totalAmount",
         base.computed_status AS status,
         base.sales_type AS "salesType",
+        base.project_name AS "projectName",
+        base.project_code AS "projectCode",
         base.schedule_date AS "scheduleDate",
         base.created_at AS "createdAt",
         base.serial_count AS "serialCount"
@@ -527,6 +567,8 @@ export class SalesOrderService {
       totalAmount: string | number | null;
       status: string | null;
       salesType: string | null;
+      projectName: string | null;
+      projectCode: string | null;
       scheduleDate: string | null;
       createdAt: string | null;
       serialCount: number;
@@ -542,6 +584,8 @@ export class SalesOrderService {
         totalAmount: Number(row.totalAmount ?? 0),
         status: row.status ?? 'pending',
         salesType: row.salesType ?? '',
+        projectName: row.projectName ?? '',
+        projectCode: row.projectCode ?? '',
         scheduleDate: row.scheduleDate,
         createdAt: row.createdAt,
         serialCount: Number(row.serialCount ?? 0),
@@ -559,9 +603,22 @@ export class SalesOrderService {
     const payload = createSalesOrderDto;
     const status = String(payload.status ?? 'pending').trim() || 'pending';
     const productItems = Array.isArray(payload.productItems) ? payload.productItems : [];
+    const serviceItems = Array.isArray(payload.serviceItems) ? payload.serviceItems : [];
 
-    if (productItems.length === 0) {
-      return { success: false, message: 'At least one sales product item is required' };
+    const hasProductItems = productItems.length > 0;
+    const hasServiceItems = serviceItems.length > 0;
+    const hasProjectInfo = Boolean(
+      payload.projectDetails || payload.projectName || payload.projectCode,
+    );
+    const hasTransferInfo = Boolean(payload.transferDetails);
+    const hasConcernInfo = Boolean(payload.concernDetails);
+
+    if (!hasProductItems && !hasServiceItems && !hasProjectInfo && !hasTransferInfo && !hasConcernInfo) {
+      return {
+        success: false,
+        message:
+          'At least one sales product item, service item, project detail, transfer detail, or concern detail is required',
+      };
     }
 
     try {
@@ -570,6 +627,7 @@ export class SalesOrderService {
         const customerColumns = await this.getTableColumns(client, 'tblcustomer');
         const customerIdColumn = this.pickColumn(customerColumns, ['id']);
         const customerNameColumn = this.pickColumn(customerColumns, ['name']);
+        const customerTypeColumn = this.pickColumn(customerColumns, ['customer_type', 'customerType']);
         const customerAddressColumn = this.pickColumn(customerColumns, ['address']);
         const customerContactPersonColumn = this.pickColumn(customerColumns, [
           'contact_person',
@@ -582,6 +640,8 @@ export class SalesOrderService {
         const customerEmailColumn = this.pickColumn(customerColumns, ['email']);
         const customerTinColumn = this.pickColumn(customerColumns, ['tin_number', 'tinNumber']);
 
+        const requestedCustomerType = String(payload.customer?.customer_type ?? '').trim();
+
         if (customerId) {
           const existingCustomer = await client.query<{ id: string }>(
             `SELECT id FROM tblcustomer WHERE id::text = $1 LIMIT 1`,
@@ -590,6 +650,12 @@ export class SalesOrderService {
 
           if (existingCustomer.rowCount === 0) {
             customerId = '';
+          } else if (customerTypeColumn && requestedCustomerType) {
+            // Ensure existing customers are updated if sales type implies a sub-dealer
+            await client.query(
+              `UPDATE tblcustomer SET ${customerTypeColumn} = $1 WHERE id::text = $2`,
+              [requestedCustomerType, customerId],
+            );
           }
         }
 
@@ -615,6 +681,8 @@ export class SalesOrderService {
           const customerContactNumber = String(payload.customer?.contact_number ?? '').trim();
           const customerEmail = String(payload.customer?.email ?? '').trim();
           const customerTin = String(payload.customer?.tin_number ?? '').trim();
+        const customerType = String(payload.customer?.customer_type ?? '').trim();
+        const customerTypeColumn = this.pickColumn(customerColumns, ['customer_type', 'customerType']);
 
           if (customerAddressColumn && customerAddress) {
             customerRecord[customerAddressColumn] = customerAddress;
@@ -631,6 +699,9 @@ export class SalesOrderService {
           if (customerTinColumn && customerTin) {
             customerRecord[customerTinColumn] = customerTin;
           }
+          if (customerTypeColumn && customerType) {
+            customerRecord[customerTypeColumn] = customerType;
+          }
 
           const insertedCustomer = await this.runInsert(client, 'tblcustomer', customerRecord);
           if (insertedCustomer.rowCount === 0) {
@@ -640,16 +711,27 @@ export class SalesOrderService {
           customerId = String(insertedCustomer.rows[0].id);
         }
 
-        let computedTotalAmount = 0;
+        let computedProductTotal = 0;
         for (const item of productItems) {
           const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
           const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
           const discountPrice = this.toOptionalNumber(item.discountPrice) ?? 0;
           const qty = this.toOptionalNumber(item.totalSetQty) ?? 0;
           const priceToUse = discountPrice > 0 ? discountPrice : sellPrice > 0 ? sellPrice : unitPrice;
-          computedTotalAmount += priceToUse * qty;
+          computedProductTotal += priceToUse * qty;
         }
 
+        let computedServiceTotal = 0;
+        for (const item of serviceItems) {
+          const unitPrice = this.toOptionalNumber(item.serviceCost) ?? 0;
+          const qty = this.toOptionalNumber(item.serviceDurationHours) ?? 0;
+          const total = this.toOptionalNumber(item.serviceCost) ?? 0;
+
+          // Prefer explicit total if provided, otherwise derive from unit price and quantity
+          computedServiceTotal += total > 0 ? total : unitPrice * qty;
+        }
+
+        const computedTotalAmount = computedProductTotal + computedServiceTotal;
         const fallbackTotal = this.toOptionalNumber(payload.totalAmount) ?? 0;
         const totalAmount = computedTotalAmount > 0 ? computedTotalAmount : fallbackTotal;
 
@@ -659,6 +741,8 @@ export class SalesOrderService {
         const totalAmountColumn = this.pickColumn(salesColumns, ['total_amount', 'totalAmount']);
         const scheduleDateColumn = this.pickColumn(salesColumns, ['scheduleDate', 'schedule_date']);
         const salesTypeColumn = this.pickColumn(salesColumns, ['salesType', 'sales_type']);
+        const projectNameColumn = this.pickColumn(salesColumns, ['projectName', 'project_name']);
+        const projectCodeColumn = this.pickColumn(salesColumns, ['projectCode', 'project_code']);
         const installerColumn = this.pickColumn(salesColumns, ['installer']);
         const remarksColumn = this.pickColumn(salesColumns, ['remarks']);
         const statusColumn = this.pickColumn(salesColumns, ['status']);
@@ -689,6 +773,12 @@ export class SalesOrderService {
         }
         if (salesTypeColumn && payload.salesType !== undefined) {
           salesRecord[salesTypeColumn] = String(payload.salesType ?? '').trim();
+        }
+        if (projectNameColumn && payload['projectName'] !== undefined) {
+          salesRecord[projectNameColumn] = String(payload['projectName'] ?? '').trim();
+        }
+        if (projectCodeColumn && payload['projectCode'] !== undefined) {
+          salesRecord[projectCodeColumn] = String(payload['projectCode'] ?? '').trim();
         }
         if (installerColumn && payload.installer !== undefined) {
           salesRecord[installerColumn] = String(payload.installer ?? '').trim();
@@ -940,6 +1030,305 @@ export class SalesOrderService {
           }
         }
 
+        // Persist service details (if any)
+        if (hasServiceItems) {
+          const serviceColumns = await this.getTableColumns(client, 'tblservice_details');
+          const serviceSalesIdColumn = this.pickColumn(serviceColumns, ['sales_id', 'salesId']);
+          const serviceNameColumn = this.pickColumn(serviceColumns, ['service_name', 'serviceName']);
+          const serviceDescriptionColumn = this.pickColumn(serviceColumns, ['service_description', 'serviceDescription']);
+          const serviceTypeColumn = this.pickColumn(serviceColumns, ['service_type', 'serviceType']);
+          const technicianAssignedColumn = this.pickColumn(serviceColumns, ['technician_assigned', 'technicianAssigned']);
+          const serviceDateColumn = this.pickColumn(serviceColumns, ['service_date', 'serviceDate']);
+          const serviceDurationHoursColumn = this.pickColumn(serviceColumns, ['service_duration_hours', 'serviceDurationHours']);
+          const serviceCostColumn = this.pickColumn(serviceColumns, ['service_cost', 'serviceCost']);
+          const partsCostColumn = this.pickColumn(serviceColumns, ['parts_cost', 'partsCost']);
+          const laborCostColumn = this.pickColumn(serviceColumns, ['labor_cost', 'laborCost']);
+          const serviceStatusColumn = this.pickColumn(serviceColumns, ['service_status', 'serviceStatus']);
+          const serviceNotesColumn = this.pickColumn(serviceColumns, ['service_notes', 'serviceNotes']);
+
+          if (serviceSalesIdColumn) {
+            for (const item of serviceItems) {
+              const record: Record<string, unknown> = {
+                [serviceSalesIdColumn]: salesOrderId,
+              };
+
+              if (serviceNameColumn && item.serviceName !== undefined) {
+                record[serviceNameColumn] = String(item.serviceName ?? '').trim();
+              }
+              if (serviceDescriptionColumn && item.serviceDescription !== undefined) {
+                record[serviceDescriptionColumn] = String(item.serviceDescription ?? '').trim();
+              }
+              if (serviceTypeColumn && item.serviceType !== undefined) {
+                record[serviceTypeColumn] = String(item.serviceType ?? '').trim();
+              }
+              if (technicianAssignedColumn && item.technicianAssigned !== undefined) {
+                record[technicianAssignedColumn] = String(item.technicianAssigned ?? '').trim();
+              }
+              if (serviceDateColumn && item.serviceDate !== undefined) {
+                record[serviceDateColumn] = this.toIsoDateOrNull(item.serviceDate);
+              }
+              if (serviceDurationHoursColumn && item.serviceDurationHours !== undefined) {
+                record[serviceDurationHoursColumn] = this.toOptionalNumber(item.serviceDurationHours);
+              }
+              if (serviceCostColumn && item.serviceCost !== undefined) {
+                record[serviceCostColumn] = this.toOptionalNumber(item.serviceCost) ?? 0;
+              }
+              if (partsCostColumn && item.partsCost !== undefined) {
+                record[partsCostColumn] = this.toOptionalNumber(item.partsCost) ?? 0;
+              }
+              if (laborCostColumn && item.laborCost !== undefined) {
+                record[laborCostColumn] = this.toOptionalNumber(item.laborCost) ?? 0;
+              }
+              if (serviceStatusColumn && item.serviceStatus !== undefined) {
+                record[serviceStatusColumn] = String(item.serviceStatus ?? '').trim();
+              }
+              if (serviceNotesColumn && item.serviceNotes !== undefined) {
+                record[serviceNotesColumn] = String(item.serviceNotes ?? '').trim();
+              }
+
+              await this.runInsert(client, 'tblservice_details', record);
+            }
+          }
+        }
+
+        // Persist project details (if provided)
+        const projectDetails = payload.projectDetails;
+        if (projectDetails || payload.projectName || payload.projectCode) {
+          const projectColumns = await this.getTableColumns(client, 'tblproject_details');
+          const projectSalesIdColumn = this.pickColumn(projectColumns, ['sales_id', 'salesId']);
+          const projectNameColumn = this.pickColumn(projectColumns, ['project_name', 'projectName']);
+          const projectCodeColumn = this.pickColumn(projectColumns, ['project_code', 'projectCode']);
+          const projectLocationColumn = this.pickColumn(projectColumns, ['project_location', 'projectLocation']);
+          const projectStartDateColumn = this.pickColumn(projectColumns, ['project_start_date', 'projectStartDate']);
+          const projectEndDateColumn = this.pickColumn(projectColumns, ['project_end_date', 'projectEndDate']);
+          const projectManagerColumn = this.pickColumn(projectColumns, ['project_manager', 'projectManager']);
+          const projectStatusColumn = this.pickColumn(projectColumns, ['project_status', 'projectStatus']);
+          const projectNotesColumn = this.pickColumn(projectColumns, ['project_notes', 'projectNotes']);
+
+          if (projectSalesIdColumn) {
+            // Upsert behavior: remove any existing project details for this sales order
+            await client.query(
+              `DELETE FROM tblproject_details WHERE "${projectSalesIdColumn}" = $1`,
+              [salesOrderId],
+            );
+
+            const record: Record<string, unknown> = {
+              [projectSalesIdColumn]: salesOrderId,
+            };
+
+            const details = projectDetails ?? {
+              projectName: payload.projectName,
+              projectCode: payload.projectCode,
+            };
+
+            if (projectNameColumn && details?.projectName !== undefined) {
+              record[projectNameColumn] = String(details.projectName ?? '').trim();
+            }
+            if (projectCodeColumn && details?.projectCode !== undefined) {
+              record[projectCodeColumn] = String(details.projectCode ?? '').trim();
+            }
+            if (projectLocationColumn && details?.projectLocation !== undefined) {
+              record[projectLocationColumn] = String(details.projectLocation ?? '').trim();
+            }
+            if (projectStartDateColumn && details?.projectStartDate !== undefined) {
+              record[projectStartDateColumn] = this.toIsoDateOrNull(details.projectStartDate);
+            }
+            if (projectEndDateColumn && details?.projectEndDate !== undefined) {
+              record[projectEndDateColumn] = this.toIsoDateOrNull(details.projectEndDate);
+            }
+            if (projectManagerColumn && details?.projectManager !== undefined) {
+              record[projectManagerColumn] = String(details.projectManager ?? '').trim();
+            }
+            if (projectStatusColumn && details?.projectStatus !== undefined) {
+              record[projectStatusColumn] = String(details.projectStatus ?? '').trim();
+            }
+            if (projectNotesColumn && details?.projectNotes !== undefined) {
+              record[projectNotesColumn] = String(details.projectNotes ?? '').trim();
+            }
+
+            await this.runInsert(client, 'tblproject_details', record);
+          }
+        }
+
+        // Persist transfer details (if provided)
+        let transferDetailsId: number | null = null;
+        if (payload.transferDetails) {
+          const transferColumns = await this.getTableColumns(client, 'tbltransfer_details');
+          const transferSalesIdColumn = this.pickColumn(transferColumns, ['sales_id', 'salesId']);
+          const fromBranchIdColumn = this.pickColumn(transferColumns, ['from_branch_id', 'fromBranchId']);
+          const toBranchIdColumn = this.pickColumn(transferColumns, ['to_branch_id', 'toBranchId']);
+          const transferDateColumn = this.pickColumn(transferColumns, ['transfer_date', 'transferDate']);
+          const expectedDeliveryDateColumn = this.pickColumn(transferColumns, ['expected_delivery_date', 'expectedDeliveryDate']);
+          const actualDeliveryDateColumn = this.pickColumn(transferColumns, ['actual_delivery_date', 'actualDeliveryDate']);
+          const transferStatusColumn = this.pickColumn(transferColumns, ['transfer_status', 'transferStatus']);
+          const transferNotesColumn = this.pickColumn(transferColumns, ['transfer_notes', 'transferNotes']);
+          const sentByColumn = this.pickColumn(transferColumns, ['sent_by', 'sentBy']);
+          const receivedByColumn = this.pickColumn(transferColumns, ['received_by', 'receivedBy']);
+          const acknowledgedByColumn = this.pickColumn(transferColumns, ['acknowledged_by', 'acknowledgedBy']);
+          const acknowledgedAtColumn = this.pickColumn(transferColumns, ['acknowledged_at', 'acknowledgedAt']);
+
+          if (transferSalesIdColumn) {
+            await client.query(
+              `DELETE FROM tbltransfer_details WHERE "${transferSalesIdColumn}" = $1`,
+              [salesOrderId],
+            );
+
+            const record: Record<string, unknown> = {
+              [transferSalesIdColumn]: salesOrderId,
+            };
+
+            const details = payload.transferDetails;
+            if (fromBranchIdColumn && details.fromBranchId !== undefined) {
+              record[fromBranchIdColumn] = this.toOptionalNumber(details.fromBranchId);
+            }
+            if (toBranchIdColumn && details.toBranchId !== undefined) {
+              record[toBranchIdColumn] = this.toOptionalNumber(details.toBranchId);
+            }
+            if (transferDateColumn && details.transferDate !== undefined) {
+              record[transferDateColumn] = this.toIsoDateOrNull(details.transferDate);
+            }
+            if (expectedDeliveryDateColumn && details.expectedDeliveryDate !== undefined) {
+              record[expectedDeliveryDateColumn] = this.toIsoDateOrNull(details.expectedDeliveryDate);
+            }
+            if (actualDeliveryDateColumn && details.actualDeliveryDate !== undefined) {
+              record[actualDeliveryDateColumn] = this.toIsoDateOrNull(details.actualDeliveryDate);
+            }
+            if (transferStatusColumn && details.transferStatus !== undefined) {
+              record[transferStatusColumn] = String(details.transferStatus ?? '').trim();
+            }
+            if (transferNotesColumn && details.transferNotes !== undefined) {
+              record[transferNotesColumn] = String(details.transferNotes ?? '').trim();
+            }
+            if (sentByColumn && details.sentBy !== undefined) {
+              record[sentByColumn] = this.toOptionalNumber(details.sentBy);
+            }
+            if (receivedByColumn && details.receivedBy !== undefined) {
+              record[receivedByColumn] = this.toOptionalNumber(details.receivedBy);
+            }
+            if (acknowledgedByColumn && details.acknowledgedBy !== undefined) {
+              record[acknowledgedByColumn] = this.toOptionalNumber(details.acknowledgedBy);
+            }
+            if (acknowledgedAtColumn && details.acknowledgedAt !== undefined) {
+              record[acknowledgedAtColumn] = this.toIsoDateOrNull(details.acknowledgedAt);
+            }
+
+            const insertedTransfer = await this.runInsert(client, 'tbltransfer_details', record);
+            transferDetailsId = Number(insertedTransfer.rows[0]?.id ?? null);
+          }
+        }
+
+        // Persist expense details (if provided)
+        if (payload.expenseDetails && transferDetailsId) {
+          const expenseColumns = await this.getTableColumns(client, 'tblexpense_details');
+          const expenseSalesIdColumn = this.pickColumn(expenseColumns, ['sales_id', 'salesId']);
+          const expenseTransferIdColumn = this.pickColumn(expenseColumns, ['transfer_id', 'transferId']);
+          const expenseTypeColumn = this.pickColumn(expenseColumns, ['expense_type', 'expenseType']);
+          const expenseDescriptionColumn = this.pickColumn(expenseColumns, ['expense_description', 'expenseDescription']);
+          const amountColumn = this.pickColumn(expenseColumns, ['amount']);
+          const expenseDateColumn = this.pickColumn(expenseColumns, ['expense_date', 'expenseDate']);
+          const paidToColumn = this.pickColumn(expenseColumns, ['paid_to', 'paidTo']);
+          const paymentMethodColumn = this.pickColumn(expenseColumns, ['payment_method', 'paymentMethod']);
+          const referenceNoColumn = this.pickColumn(expenseColumns, ['reference_no', 'referenceNo']);
+          const createdByColumn = this.pickColumn(expenseColumns, ['created_by', 'createdBy']);
+
+          if (expenseSalesIdColumn) {
+            await client.query(
+              `DELETE FROM tblexpense_details WHERE "${expenseSalesIdColumn}" = $1`,
+              [salesOrderId],
+            );
+
+            for (const expense of payload.expenseDetails) {
+              const record: Record<string, unknown> = {};
+
+              record[expenseSalesIdColumn] = salesOrderId;
+              record[expenseTransferIdColumn ?? 'transfer_id'] = transferDetailsId;
+              if (expenseTypeColumn && expense.expenseType !== undefined) {
+                record[expenseTypeColumn] = String(expense.expenseType ?? '').trim();
+              }
+              if (expenseDescriptionColumn && expense.expenseDescription !== undefined) {
+                record[expenseDescriptionColumn] = String(expense.expenseDescription ?? '').trim();
+              }
+              if (amountColumn) {
+                record[amountColumn] = this.toOptionalNumber(expense.amount) ?? 0;
+              }
+              if (expenseDateColumn && expense.expenseDate !== undefined) {
+                record[expenseDateColumn] = this.toIsoDateOrNull(expense.expenseDate);
+              }
+              if (paidToColumn && expense.paidTo !== undefined) {
+                record[paidToColumn] = String(expense.paidTo ?? '').trim();
+              }
+              if (paymentMethodColumn && expense.paymentMethod !== undefined) {
+                record[paymentMethodColumn] = String(expense.paymentMethod ?? '').trim();
+              }
+              if (referenceNoColumn && expense.referenceNo !== undefined) {
+                record[referenceNoColumn] = String(expense.referenceNo ?? '').trim();
+              }
+              if (createdByColumn && userId !== undefined) {
+                record[createdByColumn] = userId;
+              }
+
+              await this.runInsert(client, 'tblexpense_details', record);
+            }
+          }
+        }
+
+        // Persist concern details (if provided)
+        if (payload.concernDetails) {
+          const concernColumns = await this.getTableColumns(client, 'tblconcern_details');
+          const concernSalesIdColumn = this.pickColumn(concernColumns, ['sales_id', 'salesId']);
+          const concernCustomerIdColumn = this.pickColumn(concernColumns, ['customer_id', 'customerId']);
+          const concernTypeColumn = this.pickColumn(concernColumns, ['concern_type', 'concernType']);
+          const concernSubjectColumn = this.pickColumn(concernColumns, ['concern_subject', 'concernSubject']);
+          const concernDescriptionColumn = this.pickColumn(concernColumns, ['concern_description', 'concernDescription']);
+          const concernStatusColumn = this.pickColumn(concernColumns, ['concern_status', 'concernStatus']);
+          const priorityColumn = this.pickColumn(concernColumns, ['priority']);
+          const assignedToColumn = this.pickColumn(concernColumns, ['assigned_to', 'assignedTo']);
+          const resolutionNotesColumn = this.pickColumn(concernColumns, ['resolution_notes', 'resolutionNotes']);
+          const resolvedAtColumn = this.pickColumn(concernColumns, ['resolved_at', 'resolvedAt']);
+
+          if (concernSalesIdColumn) {
+            await client.query(
+              `DELETE FROM tblconcern_details WHERE "${concernSalesIdColumn}" = $1`,
+              [salesOrderId],
+            );
+
+            const record: Record<string, unknown> = {
+              [concernSalesIdColumn]: salesOrderId,
+            };
+
+            const details = payload.concernDetails;
+            if (concernCustomerIdColumn && details.customerId !== undefined) {
+              record[concernCustomerIdColumn] = String(details.customerId ?? '').trim();
+            }
+            if (concernTypeColumn && details.concernType !== undefined) {
+              record[concernTypeColumn] = String(details.concernType ?? '').trim();
+            }
+            if (concernSubjectColumn && details.concernSubject !== undefined) {
+              record[concernSubjectColumn] = String(details.concernSubject ?? '').trim();
+            }
+            if (concernDescriptionColumn && details.concernDescription !== undefined) {
+              record[concernDescriptionColumn] = String(details.concernDescription ?? '').trim();
+            }
+            if (concernStatusColumn && details.concernStatus !== undefined) {
+              record[concernStatusColumn] = String(details.concernStatus ?? '').trim();
+            }
+            if (priorityColumn && details.priority !== undefined) {
+              record[priorityColumn] = String(details.priority ?? '').trim();
+            }
+            if (assignedToColumn && details.assignedTo !== undefined) {
+              record[assignedToColumn] = this.toOptionalNumber(details.assignedTo);
+            }
+            if (resolutionNotesColumn && details.resolutionNotes !== undefined) {
+              record[resolutionNotesColumn] = String(details.resolutionNotes ?? '').trim();
+            }
+            if (resolvedAtColumn && details.resolvedAt !== undefined) {
+              record[resolvedAtColumn] = this.toIsoDateOrNull(details.resolvedAt);
+            }
+
+            await this.runInsert(client, 'tblconcern_details', record);
+          }
+        }
+
         return {
           salesOrderId,
           customerId,
@@ -1058,6 +1447,792 @@ export class SalesOrderService {
     }
   }
 
+  async listCustomers(options: { search?: string; type?: string; page?: number; limit?: number }) {
+    const page = Math.max(1, Number(options.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(options.limit ?? 50)));
+    const offset = (page - 1) * limit;
+
+    const search = String(options.search ?? '').trim();
+    const type = String(options.type ?? '').trim();
+
+    try {
+      const params: unknown[] = [];
+      const whereParts: string[] = [];
+
+      if (search) {
+        params.push(`%${search}%`);
+        whereParts.push(
+          `LOWER(COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '')) LIKE LOWER($${
+            params.length
+          })`,
+        );
+      }
+
+      if (type) {
+        params.push(type);
+        whereParts.push(
+          `LOWER(COALESCE(to_jsonb(c)->>'customer_type', to_jsonb(c)->>'customerType', 'regular')) = LOWER($${
+            params.length
+          })`,
+        );
+      }
+
+      const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+      const countResult = await this.databaseService.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM tblcustomer c ${whereSql}`,
+        params,
+      );
+      const total = Number(countResult.rows[0]?.count ?? 0);
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+
+      const listParams = [...params, limit, offset];
+      const listResult = await this.databaseService.query<{
+        id: string;
+        name: string | null;
+        customerType: string | null;
+        creditLimit: string | null;
+        currentBalance: string | null;
+        paymentTerms: string | null;
+        address: string | null;
+        contactPerson: string | null;
+        contactNumber: string | null;
+        email: string | null;
+        tinNumber: string | null;
+        createdAt: string | null;
+        updatedAt: string | null;
+      }>(
+        `SELECT
+           c.id::text AS id,
+           COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name') AS name,
+           COALESCE(to_jsonb(c)->>'customer_type', to_jsonb(c)->>'customerType', 'regular') AS "customerType",
+           COALESCE(to_jsonb(c)->>'credit_limit', '') AS "creditLimit",
+           COALESCE(to_jsonb(c)->>'current_balance', '') AS "currentBalance",
+           COALESCE(to_jsonb(c)->>'payment_terms', '') AS "paymentTerms",
+           COALESCE(to_jsonb(c)->>'address', '') AS address,
+           COALESCE(to_jsonb(c)->>'contact_person', to_jsonb(c)->>'contactPerson', '') AS "contactPerson",
+           COALESCE(to_jsonb(c)->>'contact_number', to_jsonb(c)->>'contactNumber', '') AS "contactNumber",
+           COALESCE(to_jsonb(c)->>'email', '') AS email,
+           COALESCE(to_jsonb(c)->>'tin_number', to_jsonb(c)->>'tinNumber', '') AS "tinNumber",
+           COALESCE(to_jsonb(c)->>'created_at', to_jsonb(c)->>'createdAt', null) AS "createdAt",
+           COALESCE(to_jsonb(c)->>'updated_at', to_jsonb(c)->>'updatedAt', null) AS "updatedAt"
+         FROM tblcustomer c
+         ${whereSql}
+         ORDER BY COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '') ASC
+         LIMIT $${listParams.length - 1}
+         OFFSET $${listParams.length}`,
+        listParams,
+      );
+
+      return {
+        success: true,
+        items: listResult.rows.map((row) => ({
+          id: row.id,
+          name: row.name ?? row.id,
+          customer_type: row.customerType ?? 'regular',
+          credit_limit: this.toOptionalNumber(row.creditLimit) ?? 0,
+          current_balance: this.toOptionalNumber(row.currentBalance) ?? 0,
+          payment_terms: this.toOptionalNumber(row.paymentTerms) ?? 0,
+          address: row.address ?? '',
+          contact_person: row.contactPerson ?? '',
+          contact_number: row.contactNumber ?? '',
+          email: row.email ?? '',
+          tin_number: row.tinNumber ?? '',
+          created_at: row.createdAt ?? null,
+          updated_at: row.updatedAt ?? null,
+        })),
+        meta: {
+          page,
+          limit,
+          total,
+          totalPages,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to list customers',
+        items: [],
+        meta: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 1,
+        },
+      };
+    }
+  }
+
+  async getCustomer(customerId: string) {
+    const id = String(customerId ?? '').trim();
+    if (!id) {
+      return { success: false, message: 'Invalid customer id' };
+    }
+
+    try {
+      const result = await this.databaseService.query<{
+        id: string;
+        name: string | null;
+        customerType: string | null;
+        creditLimit: string | null;
+        currentBalance: string | null;
+        paymentTerms: string | null;
+        address: string | null;
+        contactPerson: string | null;
+        contactNumber: string | null;
+        email: string | null;
+        tinNumber: string | null;
+        createdAt: string | null;
+        updatedAt: string | null;
+      }>(
+        `SELECT
+           c.id::text AS id,
+           COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name') AS name,
+           COALESCE(to_jsonb(c)->>'customer_type', to_jsonb(c)->>'customerType', 'regular') AS "customerType",
+           COALESCE(to_jsonb(c)->>'credit_limit', '') AS "creditLimit",
+           COALESCE(to_jsonb(c)->>'current_balance', '') AS "currentBalance",
+           COALESCE(to_jsonb(c)->>'payment_terms', '') AS "paymentTerms",
+           COALESCE(to_jsonb(c)->>'address', '') AS address,
+           COALESCE(to_jsonb(c)->>'contact_person', to_jsonb(c)->>'contactPerson', '') AS "contactPerson",
+           COALESCE(to_jsonb(c)->>'contact_number', to_jsonb(c)->>'contactNumber', '') AS "contactNumber",
+           COALESCE(to_jsonb(c)->>'email', '') AS email,
+           COALESCE(to_jsonb(c)->>'tin_number', to_jsonb(c)->>'tinNumber', '') AS "tinNumber",
+           COALESCE(to_jsonb(c)->>'created_at', to_jsonb(c)->>'createdAt', null) AS "createdAt",
+           COALESCE(to_jsonb(c)->>'updated_at', to_jsonb(c)->>'updatedAt', null) AS "updatedAt"
+         FROM tblcustomer c
+         WHERE c.id::text = $1
+         LIMIT 1`,
+        [id],
+      );
+
+      if (result.rowCount === 0) {
+        return { success: false, message: `Customer ${id} not found` };
+      }
+
+      const row = result.rows[0];
+      return {
+        success: true,
+        data: {
+          id: row.id,
+          name: row.name ?? row.id,
+          customer_type: row.customerType ?? 'regular',
+          credit_limit: this.toOptionalNumber(row.creditLimit) ?? 0,
+          current_balance: this.toOptionalNumber(row.currentBalance) ?? 0,
+          payment_terms: this.toOptionalNumber(row.paymentTerms) ?? 0,
+          address: row.address ?? '',
+          contact_person: row.contactPerson ?? '',
+          contact_number: row.contactNumber ?? '',
+          email: row.email ?? '',
+          tin_number: row.tinNumber ?? '',
+          created_at: row.createdAt ?? null,
+          updated_at: row.updatedAt ?? null,
+        },
+      };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Failed to get customer' };
+    }
+  }
+
+  async createCustomer(dto: CreateCustomerDto, userId?: number) {
+    try {
+      const customerColumns = await this.getTableColumns(this.databaseService, 'tblcustomer');
+      const customerIdColumn = this.pickColumn(customerColumns, ['id']);
+      const customerNameColumn = this.pickColumn(customerColumns, ['name', 'customer_name']);
+      const customerAddressColumn = this.pickColumn(customerColumns, ['address']);
+      const customerContactPersonColumn = this.pickColumn(customerColumns, [
+        'contact_person',
+        'contactPerson',
+      ]);
+      const customerContactNumberColumn = this.pickColumn(customerColumns, [
+        'contact_number',
+        'contactNumber',
+      ]);
+      const customerEmailColumn = this.pickColumn(customerColumns, ['email']);
+      const customerTinColumn = this.pickColumn(customerColumns, ['tin_number', 'tinNumber']);
+      const customerTypeColumn = this.pickColumn(customerColumns, ['customer_type', 'customerType']);
+      const creditLimitColumn = this.pickColumn(customerColumns, ['credit_limit', 'creditLimit']);
+      const paymentTermsColumn = this.pickColumn(customerColumns, ['payment_terms', 'paymentTerms']);
+      const createdAtColumn = this.pickColumn(customerColumns, ['created_at', 'createdAt']);
+
+      const name = String(dto.name ?? '').trim();
+      if (!name) {
+        return { success: false, message: 'Customer name is required' };
+      }
+
+      const record: Record<string, unknown> = {};
+      if (customerNameColumn) record[customerNameColumn] = name;
+      if (customerIdColumn) record[customerIdColumn] = randomUUID();
+      if (customerAddressColumn && dto.address) record[customerAddressColumn] = String(dto.address).trim();
+      if (customerContactPersonColumn && dto.contactPerson)
+        record[customerContactPersonColumn] = String(dto.contactPerson).trim();
+      if (customerContactNumberColumn && dto.contactNumber)
+        record[customerContactNumberColumn] = String(dto.contactNumber).trim();
+      if (customerEmailColumn && dto.email) record[customerEmailColumn] = String(dto.email).trim();
+      if (customerTinColumn && dto.tinNumber) record[customerTinColumn] = String(dto.tinNumber).trim();
+      if (customerTypeColumn && dto.customerType)
+        record[customerTypeColumn] = String(dto.customerType).trim();
+      if (creditLimitColumn && dto.creditLimit !== undefined)
+        record[creditLimitColumn] = this.toOptionalNumber(dto.creditLimit) ?? 0;
+      if (paymentTermsColumn && dto.paymentTerms !== undefined)
+        record[paymentTermsColumn] = this.toOptionalNumber(dto.paymentTerms) ?? 0;
+      if (createdAtColumn) record[createdAtColumn] = new Date().toISOString();
+
+      const inserted = await this.runInsert(this.databaseService, 'tblcustomer', record);
+      return {
+        success: true,
+        data: { id: String(inserted.rows[0]?.id ?? '') },
+      };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Failed to create customer' };
+    }
+  }
+
+  async updateCustomer(customerId: string, dto: UpdateCustomerDto) {
+    const id = String(customerId ?? '').trim();
+    if (!id) {
+      return { success: false, message: 'Invalid customer id' };
+    }
+
+    try {
+      const customerColumns = await this.getTableColumns(this.databaseService, 'tblcustomer');
+      const customerNameColumn = this.pickColumn(customerColumns, ['name', 'customer_name']);
+      const customerAddressColumn = this.pickColumn(customerColumns, ['address']);
+      const customerContactPersonColumn = this.pickColumn(customerColumns, [
+        'contact_person',
+        'contactPerson',
+      ]);
+      const customerContactNumberColumn = this.pickColumn(customerColumns, [
+        'contact_number',
+        'contactNumber',
+      ]);
+      const customerEmailColumn = this.pickColumn(customerColumns, ['email']);
+      const customerTinColumn = this.pickColumn(customerColumns, ['tin_number', 'tinNumber']);
+      const customerTypeColumn = this.pickColumn(customerColumns, ['customer_type', 'customerType']);
+      const creditLimitColumn = this.pickColumn(customerColumns, ['credit_limit', 'creditLimit']);
+      const paymentTermsColumn = this.pickColumn(customerColumns, ['payment_terms', 'paymentTerms']);
+      const updatedAtColumn = this.pickColumn(customerColumns, ['updated_at', 'updatedAt']);
+
+      const record: Record<string, unknown> = {};
+      if (customerNameColumn && dto.name !== undefined) record[customerNameColumn] = String(dto.name ?? '').trim();
+      if (customerAddressColumn && dto.address !== undefined)
+        record[customerAddressColumn] = String(dto.address ?? '').trim();
+      if (customerContactPersonColumn && dto.contactPerson !== undefined)
+        record[customerContactPersonColumn] = String(dto.contactPerson ?? '').trim();
+      if (customerContactNumberColumn && dto.contactNumber !== undefined)
+        record[customerContactNumberColumn] = String(dto.contactNumber ?? '').trim();
+      if (customerEmailColumn && dto.email !== undefined)
+        record[customerEmailColumn] = String(dto.email ?? '').trim();
+      if (customerTinColumn && dto.tinNumber !== undefined)
+        record[customerTinColumn] = String(dto.tinNumber ?? '').trim();
+      if (customerTypeColumn && dto.customerType !== undefined)
+        record[customerTypeColumn] = String(dto.customerType ?? '').trim();
+      if (creditLimitColumn && dto.creditLimit !== undefined)
+        record[creditLimitColumn] = this.toOptionalNumber(dto.creditLimit) ?? 0;
+      if (paymentTermsColumn && dto.paymentTerms !== undefined)
+        record[paymentTermsColumn] = this.toOptionalNumber(dto.paymentTerms) ?? 0;
+      if (updatedAtColumn) record[updatedAtColumn] = new Date().toISOString();
+
+      const columns = Object.keys(record);
+      if (columns.length === 0) {
+        return { success: true, message: 'No changes provided' };
+      }
+
+      const setClauses = columns.map((col, idx) => `"${col}" = $${idx + 1}`);
+      const values = Object.values(record);
+      const result = await this.databaseService.query(
+        `UPDATE tblcustomer SET ${setClauses.join(', ')} WHERE id::text = $${values.length + 1}`,
+        [...values, id],
+      );
+
+      return {
+        success: true,
+        data: { updated: result.rowCount },
+      };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Failed to update customer' };
+    }
+  }
+
+  async deleteCustomer(customerId: string) {
+    const id = String(customerId ?? '').trim();
+    if (!id) {
+      return { success: false, message: 'Invalid customer id' };
+    }
+
+    try {
+      const result = await this.databaseService.query(
+        `DELETE FROM tblcustomer WHERE id::text = $1`,
+        [id],
+      );
+      return { success: true, data: { deleted: result.rowCount } };
+    } catch (error) {
+      return { success: false, message: error instanceof Error ? error.message : 'Failed to delete customer' };
+    }
+  }
+
+  async getCustomerOrders(
+    customerId: string,
+    query: { page?: number; limit?: number },
+  ) {
+    const id = String(customerId ?? '').trim();
+    if (!id) {
+      return { success: false, message: 'Invalid customer id', items: [], meta: { page: 1, limit: 0, total: 0, totalPages: 1 } };
+    }
+
+    const page = Math.max(1, Number(query.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(query.limit ?? 50)));
+    const offset = (page - 1) * limit;
+
+    try {
+      const countResult = await this.databaseService.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM tblsales_order so
+         WHERE COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') = $1`,
+        [id],
+      );
+      const total = Number(countResult.rows[0]?.count ?? 0);
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+
+      const result = await this.databaseService.query<{
+        id: number;
+        soNumber: string | null;
+        totalAmount: string | null;
+        status: string | null;
+        salesType: string | null;
+        createdAt: string | null;
+      }>(
+        `SELECT
+           so.id,
+           COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', '') AS "soNumber",
+           COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') AS "totalAmount",
+           COALESCE(so.status, '') AS status,
+           COALESCE(to_jsonb(so)->>'sales_type', to_jsonb(so)->>'salesType', '') AS "salesType",
+           COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt', NULL) AS "createdAt"
+         FROM tblsales_order so
+         WHERE COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') = $1
+         ORDER BY COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt', NOW()) DESC
+         LIMIT $2
+         OFFSET $3`,
+        [id, limit, offset],
+      );
+
+      return {
+        success: true,
+        items: result.rows.map((row) => ({
+          id: row.id,
+          soNumber: row.soNumber ?? '',
+          totalAmount: this.toOptionalNumber(row.totalAmount) ?? 0,
+          status: row.status ?? '',
+          salesType: row.salesType ?? '',
+          createdAt: row.createdAt ?? null,
+        })),
+        meta: { page, limit, total, totalPages },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to load customer orders',
+        items: [],
+        meta: { page, limit, total: 0, totalPages: 1 },
+      };
+    }
+  }
+
+  async getCustomerPayments(customerId: string) {
+    const id = String(customerId ?? '').trim();
+    if (!id) {
+      return { success: false, message: 'Invalid customer id', items: [] };
+    }
+
+    try {
+      const result = await this.databaseService.query<{
+        id: string;
+        paymentDate: string | null;
+        paymentAmount: string | null;
+        paymentMethod: string | null;
+        referenceNo: string | null;
+        paymentNotes: string | null;
+        createdAt: string | null;
+      }>(
+        `SELECT
+           id::text AS id,
+           COALESCE(payment_date::text, '') AS "paymentDate",
+           COALESCE(payment_amount::text, '0') AS "paymentAmount",
+           COALESCE(payment_method, '') AS "paymentMethod",
+           COALESCE(reference_no, '') AS "referenceNo",
+           COALESCE(payment_notes, '') AS "paymentNotes",
+           COALESCE(created_at::text, '') AS "createdAt"
+         FROM tblcustomer_payments
+         WHERE customer_id::text = $1
+         ORDER BY payment_date DESC, created_at DESC`,
+        [id],
+      );
+
+      return {
+        success: true,
+        items: result.rows.map((row) => ({
+          id: row.id,
+          paymentDate: row.paymentDate ?? null,
+          paymentAmount: this.toOptionalNumber(row.paymentAmount) ?? 0,
+          paymentMethod: row.paymentMethod ?? '',
+          referenceNo: row.referenceNo ?? '',
+          paymentNotes: row.paymentNotes ?? '',
+          createdAt: row.createdAt ?? null,
+        })),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to load customer payments',
+        items: [],
+      };
+    }
+  }
+
+  async getCustomerConcerns(customerId: string) {
+    const id = String(customerId ?? '').trim();
+    if (!id) {
+      return { success: false, message: 'Invalid customer id', items: [] };
+    }
+
+    try {
+      const result = await this.databaseService.query<{
+        id: number;
+        salesId: number;
+        soNumber: string | null;
+        concernType: string | null;
+        concernSubject: string | null;
+        concernDescription: string | null;
+        concernStatus: string | null;
+        priority: string | null;
+        resolutionNotes: string | null;
+        resolvedAt: string | null;
+      }>(
+        `SELECT
+           cd.id,
+           cd.sales_id AS "salesId",
+           COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', '') AS "soNumber",
+           COALESCE(cd.concern_type, '') AS "concernType",
+           COALESCE(cd.concern_subject, '') AS "concernSubject",
+           COALESCE(cd.concern_description, '') AS "concernDescription",
+           COALESCE(cd.concern_status, '') AS "concernStatus",
+           COALESCE(cd.priority, '') AS priority,
+           COALESCE(cd.resolution_notes, '') AS "resolutionNotes",
+           COALESCE(cd.resolved_at, NULL) AS "resolvedAt"
+         FROM tblconcern_details cd
+         LEFT JOIN tblsales_order so ON so.id = cd.sales_id
+         WHERE COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') = $1
+         ORDER BY cd.id DESC`,
+        [id],
+      );
+
+      return {
+        success: true,
+        items: result.rows.map((row) => ({
+          id: row.id,
+          salesId: row.salesId,
+          soNumber: row.soNumber ?? '',
+          concernType: row.concernType ?? '',
+          concernSubject: row.concernSubject ?? '',
+          concernDescription: row.concernDescription ?? '',
+          concernStatus: row.concernStatus ?? '',
+          priority: row.priority ?? '',
+          resolutionNotes: row.resolutionNotes ?? '',
+          resolvedAt: row.resolvedAt ?? null,
+        })),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to load customer concerns',
+        items: [],
+      };
+    }
+  }
+
+  async getCustomerStatementOfAccounts(
+    customerId: string,
+    query: { page?: number; limit?: number },
+  ) {
+    const id = String(customerId ?? '').trim();
+    if (!id) {
+      return { success: false, message: 'Invalid customer id', items: [], meta: { page: 1, limit: 0, total: 0, totalPages: 1 } };
+    }
+
+    const page = Math.max(1, Number(query.page ?? 1));
+    const limit = Math.max(1, Math.min(200, Number(query.limit ?? 50)));
+    const offset = (page - 1) * limit;
+
+    try {
+      const countResult = await this.databaseService.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM tblstatement_of_account soa WHERE customer_id::text = $1`,
+        [id],
+      );
+      const total = Number(countResult.rows[0]?.count ?? 0);
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+
+      const result = await this.databaseService.query<{
+        id: number;
+        soaNumber: string | null;
+        periodFrom: string | null;
+        periodTo: string | null;
+        openingBalance: string | null;
+        totalCharges: string | null;
+        totalPayments: string | null;
+        closingBalance: string | null;
+        status: string | null;
+        dueDate: string | null;
+        notes: string | null;
+        generatedAt: string | null;
+      }>(
+        `SELECT
+           id,
+           COALESCE(soa_number, '') AS "soaNumber",
+           COALESCE(period_from::text, '') AS "periodFrom",
+           COALESCE(period_to::text, '') AS "periodTo",
+           COALESCE(opening_balance::text, '') AS "openingBalance",
+           COALESCE(total_charges::text, '') AS "totalCharges",
+           COALESCE(total_payments::text, '') AS "totalPayments",
+           COALESCE(closing_balance::text, '') AS "closingBalance",
+           COALESCE(soa_status, '') AS status,
+           COALESCE(due_date::text, '') AS "dueDate",
+           COALESCE(notes, '') AS notes,
+           COALESCE(generated_at::text, '') AS "generatedAt"
+         FROM tblstatement_of_account soa
+         WHERE customer_id::text = $1
+         ORDER BY generated_at DESC
+         LIMIT $2
+         OFFSET $3`,
+        [id, limit, offset],
+      );
+
+      return {
+        success: true,
+        items: result.rows.map((row) => ({
+          id: row.id,
+          soaNumber: row.soaNumber ?? '',
+          periodFrom: row.periodFrom ?? null,
+          periodTo: row.periodTo ?? null,
+          openingBalance: this.toOptionalNumber(row.openingBalance) ?? 0,
+          totalCharges: this.toOptionalNumber(row.totalCharges) ?? 0,
+          totalPayments: this.toOptionalNumber(row.totalPayments) ?? 0,
+          closingBalance: this.toOptionalNumber(row.closingBalance) ?? 0,
+          status: row.status ?? '',
+          dueDate: row.dueDate ?? null,
+          notes: row.notes ?? '',
+          generatedAt: row.generatedAt ?? null,
+        })),
+        meta: { page, limit, total, totalPages },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to load statement of accounts',
+        items: [],
+        meta: { page, limit, total: 0, totalPages: 1 },
+      };
+    }
+  }
+
+  async createStatementOfAccountForCustomer(
+    customerId: string,
+    dto: CreateStatementOfAccountDto,
+    userId?: number,
+  ) {
+    const id = String(customerId ?? '').trim();
+    if (!id) {
+      return { success: false, message: 'Invalid customer id' };
+    }
+
+    try {
+      const lastStatementResult = await this.databaseService.query<{ closing_balance: string | null }>(
+        `SELECT closing_balance::text AS closing_balance
+         FROM tblstatement_of_account
+         WHERE customer_id::text = $1
+         ORDER BY generated_at DESC
+         LIMIT 1`,
+        [id],
+      );
+
+      const openingBalance = this.toOptionalNumber(lastStatementResult.rows[0]?.closing_balance) ?? 0;
+
+      const chargeResult = await this.databaseService.query<{ total_charges: string | null }>(
+        `SELECT COALESCE(SUM(COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric), 0)::text AS total_charges
+         FROM tblsales_order so
+         WHERE COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') = $1
+           AND COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt', NOW())::date BETWEEN $2::date AND $3::date`,
+        [id, dto.periodFrom, dto.periodTo],
+      );
+
+      const paymentsResult = await this.databaseService.query<{ total_payments: string | null }>(
+        `SELECT COALESCE(SUM(payment_amount), 0)::text AS total_payments
+         FROM tblcustomer_payments
+         WHERE customer_id::text = $1
+           AND payment_date BETWEEN $2::date AND $3::date`,
+        [id, dto.periodFrom, dto.periodTo],
+      );
+
+      const totalCharges = this.toOptionalNumber(chargeResult.rows[0]?.total_charges) ?? 0;
+      const totalPayments = this.toOptionalNumber(paymentsResult.rows[0]?.total_payments) ?? 0;
+      const closingBalance = openingBalance + totalCharges - totalPayments;
+
+      const soaColumns = await this.getTableColumns(this.databaseService, 'tblstatement_of_account');
+      const customerIdColumn = this.pickColumn(soaColumns, ['customer_id', 'customerId']);
+      const periodFromColumn = this.pickColumn(soaColumns, ['period_from', 'periodFrom']);
+      const periodToColumn = this.pickColumn(soaColumns, ['period_to', 'periodTo']);
+      const openingBalanceColumn = this.pickColumn(soaColumns, ['opening_balance', 'openingBalance']);
+      const totalChargesColumn = this.pickColumn(soaColumns, ['total_charges', 'totalCharges']);
+      const totalPaymentsColumn = this.pickColumn(soaColumns, ['total_payments', 'totalPayments']);
+      const closingBalanceColumn = this.pickColumn(soaColumns, ['closing_balance', 'closingBalance']);
+      const statusColumn = this.pickColumn(soaColumns, ['soa_status', 'soaStatus']);
+      const generatedByColumn = this.pickColumn(soaColumns, ['generated_by', 'generatedBy']);
+      const dueDateColumn = this.pickColumn(soaColumns, ['due_date', 'dueDate']);
+      const notesColumn = this.pickColumn(soaColumns, ['notes']);
+
+      const record: Record<string, unknown> = {};
+      if (customerIdColumn) record[customerIdColumn] = id;
+      if (periodFromColumn) record[periodFromColumn] = this.toIsoDateOrNull(dto.periodFrom);
+      if (periodToColumn) record[periodToColumn] = this.toIsoDateOrNull(dto.periodTo);
+      if (openingBalanceColumn) record[openingBalanceColumn] = openingBalance;
+      if (totalChargesColumn) record[totalChargesColumn] = totalCharges;
+      if (totalPaymentsColumn) record[totalPaymentsColumn] = totalPayments;
+      if (closingBalanceColumn) record[closingBalanceColumn] = closingBalance;
+      if (statusColumn) record[statusColumn] = 'draft';
+      if (generatedByColumn && userId !== undefined) record[generatedByColumn] = userId;
+      if (dueDateColumn) record[dueDateColumn] = this.toIsoDateOrNull(dto.dueDate);
+      if (notesColumn && dto.notes !== undefined) record[notesColumn] = String(dto.notes ?? '').trim();
+
+      const inserted = await this.runInsert(this.databaseService, 'tblstatement_of_account', record);
+      return {
+        success: true,
+        data: { statementOfAccountId: Number(inserted.rows[0]?.id ?? 0) },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to create statement of account',
+      };
+    }
+  }
+
+  async getBranches() {
+    try {
+      const result = await this.databaseService.query<{
+        id: number;
+        branchName: string | null;
+      }>(
+        `SELECT id, COALESCE("branchName", '') AS "branchName" FROM tblbranches ORDER BY COALESCE("branchName", '') ASC`,
+      );
+
+      return {
+        success: true,
+        items: result.rows.map((row) => ({
+          id: row.id,
+          branchName: row.branchName ?? '',
+        })),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to load branches',
+        items: [],
+      };
+    }
+  }
+
+  async createStatementOfAccount(
+    salesOrderId: number,
+    dto: CreateStatementOfAccountDto,
+    userId?: number,
+  ) {
+    try {
+      const salesResult = await this.databaseService.query<{ customer_id: string | null }>(
+        `SELECT COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') AS customer_id
+         FROM tblsales_order so
+         WHERE so.id = $1
+         LIMIT 1`,
+        [salesOrderId],
+      );
+
+      if (salesResult.rowCount === 0) {
+        return { success: false, message: `Sales order ${salesOrderId} not found` };
+      }
+
+      const customerId = String(salesResult.rows[0].customer_id ?? '').trim();
+      if (!customerId) {
+        return { success: false, message: 'Sales order does not have an associated customer' };
+      }
+
+      const lastStatementResult = await this.databaseService.query<{ closing_balance: string | null }>(
+        `SELECT closing_balance::text AS closing_balance
+         FROM tblstatement_of_account
+         WHERE customer_id::text = $1
+         ORDER BY generated_at DESC
+         LIMIT 1`,
+        [customerId],
+      );
+
+      const openingBalance = this.toOptionalNumber(lastStatementResult.rows[0]?.closing_balance) ?? 0;
+
+      const chargeResult = await this.databaseService.query<{ total_charges: string | null }>(
+        `SELECT COALESCE(SUM(COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric), 0)::text AS total_charges
+         FROM tblsales_order so
+         WHERE COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') = $1
+           AND COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt', NOW())::date BETWEEN $2::date AND $3::date`,
+        [customerId, dto.periodFrom, dto.periodTo],
+      );
+
+      const paymentsResult = await this.databaseService.query<{ total_payments: string | null }>(
+        `SELECT COALESCE(SUM(payment_amount), 0)::text AS total_payments
+         FROM tblcustomer_payments
+         WHERE customer_id::text = $1
+           AND payment_date BETWEEN $2::date AND $3::date`,
+        [customerId, dto.periodFrom, dto.periodTo],
+      );
+
+      const totalCharges = this.toOptionalNumber(chargeResult.rows[0]?.total_charges) ?? 0;
+      const totalPayments = this.toOptionalNumber(paymentsResult.rows[0]?.total_payments) ?? 0;
+      const closingBalance = openingBalance + totalCharges - totalPayments;
+
+      const soaColumns = await this.getTableColumns(this.databaseService, 'tblstatement_of_account');
+      const customerIdColumn = this.pickColumn(soaColumns, ['customer_id', 'customerId']);
+      const periodFromColumn = this.pickColumn(soaColumns, ['period_from', 'periodFrom']);
+      const periodToColumn = this.pickColumn(soaColumns, ['period_to', 'periodTo']);
+      const openingBalanceColumn = this.pickColumn(soaColumns, ['opening_balance', 'openingBalance']);
+      const totalChargesColumn = this.pickColumn(soaColumns, ['total_charges', 'totalCharges']);
+      const totalPaymentsColumn = this.pickColumn(soaColumns, ['total_payments', 'totalPayments']);
+      const closingBalanceColumn = this.pickColumn(soaColumns, ['closing_balance', 'closingBalance']);
+      const statusColumn = this.pickColumn(soaColumns, ['soa_status', 'soaStatus']);
+      const generatedByColumn = this.pickColumn(soaColumns, ['generated_by', 'generatedBy']);
+      const dueDateColumn = this.pickColumn(soaColumns, ['due_date', 'dueDate']);
+      const notesColumn = this.pickColumn(soaColumns, ['notes']);
+
+      const record: Record<string, unknown> = {};
+      if (customerIdColumn) record[customerIdColumn] = customerId;
+      if (periodFromColumn) record[periodFromColumn] = this.toIsoDateOrNull(dto.periodFrom);
+      if (periodToColumn) record[periodToColumn] = this.toIsoDateOrNull(dto.periodTo);
+      if (openingBalanceColumn) record[openingBalanceColumn] = openingBalance;
+      if (totalChargesColumn) record[totalChargesColumn] = totalCharges;
+      if (totalPaymentsColumn) record[totalPaymentsColumn] = totalPayments;
+      if (closingBalanceColumn) record[closingBalanceColumn] = closingBalance;
+      if (statusColumn) record[statusColumn] = 'draft';
+      if (generatedByColumn && userId !== undefined) record[generatedByColumn] = userId;
+      if (dueDateColumn) record[dueDateColumn] = this.toIsoDateOrNull(dto.dueDate);
+      if (notesColumn && dto.notes !== undefined) record[notesColumn] = String(dto.notes ?? '').trim();
+
+      const inserted = await this.runInsert(this.databaseService, 'tblstatement_of_account', record);
+      return {
+        success: true,
+        data: { statementOfAccountId: Number(inserted.rows[0]?.id ?? 0) },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to create statement of account',
+      };
+    }
+  }
+
   async findOne(id: number) {
     if (!Number.isFinite(id) || id <= 0) {
       return {
@@ -1099,6 +2274,8 @@ export class SalesOrderService {
            COALESCE(so.status, 'pending') AS status,
            COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', null) AS "scheduleDate",
            COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '') AS "salesType",
+           COALESCE(to_jsonb(so)->>'projectName', to_jsonb(so)->>'project_name', '') AS "projectName",
+           COALESCE(to_jsonb(so)->>'projectCode', to_jsonb(so)->>'project_code', '') AS "projectCode",
            COALESCE(to_jsonb(so)->>'installer', '') AS installer,
            COALESCE(to_jsonb(so)->>'remarks', '') AS remarks,
            COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt', null) AS "createdAt"
@@ -1229,6 +2406,102 @@ export class SalesOrderService {
         serialMap.set(key, existing);
       }
 
+      const serviceDetailResult = await this.databaseService.query<{
+        id: number;
+        serviceName: string | null;
+        serviceCost: string | null;
+        serviceDurationHours: string | null;
+        serviceStatus: string | null;
+        serviceNotes: string | null;
+      }>(
+        `SELECT
+           sd.id,
+           COALESCE(sd.service_name, '') AS "serviceName",
+           COALESCE(sd.service_cost, 0)::text AS "serviceCost",
+           COALESCE(sd.service_duration_hours, 0)::text AS "serviceDurationHours",
+           COALESCE(sd.service_status, '') AS "serviceStatus",
+           COALESCE(sd.service_notes, '') AS "serviceNotes"
+         FROM tblservice_details sd
+         WHERE sd.sales_id = $1
+         ORDER BY sd.id ASC`,
+        [String(id)],
+      );
+
+      const transferDetailResult = await this.databaseService.query<{
+        id: number;
+        fromBranchId: string | null;
+        toBranchId: string | null;
+        transferDate: string | null;
+        expectedDeliveryDate: string | null;
+        actualDeliveryDate: string | null;
+        transferStatus: string | null;
+        transferNotes: string | null;
+      }>(
+        `SELECT
+           td.id,
+           COALESCE(to_jsonb(td)->>'from_branch_id', to_jsonb(td)->>'fromBranchId') AS "fromBranchId",
+           COALESCE(to_jsonb(td)->>'to_branch_id', to_jsonb(td)->>'toBranchId') AS "toBranchId",
+           COALESCE(to_jsonb(td)->>'transfer_date', to_jsonb(td)->>'transferDate') AS "transferDate",
+           COALESCE(to_jsonb(td)->>'expected_delivery_date', to_jsonb(td)->>'expectedDeliveryDate') AS "expectedDeliveryDate",
+           COALESCE(to_jsonb(td)->>'actual_delivery_date', to_jsonb(td)->>'actualDeliveryDate') AS "actualDeliveryDate",
+           COALESCE(to_jsonb(td)->>'transfer_status', to_jsonb(td)->>'transferStatus', '') AS "transferStatus",
+           COALESCE(to_jsonb(td)->>'transfer_notes', to_jsonb(td)->>'transferNotes', '') AS "transferNotes"
+         FROM tbltransfer_details td
+         WHERE td.sales_id = $1
+         LIMIT 1`,
+        [String(id)],
+      );
+
+      const concernDetailResult = await this.databaseService.query<{
+        id: number;
+        concernType: string | null;
+        concernSubject: string | null;
+        concernDescription: string | null;
+        concernStatus: string | null;
+        priority: string | null;
+        resolutionNotes: string | null;
+        resolvedAt: string | null;
+      }>(
+        `SELECT
+           cd.id,
+           COALESCE(cd.concern_type, '') AS "concernType",
+           COALESCE(cd.concern_subject, '') AS "concernSubject",
+           COALESCE(cd.concern_description, '') AS "concernDescription",
+           COALESCE(cd.concern_status, '') AS "concernStatus",
+           COALESCE(cd.priority, '') AS "priority",
+           COALESCE(cd.resolution_notes, '') AS "resolutionNotes",
+           COALESCE(cd.resolved_at, NULL) AS "resolvedAt"
+         FROM tblconcern_details cd
+         WHERE cd.sales_id = $1
+         LIMIT 1`,
+        [String(id)],
+      );
+
+      const expenseDetailResult = await this.databaseService.query<{
+        id: string;
+        expenseType: string | null;
+        expenseDescription: string | null;
+        amount: string | null;
+        expenseDate: string | null;
+        paidTo: string | null;
+        paymentMethod: string | null;
+        referenceNo: string | null;
+      }>(
+        `SELECT
+           ed.id::text AS id,
+           COALESCE(ed.expense_type, '') AS "expenseType",
+           COALESCE(ed.expense_description, '') AS "expenseDescription",
+           COALESCE(ed.amount, 0)::text AS amount,
+           COALESCE(to_jsonb(ed)->>'expense_date', to_jsonb(ed)->>'expenseDate', null) AS "expenseDate",
+           COALESCE(ed.paid_to, '') AS "paidTo",
+           COALESCE(ed.payment_method, '') AS "paymentMethod",
+           COALESCE(ed.reference_no, '') AS "referenceNo"
+         FROM tblexpense_details ed
+         WHERE ed.sales_id = $1
+         ORDER BY ed.created_at ASC`,
+        [String(id)],
+      );
+
       let materialItems: any[] = [];
       try {
         materialItems = await this.materialTransactionsService.findBySalesId(id);
@@ -1293,6 +2566,47 @@ export class SalesOrderService {
               serialNumbers: serialMap.get(serialKey) ?? {},
             };
           }),
+          serviceItems: serviceDetailResult.rows.map((service) => ({
+            id: service.id,
+            serviceName: service.serviceName ?? '',
+            unitPrice: this.toOptionalNumber(service.serviceCost) ?? 0,
+            qty: this.toOptionalNumber(service.serviceDurationHours) ?? 0,
+            total: this.toOptionalNumber(service.serviceCost) ?? 0,
+          })),
+          transferDetails: transferDetailResult.rows[0]
+            ? {
+                id: transferDetailResult.rows[0].id,
+                fromBranchId: this.toOptionalNumber(transferDetailResult.rows[0].fromBranchId),
+                toBranchId: this.toOptionalNumber(transferDetailResult.rows[0].toBranchId),
+                transferDate: transferDetailResult.rows[0].transferDate,
+                expectedDeliveryDate: transferDetailResult.rows[0].expectedDeliveryDate,
+                actualDeliveryDate: transferDetailResult.rows[0].actualDeliveryDate,
+                transferStatus: transferDetailResult.rows[0].transferStatus ?? '',
+                transferNotes: transferDetailResult.rows[0].transferNotes ?? '',
+              }
+            : null,
+          concernDetails: concernDetailResult.rows[0]
+            ? {
+                id: concernDetailResult.rows[0].id,
+                concernType: concernDetailResult.rows[0].concernType ?? '',
+                concernSubject: concernDetailResult.rows[0].concernSubject ?? '',
+                concernDescription: concernDetailResult.rows[0].concernDescription ?? '',
+                concernStatus: concernDetailResult.rows[0].concernStatus ?? '',
+                priority: concernDetailResult.rows[0].priority ?? '',
+                resolutionNotes: concernDetailResult.rows[0].resolutionNotes ?? '',
+                resolvedAt: concernDetailResult.rows[0].resolvedAt,
+              }
+            : null,
+          expenseDetails: expenseDetailResult.rows.map((expense) => ({
+            id: expense.id,
+            expenseType: expense.expenseType ?? '',
+            expenseDescription: expense.expenseDescription ?? '',
+            amount: this.toOptionalNumber(expense.amount) ?? 0,
+            expenseDate: expense.expenseDate,
+            paidTo: expense.paidTo ?? '',
+            paymentMethod: expense.paymentMethod ?? '',
+            referenceNo: expense.referenceNo ?? '',
+          })),
           materialItems: materialItems,
           createdAt: sales.createdAt,
         },
@@ -1465,21 +2779,33 @@ export class SalesOrderService {
         }
 
         const productItems = Array.isArray(payload.productItems) ? payload.productItems : [];
-        let computedTotalAmount = 0;
+        const serviceItems = Array.isArray(payload.serviceItems) ? payload.serviceItems : [];
+
+        let computedProductTotal = 0;
         for (const item of productItems) {
           const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
           const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
           const discountPrice = this.toOptionalNumber(item.discountPrice) ?? 0;
           const qty = this.toOptionalNumber(item.totalSetQty) ?? 0;
           const priceToUse = discountPrice > 0 ? discountPrice : sellPrice > 0 ? sellPrice : unitPrice;
-          computedTotalAmount += priceToUse * qty;
+          computedProductTotal += priceToUse * qty;
         }
+
+        let computedServiceTotal = 0;
+        for (const item of serviceItems) {
+          const unitPrice = this.toOptionalNumber(item.serviceCost) ?? 0;
+          const qty = this.toOptionalNumber(item.serviceDurationHours) ?? 0;
+          const total = this.toOptionalNumber(item.serviceCost) ?? 0;
+          computedServiceTotal += total > 0 ? total : unitPrice * qty;
+        }
+
+        const computedTotalAmount = computedProductTotal + computedServiceTotal;
 
         const fallbackTotal =
           this.toOptionalNumber(payload.totalAmount) ??
           this.toOptionalNumber(existingSales.total_amount) ??
           0;
-        const totalAmount = productItems.length > 0 && computedTotalAmount > 0 ? computedTotalAmount : fallbackTotal;
+        const totalAmount = computedTotalAmount > 0 ? computedTotalAmount : fallbackTotal;
         const status = String(payload.status ?? existingSales.status ?? 'pending').trim() || 'pending';
 
         const salesColumns = await this.getTableColumns(client, 'tblsales_order');
@@ -1487,6 +2813,8 @@ export class SalesOrderService {
         const totalAmountColumn = this.pickColumn(salesColumns, ['total_amount', 'totalAmount']);
         const scheduleDateColumn = this.pickColumn(salesColumns, ['scheduleDate', 'schedule_date']);
         const salesTypeColumn = this.pickColumn(salesColumns, ['salesType', 'sales_type']);
+        const projectNameColumn = this.pickColumn(salesColumns, ['projectName', 'project_name']);
+        const projectCodeColumn = this.pickColumn(salesColumns, ['projectCode', 'project_code']);
         const installerColumn = this.pickColumn(salesColumns, ['installer']);
         const remarksColumn = this.pickColumn(salesColumns, ['remarks']);
         const statusColumn = this.pickColumn(salesColumns, ['status']);
@@ -1510,6 +2838,14 @@ export class SalesOrderService {
         if (salesTypeColumn && Object.prototype.hasOwnProperty.call(payload, 'salesType')) {
           soParams.push(String(payload.salesType ?? '').trim());
           soUpdates.push(`"${salesTypeColumn}" = $${soParams.length}`);
+        }
+        if (projectNameColumn && Object.prototype.hasOwnProperty.call(payload, 'projectName')) {
+          soParams.push(String(payload.projectName ?? '').trim());
+          soUpdates.push(`"${projectNameColumn}" = $${soParams.length}`);
+        }
+        if (projectCodeColumn && Object.prototype.hasOwnProperty.call(payload, 'projectCode')) {
+          soParams.push(String(payload.projectCode ?? '').trim());
+          soUpdates.push(`"${projectCodeColumn}" = $${soParams.length}`);
         }
         if (installerColumn && Object.prototype.hasOwnProperty.call(payload, 'installer')) {
           soParams.push(String(payload.installer ?? '').trim());
@@ -1755,6 +3091,310 @@ export class SalesOrderService {
           }
         }
 
+        // Update service details
+        if (Array.isArray(payload.serviceItems)) {
+          const serviceColumns = await this.getTableColumns(client, 'tblservice_details');
+          const serviceSalesIdColumn = this.pickColumn(serviceColumns, ['sales_id', 'salesId']);
+          const serviceNameColumn = this.pickColumn(serviceColumns, ['service_name', 'serviceName']);
+          const serviceDescriptionColumn = this.pickColumn(serviceColumns, ['service_description', 'serviceDescription']);
+          const serviceTypeColumn = this.pickColumn(serviceColumns, ['service_type', 'serviceType']);
+          const technicianAssignedColumn = this.pickColumn(serviceColumns, ['technician_assigned', 'technicianAssigned']);
+          const serviceDateColumn = this.pickColumn(serviceColumns, ['service_date', 'serviceDate']);
+          const serviceDurationHoursColumn = this.pickColumn(serviceColumns, ['service_duration_hours', 'serviceDurationHours']);
+          const serviceCostColumn = this.pickColumn(serviceColumns, ['service_cost', 'serviceCost']);
+          const partsCostColumn = this.pickColumn(serviceColumns, ['parts_cost', 'partsCost']);
+          const laborCostColumn = this.pickColumn(serviceColumns, ['labor_cost', 'laborCost']);
+          const serviceStatusColumn = this.pickColumn(serviceColumns, ['service_status', 'serviceStatus']);
+          const serviceNotesColumn = this.pickColumn(serviceColumns, ['service_notes', 'serviceNotes']);
+
+          if (serviceSalesIdColumn) {
+            await client.query(
+              `DELETE FROM tblservice_details WHERE "${serviceSalesIdColumn}" = $1`,
+              [id],
+            );
+
+            for (const item of payload.serviceItems) {
+              const record: Record<string, unknown> = {
+                [serviceSalesIdColumn]: id,
+              };
+
+              if (serviceNameColumn && item.serviceName !== undefined) {
+                record[serviceNameColumn] = String(item.serviceName ?? '').trim();
+              }
+              if (serviceDescriptionColumn && item.serviceDescription !== undefined) {
+                record[serviceDescriptionColumn] = String(item.serviceDescription ?? '').trim();
+              }
+              if (serviceTypeColumn && item.serviceType !== undefined) {
+                record[serviceTypeColumn] = String(item.serviceType ?? '').trim();
+              }
+              if (technicianAssignedColumn && item.technicianAssigned !== undefined) {
+                record[technicianAssignedColumn] = String(item.technicianAssigned ?? '').trim();
+              }
+              if (serviceDateColumn && item.serviceDate !== undefined) {
+                record[serviceDateColumn] = this.toIsoDateOrNull(item.serviceDate);
+              }
+              if (serviceDurationHoursColumn && item.serviceDurationHours !== undefined) {
+                record[serviceDurationHoursColumn] = this.toOptionalNumber(item.serviceDurationHours);
+              }
+              if (serviceCostColumn && item.serviceCost !== undefined) {
+                record[serviceCostColumn] = this.toOptionalNumber(item.serviceCost) ?? 0;
+              }
+              if (partsCostColumn && item.partsCost !== undefined) {
+                record[partsCostColumn] = this.toOptionalNumber(item.partsCost) ?? 0;
+              }
+              if (laborCostColumn && item.laborCost !== undefined) {
+                record[laborCostColumn] = this.toOptionalNumber(item.laborCost) ?? 0;
+              }
+              if (serviceStatusColumn && item.serviceStatus !== undefined) {
+                record[serviceStatusColumn] = String(item.serviceStatus ?? '').trim();
+              }
+              if (serviceNotesColumn && item.serviceNotes !== undefined) {
+                record[serviceNotesColumn] = String(item.serviceNotes ?? '').trim();
+              }
+
+              await this.runInsert(client, 'tblservice_details', record);
+            }
+          }
+        }
+
+        // Update project details
+        if (payload.projectDetails ||
+          Object.prototype.hasOwnProperty.call(payload, 'projectName') ||
+          Object.prototype.hasOwnProperty.call(payload, 'projectCode')) {
+          const projectColumns = await this.getTableColumns(client, 'tblproject_details');
+          const projectSalesIdColumn = this.pickColumn(projectColumns, ['sales_id', 'salesId']);
+          const projectNameColumn = this.pickColumn(projectColumns, ['project_name', 'projectName']);
+          const projectCodeColumn = this.pickColumn(projectColumns, ['project_code', 'projectCode']);
+          const projectLocationColumn = this.pickColumn(projectColumns, ['project_location', 'projectLocation']);
+          const projectStartDateColumn = this.pickColumn(projectColumns, ['project_start_date', 'projectStartDate']);
+          const projectEndDateColumn = this.pickColumn(projectColumns, ['project_end_date', 'projectEndDate']);
+          const projectManagerColumn = this.pickColumn(projectColumns, ['project_manager', 'projectManager']);
+          const projectStatusColumn = this.pickColumn(projectColumns, ['project_status', 'projectStatus']);
+          const projectNotesColumn = this.pickColumn(projectColumns, ['project_notes', 'projectNotes']);
+
+          if (projectSalesIdColumn) {
+            await client.query(
+              `DELETE FROM tblproject_details WHERE "${projectSalesIdColumn}" = $1`,
+              [id],
+            );
+
+            const details = payload.projectDetails ?? {
+              projectName: payload.projectName,
+              projectCode: payload.projectCode,
+            };
+
+            const record: Record<string, unknown> = {
+              [projectSalesIdColumn]: id,
+            };
+
+            if (projectNameColumn && details?.projectName !== undefined) {
+              record[projectNameColumn] = String(details.projectName ?? '').trim();
+            }
+            if (projectCodeColumn && details?.projectCode !== undefined) {
+              record[projectCodeColumn] = String(details.projectCode ?? '').trim();
+            }
+            if (projectLocationColumn && details?.projectLocation !== undefined) {
+              record[projectLocationColumn] = String(details.projectLocation ?? '').trim();
+            }
+            if (projectStartDateColumn && details?.projectStartDate !== undefined) {
+              record[projectStartDateColumn] = this.toIsoDateOrNull(details.projectStartDate);
+            }
+            if (projectEndDateColumn && details?.projectEndDate !== undefined) {
+              record[projectEndDateColumn] = this.toIsoDateOrNull(details.projectEndDate);
+            }
+            if (projectManagerColumn && details?.projectManager !== undefined) {
+              record[projectManagerColumn] = String(details.projectManager ?? '').trim();
+            }
+            if (projectStatusColumn && details?.projectStatus !== undefined) {
+              record[projectStatusColumn] = String(details.projectStatus ?? '').trim();
+            }
+            if (projectNotesColumn && details?.projectNotes !== undefined) {
+              record[projectNotesColumn] = String(details.projectNotes ?? '').trim();
+            }
+
+            await this.runInsert(client, 'tblproject_details', record);
+          }
+        }
+
+        // Update transfer details
+        let transferDetailsId: number | null = null;
+        if (payload.transferDetails) {
+          const transferColumns = await this.getTableColumns(client, 'tbltransfer_details');
+          const transferSalesIdColumn = this.pickColumn(transferColumns, ['sales_id', 'salesId']);
+          const fromBranchIdColumn = this.pickColumn(transferColumns, ['from_branch_id', 'fromBranchId']);
+          const toBranchIdColumn = this.pickColumn(transferColumns, ['to_branch_id', 'toBranchId']);
+          const transferDateColumn = this.pickColumn(transferColumns, ['transfer_date', 'transferDate']);
+          const expectedDeliveryDateColumn = this.pickColumn(transferColumns, ['expected_delivery_date', 'expectedDeliveryDate']);
+          const actualDeliveryDateColumn = this.pickColumn(transferColumns, ['actual_delivery_date', 'actualDeliveryDate']);
+          const transferStatusColumn = this.pickColumn(transferColumns, ['transfer_status', 'transferStatus']);
+          const transferNotesColumn = this.pickColumn(transferColumns, ['transfer_notes', 'transferNotes']);
+          const sentByColumn = this.pickColumn(transferColumns, ['sent_by', 'sentBy']);
+          const receivedByColumn = this.pickColumn(transferColumns, ['received_by', 'receivedBy']);
+          const acknowledgedByColumn = this.pickColumn(transferColumns, ['acknowledged_by', 'acknowledgedBy']);
+          const acknowledgedAtColumn = this.pickColumn(transferColumns, ['acknowledged_at', 'acknowledgedAt']);
+
+          if (transferSalesIdColumn) {
+            await client.query(
+              `DELETE FROM tbltransfer_details WHERE "${transferSalesIdColumn}" = $1`,
+              [id],
+            );
+
+            const details = payload.transferDetails;
+            const record: Record<string, unknown> = {
+              [transferSalesIdColumn]: id,
+            };
+
+            if (fromBranchIdColumn && details.fromBranchId !== undefined) {
+              record[fromBranchIdColumn] = this.toOptionalNumber(details.fromBranchId);
+            }
+            if (toBranchIdColumn && details.toBranchId !== undefined) {
+              record[toBranchIdColumn] = this.toOptionalNumber(details.toBranchId);
+            }
+            if (transferDateColumn && details.transferDate !== undefined) {
+              record[transferDateColumn] = this.toIsoDateOrNull(details.transferDate);
+            }
+            if (expectedDeliveryDateColumn && details.expectedDeliveryDate !== undefined) {
+              record[expectedDeliveryDateColumn] = this.toIsoDateOrNull(details.expectedDeliveryDate);
+            }
+            if (actualDeliveryDateColumn && details.actualDeliveryDate !== undefined) {
+              record[actualDeliveryDateColumn] = this.toIsoDateOrNull(details.actualDeliveryDate);
+            }
+            if (transferStatusColumn && details.transferStatus !== undefined) {
+              record[transferStatusColumn] = String(details.transferStatus ?? '').trim();
+            }
+            if (transferNotesColumn && details.transferNotes !== undefined) {
+              record[transferNotesColumn] = String(details.transferNotes ?? '').trim();
+            }
+            if (sentByColumn && details.sentBy !== undefined) {
+              record[sentByColumn] = this.toOptionalNumber(details.sentBy);
+            }
+            if (receivedByColumn && details.receivedBy !== undefined) {
+              record[receivedByColumn] = this.toOptionalNumber(details.receivedBy);
+            }
+            if (acknowledgedByColumn && details.acknowledgedBy !== undefined) {
+              record[acknowledgedByColumn] = this.toOptionalNumber(details.acknowledgedBy);
+            }
+            if (acknowledgedAtColumn && details.acknowledgedAt !== undefined) {
+              record[acknowledgedAtColumn] = this.toIsoDateOrNull(details.acknowledgedAt);
+            }
+
+            const insertedTransfer = await this.runInsert(client, 'tbltransfer_details', record);
+            transferDetailsId = Number(insertedTransfer.rows[0]?.id ?? null);
+          }
+        }
+
+        // Update expense details (if provided)
+        if (payload.expenseDetails && transferDetailsId) {
+          const expenseColumns = await this.getTableColumns(client, 'tblexpense_details');
+          const expenseSalesIdColumn = this.pickColumn(expenseColumns, ['sales_id', 'salesId']);
+          const expenseTransferIdColumn = this.pickColumn(expenseColumns, ['transfer_id', 'transferId']);
+          const expenseTypeColumn = this.pickColumn(expenseColumns, ['expense_type', 'expenseType']);
+          const expenseDescriptionColumn = this.pickColumn(expenseColumns, ['expense_description', 'expenseDescription']);
+          const amountColumn = this.pickColumn(expenseColumns, ['amount']);
+          const expenseDateColumn = this.pickColumn(expenseColumns, ['expense_date', 'expenseDate']);
+          const paidToColumn = this.pickColumn(expenseColumns, ['paid_to', 'paidTo']);
+          const paymentMethodColumn = this.pickColumn(expenseColumns, ['payment_method', 'paymentMethod']);
+          const referenceNoColumn = this.pickColumn(expenseColumns, ['reference_no', 'referenceNo']);
+          const createdByColumn = this.pickColumn(expenseColumns, ['created_by', 'createdBy']);
+
+          if (expenseSalesIdColumn) {
+            await client.query(
+              `DELETE FROM tblexpense_details WHERE "${expenseSalesIdColumn}" = $1`,
+              [id],
+            );
+
+            for (const expense of payload.expenseDetails) {
+              const record: Record<string, unknown> = {};
+              record[expenseSalesIdColumn] = id;
+              record[expenseTransferIdColumn ?? 'transfer_id'] = transferDetailsId;
+
+              if (expenseTypeColumn && expense.expenseType !== undefined) {
+                record[expenseTypeColumn] = String(expense.expenseType ?? '').trim();
+              }
+              if (expenseDescriptionColumn && expense.expenseDescription !== undefined) {
+                record[expenseDescriptionColumn] = String(expense.expenseDescription ?? '').trim();
+              }
+              if (amountColumn) {
+                record[amountColumn] = this.toOptionalNumber(expense.amount) ?? 0;
+              }
+              if (expenseDateColumn && expense.expenseDate !== undefined) {
+                record[expenseDateColumn] = this.toIsoDateOrNull(expense.expenseDate);
+              }
+              if (paidToColumn && expense.paidTo !== undefined) {
+                record[paidToColumn] = String(expense.paidTo ?? '').trim();
+              }
+              if (paymentMethodColumn && expense.paymentMethod !== undefined) {
+                record[paymentMethodColumn] = String(expense.paymentMethod ?? '').trim();
+              }
+              if (referenceNoColumn && expense.referenceNo !== undefined) {
+                record[referenceNoColumn] = String(expense.referenceNo ?? '').trim();
+              }
+              if (createdByColumn && userId !== undefined) {
+                record[createdByColumn] = userId;
+              }
+
+              await this.runInsert(client, 'tblexpense_details', record);
+            }
+          }
+        }
+
+        // Update concern details
+        if (payload.concernDetails) {
+          const concernColumns = await this.getTableColumns(client, 'tblconcern_details');
+          const concernSalesIdColumn = this.pickColumn(concernColumns, ['sales_id', 'salesId']);
+          const concernCustomerIdColumn = this.pickColumn(concernColumns, ['customer_id', 'customerId']);
+          const concernTypeColumn = this.pickColumn(concernColumns, ['concern_type', 'concernType']);
+          const concernSubjectColumn = this.pickColumn(concernColumns, ['concern_subject', 'concernSubject']);
+          const concernDescriptionColumn = this.pickColumn(concernColumns, ['concern_description', 'concernDescription']);
+          const concernStatusColumn = this.pickColumn(concernColumns, ['concern_status', 'concernStatus']);
+          const priorityColumn = this.pickColumn(concernColumns, ['priority']);
+          const assignedToColumn = this.pickColumn(concernColumns, ['assigned_to', 'assignedTo']);
+          const resolutionNotesColumn = this.pickColumn(concernColumns, ['resolution_notes', 'resolutionNotes']);
+          const resolvedAtColumn = this.pickColumn(concernColumns, ['resolved_at', 'resolvedAt']);
+
+          if (concernSalesIdColumn) {
+            await client.query(
+              `DELETE FROM tblconcern_details WHERE "${concernSalesIdColumn}" = $1`,
+              [id],
+            );
+
+            const details = payload.concernDetails;
+            const record: Record<string, unknown> = {
+              [concernSalesIdColumn]: id,
+            };
+
+            if (concernCustomerIdColumn && details.customerId !== undefined) {
+              record[concernCustomerIdColumn] = String(details.customerId ?? '').trim();
+            }
+            if (concernTypeColumn && details.concernType !== undefined) {
+              record[concernTypeColumn] = String(details.concernType ?? '').trim();
+            }
+            if (concernSubjectColumn && details.concernSubject !== undefined) {
+              record[concernSubjectColumn] = String(details.concernSubject ?? '').trim();
+            }
+            if (concernDescriptionColumn && details.concernDescription !== undefined) {
+              record[concernDescriptionColumn] = String(details.concernDescription ?? '').trim();
+            }
+            if (concernStatusColumn && details.concernStatus !== undefined) {
+              record[concernStatusColumn] = String(details.concernStatus ?? '').trim();
+            }
+            if (priorityColumn && details.priority !== undefined) {
+              record[priorityColumn] = String(details.priority ?? '').trim();
+            }
+            if (assignedToColumn && details.assignedTo !== undefined) {
+              record[assignedToColumn] = this.toOptionalNumber(details.assignedTo);
+            }
+            if (resolutionNotesColumn && details.resolutionNotes !== undefined) {
+              record[resolutionNotesColumn] = String(details.resolutionNotes ?? '').trim();
+            }
+            if (resolvedAtColumn && details.resolvedAt !== undefined) {
+              record[resolvedAtColumn] = this.toIsoDateOrNull(details.resolvedAt);
+            }
+
+            await this.runInsert(client, 'tblconcern_details', record);
+          }
+        }
+
         const normalizedStatus = this.normalizeWorkflowStatus(status);
         const normalizedPreviousStatus = this.normalizeWorkflowStatus(existingSales.status);
         const normalizedRemarks = String(payload.remarks ?? '').trim().toLowerCase();
@@ -1798,6 +3438,9 @@ export class SalesOrderService {
              WHERE "${serialSalesIdColumn}" = $${serialResetParams.length}`,
             serialResetParams,
           );
+
+          // Restore stock for returned material items (reverse the earlier deduction)
+          await this.releaseReturnedMaterials(client, id, userId);
         }
 
         if (normalizedStatus === 'for-delivery') {
@@ -1844,5 +3487,33 @@ export class SalesOrderService {
 
   remove(id: number) {
     return `This action removes a #${id} salesOrder`;
+  }
+
+  private async releaseReturnedMaterials(client: PoolClient, salesId: number, userId?: number) {
+    const materialItems = await this.materialTransactionsService.findBySalesId(salesId);
+
+    for (const item of materialItems) {
+      const qty = Number(item.quantity ?? 0);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        continue;
+      }
+
+      // Return stock to inventory
+      await this.materialsService.updateStock(item.material_id, qty, userId ?? null, { client });
+
+      // Record a ledger movement for audit/traceability
+      await this.materialStockService.recordMovement(
+        {
+          materialId: item.material_id,
+          movementType: 'IN',
+          qty,
+          sourceType: 'SO',
+          sourceId: salesId,
+          sourceLineKey: `return-${item.id}`,
+          statusSnapshot: JSON.stringify(item),
+        },
+        { client },
+      );
+    }
   }
 }

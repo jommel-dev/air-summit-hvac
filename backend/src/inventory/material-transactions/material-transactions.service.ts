@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
 import { MaterialsService } from '../materials/materials.service';
+import { MaterialStockService } from '../material-stock/material-stock.service';
 import { CreateMaterialTransactionDto } from './dto/create-material-transaction.dto';
 
 @Injectable()
@@ -8,6 +9,7 @@ export class MaterialTransactionsService {
   constructor(
     private readonly db: DatabaseService,
     private readonly materialsService: MaterialsService,
+    private readonly materialStockService: MaterialStockService,
   ) {}
 
   // Create a single material transaction item (atomic: insert + stock update)
@@ -32,14 +34,38 @@ export class MaterialTransactionsService {
 
       const result = res.rows[0] || null;
 
-      // If it's a sales transaction (or has a sales_id), deduct from stock
-      const isSalesTxn = (dto.trans_type === 'sales') || (!!dto.sales_id && !dto.trans_type);
-      if (result && isSalesTxn) {
-        // Deduct stock (negative quantity)
-        // Note: we pass 1 as userId since this is a system operation
-        await this.materialsService.updateStock(dto.material_id, -dto.quantity, null, {
-          client,
-        });
+      // Only update stock when we have a successful transaction record
+      if (result) {
+        const qty = Number(dto.quantity || 0);
+        const isSalesTxn = dto.trans_type === 'sales' || (!!dto.sales_id && !dto.trans_type);
+        const isPurchaseTxn = dto.trans_type === 'purchase' || (!!dto.purchase_id && !dto.trans_type);
+
+        // Adjust on-hand stock based on transaction type
+        if (isSalesTxn) {
+          // Deduct stock (negative quantity)
+          await this.materialsService.updateStock(dto.material_id, -qty, null, { client });
+        } else if (isPurchaseTxn) {
+          // Increase stock
+          await this.materialsService.updateStock(dto.material_id, qty, null, { client });
+        }
+
+        // Record a corresponding stock movement for audit / ledger
+        const movementType = isSalesTxn ? 'OUT' : isPurchaseTxn ? 'IN' : 'ADJUST';
+        const sourceType = isSalesTxn ? 'SO' : isPurchaseTxn ? 'PO' : 'MANUAL';
+        const sourceId = isSalesTxn ? Number(dto.sales_id ?? 0) : isPurchaseTxn ? Number(dto.purchase_id ?? 0) : 0;
+
+        await this.materialStockService.recordMovement(
+          {
+            materialId: dto.material_id,
+            movementType,
+            qty,
+            sourceType,
+            sourceId,
+            sourceLineKey: `mt-${result.id}`,
+            statusSnapshot: JSON.stringify(result),
+          },
+          { client },
+        );
       }
 
       return result;
@@ -73,16 +99,36 @@ export class MaterialTransactionsService {
           ],
         );
 
-        if (res.rows[0]) {
-          created.push(res.rows[0]);
-        }
+        const createdItem = res.rows[0];
+        if (createdItem) {
+          created.push(createdItem);
 
-        const isSalesTxn = (dto.trans_type === 'sales') || (!!dto.sales_id && !dto.trans_type);
-        if (res.rows[0] && isSalesTxn) {
-          // Deduct stock (negative quantity)
-          await this.materialsService.updateStock(dto.material_id, -dto.quantity, null, {
-            client,
-          });
+          const qty = Number(dto.quantity || 0);
+          const isSalesTxn = dto.trans_type === 'sales' || (!!dto.sales_id && !dto.trans_type);
+          const isPurchaseTxn = dto.trans_type === 'purchase' || (!!dto.purchase_id && !dto.trans_type);
+
+          if (isSalesTxn) {
+            await this.materialsService.updateStock(dto.material_id, -qty, null, { client });
+          } else if (isPurchaseTxn) {
+            await this.materialsService.updateStock(dto.material_id, qty, null, { client });
+          }
+
+          const movementType = isSalesTxn ? 'OUT' : isPurchaseTxn ? 'IN' : 'ADJUST';
+          const sourceType = isSalesTxn ? 'SO' : isPurchaseTxn ? 'PO' : 'MANUAL';
+          const sourceId = isSalesTxn ? Number(dto.sales_id ?? 0) : isPurchaseTxn ? Number(dto.purchase_id ?? 0) : 0;
+
+          await this.materialStockService.recordMovement(
+            {
+              materialId: dto.material_id,
+              movementType,
+              qty,
+              sourceType,
+              sourceId,
+              sourceLineKey: `mt-${createdItem.id}`,
+              statusSnapshot: JSON.stringify(createdItem),
+            },
+            { client },
+          );
         }
       }
 
