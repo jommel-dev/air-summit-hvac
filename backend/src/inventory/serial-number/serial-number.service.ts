@@ -445,7 +445,7 @@ export class SerialNumberService {
       }
 
       if (
-        ['delivered', 'installed', 'sold', 'released', 'out', 'outbound'].includes(
+        ['delivered', 'installed', 'for-delivery', 'sold', 'released', 'out', 'outbound'].includes(
           normalizedStatus,
         )
       ) {

@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { apiClient } from './api-client';
+import { MaterialTransactionItem } from './sales-order-material.service';
 
 export interface SalesCustomerOption {
   id: string;
@@ -124,6 +125,13 @@ export interface SalesOrderDetailProductItem {
   status: string;
   serialNumbers: Record<string, string[]>;
 }
+export interface SalesOrderDetailServiceItem {
+  id: number;
+  serviceName: string;
+  unitPrice: number;
+  qty: number;
+  total: number;
+}
 
 export interface SalesOrderDetailItem {
   id: number;
@@ -143,6 +151,8 @@ export interface SalesOrderDetailItem {
   remarks: string;
   paymentDetails: SalesOrderDetailPayment[];
   productItems: SalesOrderDetailProductItem[];
+  serviceItems: SalesOrderDetailServiceItem[];
+  materialItems?: MaterialTransactionItem[];
   createdAt: string | null;
 }
 
@@ -281,13 +291,17 @@ export class SalesOrderService {
     };
   }
 
-  async getSalesOrderById(id: number): Promise<SalesOrderDetailItem | null> {
+  async getSalesOrderById(id: number): Promise<SalesOrderDetailItem> {
     const response = await apiClient.get<SalesOrderDetailResponse>(`/sales-order/${id}`);
     if (!response.data.success) {
-      return null;
+      throw new Error(response.data.message || 'Failed to load sales order detail');
     }
 
-    return response.data.item ?? null;
+    if (!response.data.item) {
+      throw new Error('Sales order not found');
+    }
+
+    return response.data.item;
   }
 
   async getCustomers(search?: string): Promise<SalesCustomerOption[]> {

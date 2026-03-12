@@ -6,6 +6,7 @@ import { PoolClient } from 'pg';
 import { randomUUID } from 'crypto';
 import { ListSalesOrderQueryDto } from './dto/list-sales-order-query.dto';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
+import { MaterialTransactionsService } from 'src/inventory/material-transactions/material-transactions.service';
 
 type SalesMode =
   | 'deliveries'
@@ -32,6 +33,7 @@ export class SalesOrderService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly materialStockService: MaterialStockService,
+    private readonly materialTransactionsService: MaterialTransactionsService,
   ) {}
 
   private async getTableColumns(
@@ -323,6 +325,7 @@ export class SalesOrderService {
       )`);
       whereParts.push(`LOWER(COALESCE(base.sales_type, '')) IN (
         'sales',
+        'sub-dealer',
         'sales and service',
         'sales & service',
         'sales-and-service',
@@ -1226,6 +1229,13 @@ export class SalesOrderService {
         serialMap.set(key, existing);
       }
 
+      let materialItems: any[] = [];
+      try {
+        materialItems = await this.materialTransactionsService.findBySalesId(id);
+      } catch {
+        materialItems = [];
+      }
+
       const sales = salesResult.rows[0];
 
       return {
@@ -1283,6 +1293,7 @@ export class SalesOrderService {
               serialNumbers: serialMap.get(serialKey) ?? {},
             };
           }),
+          materialItems: materialItems,
           createdAt: sales.createdAt,
         },
       };
@@ -1801,20 +1812,20 @@ export class SalesOrderService {
           await this.updateLinkedSalesSerialStatuses(client, id, 'installed');
         }
 
-        const materialSync = await this.materialStockService.applyFromSalesStatusChange(client, {
-          salesOrderId: id,
-          previousStatus: existingSales.status,
-          nextStatus: status,
-          remarks: String(payload.remarks ?? ''),
-          userId,
-        });
+        // const materialSync = await this.materialStockService.applyFromSalesStatusChange(client, {
+        //   salesOrderId: id,
+        //   previousStatus: existingSales.status,
+        //   nextStatus: status,
+        //   remarks: String(payload.remarks ?? ''),
+        //   userId,
+        // });
 
         return {
           salesOrderId: id,
           customerId,
           totalAmount,
           status,
-          materialSync,
+          // materialSync,
         };
       });
 

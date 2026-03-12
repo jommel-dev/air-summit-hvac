@@ -1177,14 +1177,14 @@ export class PurchaseService {
             userId,
           );
 
-          const materialResult = await this.materialStockService.applyInboundFromPo(
-            client,
-            id,
-            nextStatus,
-            userId,
-          );
-          postedMaterialMovements = materialResult.posted;
-          skippedMaterialMovements = materialResult.skipped;
+          // const materialResult = await this.materialStockService.applyInboundFromPo(
+          //   client,
+          //   id,
+          //   nextStatus,
+          //   userId,
+          // );
+          // postedMaterialMovements = materialResult.posted;
+          // skippedMaterialMovements = materialResult.skipped;
         }
 
         return {

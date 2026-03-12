@@ -1,0 +1,602 @@
+<div>
+  <app-page-breadcrumb pageTitle="Purchase Order" />
+  <div class="mb-4 rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] xl:p-6">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">Purchase Orders</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Create and update requests using a drawer form aligned with the PO API payload.</p>
+      </div>
+      @if (canCreateOrUpdatePurchase()) {
+        <button
+          type="button"
+          (click)="openCreateDrawer()"
+          class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-600"
+        >
+          Create PO
+        </button>
+      }
+    </div>
+
+    @if (createError) {
+      <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+        {{ createError }}
+      </div>
+    }
+
+    @if (createSuccess) {
+      <div class="mt-4 rounded-lg border border-success-300 bg-success-50 px-4 py-3 text-sm text-success-700 dark:border-success-500/30 dark:bg-success-500/10 dark:text-success-400">
+        {{ createSuccess }}
+      </div>
+    }
+  </div>
+
+  @if (isFormDrawerOpen) {
+    <div class="fixed inset-0 z-[100000] bg-gray-900/40" (click)="closeCreateDrawer()"></div>
+  }
+
+  <aside class="fixed right-0 top-0 z-[100001] h-full w-full max-w-2xl transform border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
+    [ngClass]="isFormDrawerOpen ? 'translate-x-0' : 'translate-x-full'">
+    <form class="flex h-full flex-col" (ngSubmit)="submitCreatePurchase()">
+      <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ drawerMode === 'create' ? 'Create Purchase Order' : ((activeTab === 'approvals' || activeTab === 'master-data') ? 'View Purchase Order' : 'Update Purchase Order') }}</h3>
+          <p class="text-sm text-gray-500 dark:text-gray-400">Simple and refined request form based on API body.</p>
+        </div>
+        <button type="button" (click)="closeCreateDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+      </div>
+
+      <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Vendor</h4>
+          <div class="mb-3 flex gap-5 text-sm">
+            <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
+              <input type="radio" name="vendorMode" [value]="'existing'" [(ngModel)]="vendorMode" [disabled]="isMasterDataDrawerMode()" />
+              Existing Vendor
+            </label>
+            <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
+              <input type="radio" name="vendorMode" [value]="'new'" [(ngModel)]="vendorMode" [disabled]="isMasterDataDrawerMode()" />
+              New Vendor
+            </label>
+          </div>
+
+          @if (vendorMode === 'existing') {
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Existing Vendor</label>
+              <div class="relative">
+                <input
+                  type="text"
+                  [ngModel]="vendorSearch"
+                  (ngModelChange)="onVendorSearchChange($event)"
+                  name="vendorSearch"
+                  placeholder="Search and select vendor"
+                  autocomplete="off"
+                  [readonly]="isMasterDataDrawerMode()"
+                  (focus)="onVendorComboboxFocus()"
+                  (blur)="onVendorComboboxBlur()"
+                  class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                />
+
+                <input type="hidden" [(ngModel)]="createForm.vendorId" name="vendorId" required />
+
+                @if (isVendorDropdownOpen && !isMasterDataDrawerMode()) {
+                  <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                    @if (getFilteredVendorOptions().length === 0) {
+                      <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No vendors found.</p>
+                    } @else {
+                      @for (vendor of getFilteredVendorOptions(); track vendor.id) {
+                        <button
+                          type="button"
+                          (mousedown)="$event.preventDefault()"
+                          (click)="selectVendor(vendor.id)"
+                          class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                        >
+                          <span>{{ vendor.name }}</span>
+                        </button>
+                      }
+                    }
+                  </div>
+                }
+              </div>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Type vendor name and pick one from the list.</p>
+
+              @if (createForm.vendorId) {
+                <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Vendor Name</label>
+                    <input
+                      type="text"
+                      [(ngModel)]="createForm.vendorName"
+                      name="existingVendorName"
+                      readonly
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
+                    <input
+                      type="text"
+                      [(ngModel)]="createForm.vendorContactPerson"
+                      name="existingVendorContactPerson"
+                      [readonly]="isMasterDataDrawerMode()"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
+                    <input
+                      type="text"
+                      [(ngModel)]="createForm.vendorContactNumber"
+                      name="existingVendorContactNumber"
+                      [readonly]="isMasterDataDrawerMode()"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+                    <input
+                      type="text"
+                      [(ngModel)]="createForm.vendorAddress"
+                      name="existingVendorAddress"
+                      [readonly]="isMasterDataDrawerMode()"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                    />
+                  </div>
+                </div>
+              }
+            </div>
+          } @else {
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Vendor Name</label>
+                <input type="text" [(ngModel)]="createForm.vendorName" name="vendorName" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
+                <input type="text" [(ngModel)]="createForm.vendorContactPerson" name="vendorContactPerson" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
+                <input type="text" [(ngModel)]="createForm.vendorContactNumber" name="vendorContactNumber" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+                <input type="text" [(ngModel)]="createForm.vendorAddress" name="vendorAddress" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              </div>
+            </div>
+          }
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <div class="mb-3 flex items-center justify-between">
+            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Payment Details (Split Payment)</h4>
+            <button type="button" (click)="addPaymentDetail()" [disabled]="isMasterDataDrawerMode()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300">
+              Add Payment
+            </button>
+          </div>
+
+          <div class="space-y-4">
+            @for (payment of createForm.paymentDetails; track $index; let pIndex = $index) {
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+                <div class="mb-3 flex items-center justify-between">
+                  <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Payment {{ pIndex + 1 }}</p>
+                  <button type="button" (click)="removePaymentDetail(pIndex)" [disabled]="createForm.paymentDetails.length === 1 || isMasterDataDrawerMode()" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
+                    Remove
+                  </button>
+                </div>
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Method</label>
+                    <input type="text" [(ngModel)]="payment.method" [name]="'paymentMethod_' + pIndex" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Amount</label>
+                    <input type="number" [(ngModel)]="payment.amount" [name]="'paymentAmount_' + pIndex" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Terms</label>
+                    <input type="text" [(ngModel)]="payment.terms" [name]="'paymentTerms_' + pIndex" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Terms Due Date</label>
+                    <input type="date" [(ngModel)]="payment.termsDueDate" [name]="'paymentTermsDueDate_' + pIndex" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payment Date</label>
+                    <input type="date" [(ngModel)]="payment.paymentDate" [name]="'paymentDate_' + pIndex" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Down Payment</label>
+                    <input type="number" [(ngModel)]="payment.downPayment" [name]="'downPayment_' + pIndex" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+                </div>
+              </div>
+            }
+          </div>
+        </section>
+
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <div class="mb-3 flex items-center justify-between">
+            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Product Items</h4>
+            <button type="button" (click)="addProductItem()" [disabled]="isMasterDataDrawerMode()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300">
+              Add Product
+            </button>
+          </div>
+
+          <div class="mb-4 flex flex-wrap gap-2">
+            @for (item of createForm.productItems; track $index; let index = $index) {
+              <button
+                type="button"
+                (click)="setActiveProductTab(index)"
+                class="rounded-lg border px-3 py-1.5 text-xs font-medium"
+                [ngClass]="activeProductTabIndex === index
+                  ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
+                  : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+              >
+                Product {{ index + 1 }}
+              </button>
+            }
+          </div>
+
+          @if (getActiveProductItem(); as activeItem) {
+            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+              <div class="mb-3 flex items-center justify-between">
+                <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Item {{ activeProductTabIndex + 1 }}</p>
+                <button type="button" (click)="removeProductItem(activeProductTabIndex)" [disabled]="createForm.productItems.length === 1 || isMasterDataDrawerMode()" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
+                  Remove
+                </button>
+              </div>
+
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product Name</label>
+                  <select [(ngModel)]="activeItem.productId" [name]="'productId_' + activeProductTabIndex" (ngModelChange)="onProductChanged(activeProductTabIndex)" [disabled]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
+                    <option value="">Select Product</option>
+                    @for (product of catalogProducts; track product.id) {
+                      <option [value]="product.id">{{ product.name }}{{ product.brandName ? ' (' + product.brandName + ')' : '' }}</option>
+                    }
+                  </select>
+                </div>
+
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Capacity</label>
+                  <select [(ngModel)]="activeItem.capacityId" [name]="'capacityId_' + activeProductTabIndex" [disabled]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
+                    <option value="">Select Capacity</option>
+                    @for (capacity of getCapacitiesByProduct(activeItem.productId); track capacity.id) {
+                      <option [value]="capacity.id">{{ capacity.name }}</option>
+                    }
+                  </select>
+                </div>
+
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Unit Price</label>
+                  <input type="number" [(ngModel)]="activeItem.unitPrice" (ngModelChange)="recalculateTotalAmount()" [name]="'unitPrice_' + activeProductTabIndex" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
+                </div>
+                <div>
+                  <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total Set Qty</label>
+                  <input type="number" [(ngModel)]="activeItem.totalSetQty" (ngModelChange)="onTotalSetQtyChange(activeProductTabIndex)" [readonly]="isMasterDataDrawerMode()" [name]="'totalSetQty_' + activeProductTabIndex" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
+                </div>
+
+                <div class="md:col-span-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                  <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Types</p>
+                  <div class="mb-3 flex flex-wrap gap-2">
+                    @for (unitType of activeItem.unitTypes; track unitType.label) {
+                      <button
+                        type="button"
+                        (click)="selectUnitType(activeProductTabIndex, unitType.label)"
+                        class="rounded-lg border px-3 py-1 text-xs font-medium"
+                        [ngClass]="getSelectedUnitTypeLabel(activeProductTabIndex) === unitType.label
+                          ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
+                          : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                      >
+                        {{ unitType.label }}
+                      </button>
+                    }
+                  </div>
+
+                  <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    @for (unitType of activeItem.unitTypes; track unitType.label) {
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">{{ unitType.label }} Qty</label>
+                        <input type="number" [(ngModel)]="unitType.value" [readonly]="isMasterDataDrawerMode()" [name]="'unitTypeQty_' + activeProductTabIndex + '_' + unitType.label" (ngModelChange)="onUnitTypeQtyChange(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      </div>
+                    }
+                  </div>
+                </div>
+
+                @if (drawerMode === 'edit') {
+                  <div class="md:col-span-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                    <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                      Scan Serial ({{ getSelectedUnitTypeLabel(activeProductTabIndex) }})
+                    </p>
+
+                    @for (unitType of activeItem.unitTypes; track unitType.label) {
+                      @if (getSelectedUnitTypeLabel(activeProductTabIndex) === unitType.label) {
+                        <div class="space-y-3">
+                          @if (!isMasterDataDrawerMode()) {
+                            <div class="flex gap-2">
+                              <input
+                                type="text"
+                                [(ngModel)]="unitType.scanInput"
+                                [id]="'scanInput_' + activeProductTabIndex + '_' + unitType.label"
+                                [name]="'scanInput_' + activeProductTabIndex + '_' + unitType.label"
+                                (ngModelChange)="onSerialScanInputChange(activeProductTabIndex, unitType.label, $event)"
+                                (keyup.enter)="scanSerialForSelectedUnit(activeProductTabIndex)"
+                                placeholder="Enter serial number"
+                                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                              />
+                            </div>
+                          }
+
+                          @if (unitType.scanError) {
+                            <p class="text-xs text-error-600 dark:text-error-400">{{ unitType.scanError }}</p>
+                          }
+                          @if (unitType.scanSuccess) {
+                            <p class="text-xs text-success-700 dark:text-success-400">{{ unitType.scanSuccess }}</p>
+                          }
+                          @if (!isMasterDataDrawerMode() && unitType.isScanning) {
+                            <p class="text-xs text-gray-500 dark:text-gray-400">Scanning serial...</p>
+                          }
+
+                          @if (unitType.serials.length > 0) {
+                            <div>
+                              <p class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">Scanned Serials</p>
+                              <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                                <table class="w-full min-w-[320px]">
+                                  <thead>
+                                    <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+                                      <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">#</th>
+                                      <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Number</th>
+                                      @if (!isMasterDataDrawerMode()) {
+                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
+                                      }
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    @for (serial of unitType.serials; track serial; let serialIndex = $index) {
+                                      <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
+                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serialIndex + 1 }}</td>
+                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serial }}</td>
+                                        @if (!isMasterDataDrawerMode()) {
+                                          <td class="px-3 py-2 text-right">
+                                            <button
+                                              type="button"
+                                              (click)="removeScannedSerial(activeProductTabIndex, unitType.label, serial)"
+                                              [disabled]="unitType.isScanning"
+                                              class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                                            >
+                                              Remove
+                                            </button>
+                                          </td>
+                                        }
+                                      </tr>
+                                    }
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          }
+
+                          @if (isMasterDataDrawerMode() && unitType.serials.length === 0) {
+                            <p class="text-xs text-gray-500 dark:text-gray-400">No scanned serial numbers yet.</p>
+                          }
+
+                          <!-- <div>
+                            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">{{ unitType.label }} Serials (comma/new line)</label>
+                            <textarea rows="3" [(ngModel)]="unitType.serialInput" [name]="'serialInput_' + activeProductTabIndex + '_' + unitType.label" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
+                          </div> -->
+                        </div>
+                      }
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          <div class="mt-3">
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total Amount</label>
+            <input type="number" [(ngModel)]="createForm.totalAmount" name="totalAmount" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" required />
+          </div>
+        </section>
+      </div>
+
+      <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button type="button" (click)="closeCreateDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
+        @if (drawerMode === 'edit' && hasAnyScannedSerials()) {
+          <!-- <button
+            type="button"
+            (click)="exportScannedSerialsAsCsv()"
+            [disabled]="isExportingSerials"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300"
+          >
+            Export CSV
+          </button> -->
+          <button
+            type="button"
+            (click)="exportScannedSerialsAsExcel()"
+            [disabled]="isExportingSerials"
+            class="rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300"
+          >
+            {{ isExportingSerials ? 'Exporting...' : 'Export Excel' }}
+          </button>
+        }
+
+        <button type="submit" [disabled]="isCreating || isProcessingApprovalAction" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+          {{ isCreating ? 'Saving...' : (drawerMode === 'create' ? 'Create PO Request' : 'Update PO Request') }}
+        </button>
+      </div>
+    </form>
+  </aside>
+
+  <div class="border-b border-default">
+    <ul class="flex flex-wrap -mb-px text-sm font-medium text-center text-body">
+        @if (canAccessPurchaseTab('deliveries')) {
+          <li class="me-2">
+            <button type="button" (click)="setTab('deliveries')" [ngClass]="{
+              'text-brand-700 border-brand-500 dark:text-brand-300': activeTab === 'deliveries',
+              'border-transparent text-gray-500 hover:text-brand-700 hover:border-brand-400 dark:text-gray-400 dark:hover:text-brand-300': activeTab !== 'deliveries'
+            }" [attr.aria-current]="activeTab === 'deliveries' ? 'page' : null" class="inline-flex items-center justify-center p-4 border-b rounded-t-base group transition-colors">
+              <svg class="w-[20px] h-[20px] me-2 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
+                <path fill-rule="evenodd" d="M18 5.05h1a2 2 0 0 1 2 2v2H3v-2a2 2 0 0 1 2-2h1v-1a1 1 0 1 1 2 0v1h3v-1a1 1 0 1 1 2 0v1h3v-1a1 1 0 1 1 2 0v1Zm-15 6v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8H3ZM11 18a1 1 0 1 0 2 0v-1h1a1 1 0 1 0 0-2h-1v-1a1 1 0 1 0-2 0v1h-1a1 1 0 1 0 0 2h1v1Z" clip-rule="evenodd"/>
+              </svg>
+              Deliveries
+            </button>
+          </li>
+        }
+        @if (canAccessPurchaseTab('approvals')) {
+          <li class="me-2">
+          <button type="button" (click)="setTab('approvals')" [ngClass]="{
+            'text-brand-700 border-brand-500 dark:text-brand-300': activeTab === 'approvals',
+            'border-transparent text-gray-500 hover:text-brand-700 hover:border-brand-400 dark:text-gray-400 dark:hover:text-brand-300': activeTab !== 'approvals'
+          }" [attr.aria-current]="activeTab === 'approvals' ? 'page' : null" class="inline-flex items-center justify-center p-4 border-b rounded-t-base group transition-colors">
+            <svg class="w-[20px] h-[20px] me-2 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
+              <path fill-rule="evenodd" d="M18 14a1 1 0 1 0-2 0v2h-2a1 1 0 1 0 0 2h2v2a1 1 0 1 0 2 0v-2h2a1 1 0 1 0 0-2h-2v-2Z" clip-rule="evenodd"/>
+              <path fill-rule="evenodd" d="M15.026 21.534A9.994 9.994 0 0 1 12 22C6.477 22 2 17.523 2 12S6.477 2 12 2c2.51 0 4.802.924 6.558 2.45l-7.635 7.636L7.707 8.87a1 1 0 0 0-1.414 1.414l3.923 3.923a1 1 0 0 0 1.414 0l8.3-8.3A9.956 9.956 0 0 1 22 12a9.994 9.994 0 0 1-.466 3.026A2.49 2.49 0 0 0 20 14.5h-.5V14a2.5 2.5 0 0 0-5 0v.5H14a2.5 2.5 0 0 0 0 5h.5v.5c0 .578.196 1.11.526 1.534Z" clip-rule="evenodd"/>
+            </svg>
+
+              Approvals
+          </button>
+          </li>
+        }
+        @if (canAccessPurchaseTab('master-data')) {
+          <li class="me-2">
+          <button type="button" (click)="setTab('master-data')" [ngClass]="{
+            'text-brand-700 border-brand-500 dark:text-brand-300': activeTab === 'master-data',
+            'border-transparent text-gray-500 hover:text-brand-700 hover:border-brand-400 dark:text-gray-400 dark:hover:text-brand-300': activeTab !== 'master-data'
+          }" [attr.aria-current]="activeTab === 'master-data' ? 'page' : null" class="inline-flex items-center justify-center p-4 border-b rounded-t-base group transition-colors">
+            <svg class="w-[20px] h-[20px] me-2 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
+              <path fill-rule="evenodd" d="M12 2c-.791 0-1.55.314-2.11.874l-.893.893a.985.985 0 0 1-.696.288H7.04A2.984 2.984 0 0 0 4.055 7.04v1.262a.986.986 0 0 1-.288.696l-.893.893a2.984 2.984 0 0 0 0 4.22l.893.893a.985.985 0 0 1 .288.696v1.262a2.984 2.984 0 0 0 2.984 2.984h1.262c.261 0 .512.104.696.288l.893.893a2.984 2.984 0 0 0 4.22 0l.893-.893a.985.985 0 0 1 .696-.288h1.262a2.984 2.984 0 0 0 2.984-2.984V15.7c0-.261.104-.512.288-.696l.893-.893a2.984 2.984 0 0 0 0-4.22l-.893-.893a.985.985 0 0 1-.288-.696V7.04a2.984 2.984 0 0 0-2.984-2.984h-1.262a.985.985 0 0 1-.696-.288l-.893-.893A2.984 2.984 0 0 0 12 2Zm3.683 7.73a1 1 0 1 0-1.414-1.413l-4.253 4.253-1.277-1.277a1 1 0 0 0-1.415 1.414l1.985 1.984a1 1 0 0 0 1.414 0l4.96-4.96Z" clip-rule="evenodd"/>
+            </svg>
+            Master Data
+          </button>
+          </li>
+        }
+    </ul>
+  </div>
+
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 mt-4 dark:border-gray-800 dark:bg-white/[0.03] xl:p-6">
+    <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <input
+        type="text"
+        [value]="search"
+        (input)="onSearchChange($any($event.target).value)"
+        placeholder="Search PO number, vendor, or status"
+        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 sm:max-w-sm"
+      />
+      <div class="text-sm text-gray-500 dark:text-gray-400">
+        Showing {{ purchaseOrders.length }} of {{ total }}
+      </div>
+    </div>
+
+    @if (isLoading) {
+      <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading purchase orders...</div>
+    } @else if (errorMessage) {
+      <div class="rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+        {{ errorMessage }}
+      </div>
+    } @else {
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[850px]">
+          <thead>
+            <tr class="border-b border-gray-200 dark:border-gray-800">
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">PO Number</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Vendor</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Count</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Created At</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (item of purchaseOrders; track item.id) {
+              <tr class="border-b border-gray-100 dark:border-gray-800/70">
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.poNumber }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.vendorName }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatAmount(item.totalAmount) }}</td>
+                <td class="px-4 py-3">
+                  <span class="rounded-full px-2 py-0.5 text-xs font-medium"
+                    [ngClass]="{
+                      'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-500': item.status.toLowerCase() === 'pending',
+                      'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400': item.status.toLowerCase() === 'in-progress',
+                      'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-500': item.status.toLowerCase().includes('approval'),
+                      'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': !['pending','in-progress'].includes(item.status.toLowerCase()) && !item.status.toLowerCase().includes('approval')
+                    }"
+                  >
+                    {{ item.status }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.serialCount }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDate(item.createdAt) }}</td>
+                <td class="px-4 py-3 text-right">
+                  <div class="inline-flex items-center gap-2">
+                    @if (canApproveFromTable(item.status)) {
+                      <button
+                        type="button"
+                        (click)="approvePurchaseOrderFromTable(item)"
+                        [disabled]="approvingPurchaseIds.has(item.id)"
+                        class="rounded-lg border border-success-300 px-3 py-1.5 text-xs font-medium text-success-700 transition hover:bg-success-50 disabled:opacity-50 dark:border-success-500/40 dark:text-success-400 dark:hover:bg-success-500/10"
+                      >
+                        {{ approvingPurchaseIds.has(item.id) ? 'Approving...' : 'Approve' }}
+                      </button>
+                    }
+
+                    @if (canSendForApproval(item.status) && activeTab === 'deliveries' && canCreateOrUpdatePurchase()) {
+                      <button
+                        type="button"
+                        (click)="sendForApproval(item)"
+                        [disabled]="sendingForApprovalIds.has(item.id)"
+                        class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                      >
+                        {{ sendingForApprovalIds.has(item.id) ? 'Sending...' : 'Send for Approval' }}
+                      </button>
+                    }
+
+                    @if (canCreateOrUpdatePurchase()) {
+                      <button
+                        type="button"
+                        (click)="openEditDrawer(item)"
+                        class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                      >
+                        {{ getRowActionLabel() }}
+                      </button>
+                    }
+                  </div>
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                  No purchase orders found for this tab.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mt-4 flex items-center justify-between">
+        <button
+          type="button"
+          class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+          (click)="onPageChange(page - 1)"
+          [disabled]="page <= 1"
+        >
+          Previous
+        </button>
+
+        <span class="text-sm text-gray-500 dark:text-gray-400">Page {{ page }} of {{ totalPages }}</span>
+
+        <button
+          type="button"
+          class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+          (click)="onPageChange(page + 1)"
+          [disabled]="page >= totalPages"
+        >
+          Next
+        </button>
+      </div>
+    }
+
+  </div>
+</div>

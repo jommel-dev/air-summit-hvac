@@ -14,6 +14,7 @@ import {
   SalesOrderPayload,
   SalesOrderService,
 } from '../../shared/services/sales-order.service';
+import { MaterialTransactionItem } from '../../shared/services/sales-order-material.service';
 import { RbacService } from '../../shared/services/rbac.service';
 import axios from 'axios';
 import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
@@ -57,6 +58,12 @@ interface SalesProductFormItem {
   discountPrice: number | '';
   unitTypes: SalesUnitTypeFormItem[];
   totalSetQty: number;
+}
+interface SalesServiceFormItem {
+  serviceName: string;
+  unitPrice: number;
+  qty: number;
+  total: number;
 }
 
 interface SalesPaymentFormItem {
@@ -149,7 +156,9 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   isCustomerDropdownOpen = false;
   catalogProducts: ProductOption[] = [];
   activeProductTabIndex = 0;
+  activeServiceTabIndex = 0;
   selectedUnitTypeByProduct: Record<number, string> = {};
+  materialItems: MaterialTransactionItem[] = [];
 
   form = {
     customer_id: '',
@@ -168,6 +177,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     },
     paymentDetails: [this.createEmptyPaymentItem()],
     productItems: [this.createEmptyProductItem()],
+    serviceItems: [this.createEmptyServiceItem()],
     status: 'pending',
   };
 
@@ -492,6 +502,8 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         this.uiError =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to print Delivery Receipt';
+      } else if (error instanceof Error) {
+        this.uiError = error.message;
       } else {
         this.uiError = 'Failed to print Delivery Receipt';
       }
@@ -932,6 +944,8 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         this.uiError =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to load sales order details';
+      } else if (error instanceof Error) {
+        this.uiError = error.message;
       } else {
         this.uiError = 'Failed to load sales order details';
       }
@@ -1035,6 +1049,11 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     this.recalculateTotalAmount();
   }
 
+  addServiceItem(): void {
+    this.form.serviceItems = [...this.form.serviceItems, this.createEmptyServiceItem()];
+    this.activeServiceTabIndex = this.form.serviceItems.length - 1;
+  }
+
   removeProductItem(index: number): void {
     if (this.form.productItems.length <= 1) return;
     this.form.productItems = this.form.productItems.filter((_, itemIndex) => itemIndex !== index);
@@ -1052,6 +1071,15 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     );
     this.ensureSelectedUnitType(this.activeProductTabIndex);
     this.recalculateTotalAmount();
+  }
+
+  removeServiceItem(index: number): void {
+    if (this.form.serviceItems.length <= 1) return;
+    this.form.serviceItems = this.form.serviceItems.filter((_, itemIndex) => itemIndex !== index);
+    this.activeServiceTabIndex = Math.max(
+      0,
+      Math.min(this.activeServiceTabIndex, this.form.serviceItems.length - 1),
+    );
   }
 
   getCapacitiesByProduct(productId: string): ProductCapacityOption[] {
@@ -1209,8 +1237,16 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     }
   }
 
+  setActiveServiceTab(index: number): void {
+    this.activeServiceTabIndex = index;
+  }
+
   getActiveProductItem(): SalesProductFormItem | null {
     return this.form.productItems[this.activeProductTabIndex] ?? null;
+  }
+
+  getActiveServiceItem(): SalesServiceFormItem | null {
+    return this.form.serviceItems[this.activeServiceTabIndex] ?? null;
   }
 
   getSelectedUnitTypeLabel(productIndex: number): string {
@@ -1604,6 +1640,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       },
       paymentDetails: [this.createEmptyPaymentItem()],
       productItems: [this.createEmptyProductItem()],
+      serviceItems: [this.createEmptyServiceItem()],
       status: 'pending',
     };
 
@@ -1611,6 +1648,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     this.customerSearch = '';
     this.activeProductTabIndex = 0;
     this.selectedUnitTypeByProduct = {};
+    this.materialItems = [];
     this.ensureSelectedUnitType(0);
     this.syncPaymentAmounts();
   }
@@ -1669,6 +1707,15 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         this.createUnitTypeEntry('outdoor', 0, []),
       ],
       totalSetQty: 1,
+    };
+  }
+
+  private createEmptyServiceItem(): SalesServiceFormItem {
+    return {
+      serviceName: '',
+      unitPrice: 0,
+      qty: 0,
+      total: 0,
     };
   }
 
@@ -1845,6 +1892,13 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         ? detail.productItems.map((product) => this.mapDetailProductItem(product))
         : [this.createEmptyProductItem()];
 
+    const serviceItems =
+      detail.serviceItems.length > 0
+        ? detail.serviceItems.map((service) => service)
+        : [this.createEmptyServiceItem()];
+
+    this.materialItems = detail.materialItems ?? [];
+
     this.form = {
       customer_id: detail.customerId ?? '',
       totalAmount: Number(detail.totalAmount) || Number(fallbackItem.totalAmount) || 0,
@@ -1862,6 +1916,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       },
       paymentDetails,
       productItems,
+      serviceItems,
       status: detail.status ?? fallbackItem.status ?? 'pending',
     };
 
