@@ -17,7 +17,7 @@ const nodeEnv = String(appEnv?.['NODE_ENV'] ?? '').trim().toLowerCase();
 const hostName = String(globalThis.location?.hostname ?? '').trim().toLowerCase();
 const isLocalHost = hostName === 'localhost' || hostName === '127.0.0.1';
 const isProductionBuild = nodeEnv === 'production' || !isLocalHost;
-const fallbackProductionApiBaseUrl = 'https://air-summit-hvac.onrender.com';
+const fallbackProductionApiBaseUrl = 'https://air-summit-backend-ewbho.ondigitalocean.app';
 
 if (!configuredApiBaseUrl && isProductionBuild) {
   console.warn(
