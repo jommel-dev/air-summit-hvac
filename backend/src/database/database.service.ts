@@ -7,6 +7,8 @@ export class DatabaseService implements OnModuleDestroy {
   private readonly pool: Pool;
 
   constructor(private readonly configService: ConfigService) {
+    console.log('🔌 Initializing database connection...');
+
     const databaseUrl = this.configService.get<string>('DATABASE_URL');
     const shouldUseSsl = this.resolveSslEnabled(databaseUrl);
     const rejectUnauthorized = this.resolveRejectUnauthorized(databaseUrl);
@@ -17,16 +19,27 @@ export class DatabaseService implements OnModuleDestroy {
       rejectUnauthorized,
     );
 
-    this.pool = connectionString
-      ? new Pool({ connectionString, ssl })
-      : new Pool({
-          host: this.configService.get<string>('DB_HOST', '127.0.0.1'),
-          port: Number(this.configService.get<string>('DB_PORT', '5432')),
-          database: this.configService.get<string>('DB_NAME', 'postgres'),
-          user: this.configService.get<string>('DB_USER', 'postgres'),
-          password: this.configService.get<string>('DB_PASSWORD', ''),
-          ssl,
-        });
+    console.log('DB_SSL:', shouldUseSsl);
+    console.log('DB_SSL_REJECT_UNAUTHORIZED:', rejectUnauthorized);
+    console.log('Using connection string:', !!connectionString);
+
+    try {
+      this.pool = connectionString
+        ? new Pool({ connectionString, ssl })
+        : new Pool({
+            host: this.configService.get<string>('DB_HOST', '127.0.0.1'),
+            port: Number(this.configService.get<string>('DB_PORT', '5432')),
+            database: this.configService.get<string>('DB_NAME', 'postgres'),
+            user: this.configService.get<string>('DB_USER', 'postgres'),
+            password: this.configService.get<string>('DB_PASSWORD', ''),
+            ssl,
+          });
+
+      console.log('✅ Database pool created successfully');
+    } catch (error) {
+      console.error('❌ Failed to create database pool:', error);
+      throw error;
+    }
   }
 
   private resolveSslEnabled(databaseUrl?: string): boolean {
