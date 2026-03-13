@@ -576,6 +576,13 @@
                       <td colspan="6" class="px-3 py-4 text-center text-xs text-gray-500 dark:text-gray-400">No rows in this group.</td>
                     </tr>
                   }
+                  @if (group.rows.length > 0) {
+                    <tr class="border-t border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+                      <td colspan="6" class="px-3 py-2 text-center text-xs font-medium text-gray-500 dark:text-gray-400">
+                        In-Stock Indoor: {{ group.inStockIndoorCount }} | In-Stock Outdoor: {{ group.inStockOutdoorCount }}
+                      </td>
+                    </tr>
+                  }
                 </tbody>
               </table>
             </div>
