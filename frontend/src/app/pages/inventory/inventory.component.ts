@@ -74,13 +74,14 @@ interface CapacityStockSummary {
 }
 
 interface LandCostingReportItemRow {
-  category: string;
-  serialNumber: string;
   indoorSerial: string;
   outdoorSerial: string;
   landedCost: number;
   srp: number;
   marginAmount: number;
+  serialStatus: string;
+  isDefective: boolean;
+  isReturned: boolean;
 }
 
 interface LandCostingReportGroup {
@@ -334,6 +335,23 @@ export class InventoryComponent implements OnInit {
     this.isLandCostingDrawerOpen = false;
   }
 
+  getSerialStatusColorClass(row: LandCostingReportItemRow): string {
+    if (row.isDefective) {
+      return 'text-red-700 dark:text-red-400'; // Red for defective
+    }
+    if (row.isReturned) {
+      return 'text-orange-700 dark:text-orange-400'; // Orange for returned
+    }
+    if ((row.serialStatus ?? '').toLowerCase() === 'installed') {
+      return 'text-green-700 dark:text-green-400'; // Green for installed
+    }
+    return 'text-gray-700 dark:text-gray-300'; // Plain black/gray for in-stock and others
+  }
+
+  getSerialStatusText(row: LandCostingReportItemRow): string {
+    return row.serialStatus;
+  }
+
   async exportLandCostingAsExcel(): Promise<void> {
     if (this.landCostingGroups.length === 0) {
       this.landCostingError = 'No land costing rows available to export.';
@@ -358,9 +376,9 @@ export class InventoryComponent implements OnInit {
       worksheet.addRow([`Product (${group.capacityName}): ${group.productName}`]);
       worksheet.addRow([`Vendor: ${group.vendorName || '-'}`]);
       worksheet.addRow([
-        'Serial Number',
-        'Indoor Serial',
-        'Outdoor Serial',
+        'No.',
+        'Indoor',
+        'Outdoor',
         'Landed Cost',
         'SRP',
         'Margin',
@@ -371,11 +389,11 @@ export class InventoryComponent implements OnInit {
         headerRow.font = { bold: true };
       }
 
-      for (const row of group.rows) {
+      for (const [rowIndex, row] of group.rows.entries()) {
         worksheet.addRow([
-          row.serialNumber,
-          row.indoorSerial,
-          row.outdoorSerial,
+          rowIndex + 1,
+          row.indoorSerial || '-',
+          row.outdoorSerial || '-',
           row.landedCost,
           row.srp,
           row.marginAmount,
@@ -386,9 +404,9 @@ export class InventoryComponent implements OnInit {
     }
 
     worksheet.columns = [
+      { width: 5 },
       { width: 20 },
-      { width: 26 },
-      { width: 26 },
+      { width: 20 },
       { width: 14 },
       { width: 14 },
       { width: 14 },
@@ -476,12 +494,12 @@ export class InventoryComponent implements OnInit {
       y -= 16;
 
       const columns = [
-        { title: 'Serial', x: 40, max: 14 },
-        { title: 'Indoor Serial', x: 120, max: 22 },
-        { title: 'Outdoor Serial', x: 300, max: 22 },
-        { title: 'Landed', x: 480, max: 10 },
-        { title: 'SRP', x: 560, max: 10 },
-        { title: 'Margin', x: 630, max: 10 },
+        { title: 'No.', x: 40, max: 4 },
+        { title: 'Indoor', x: 80, max: 18 },
+        { title: 'Outdoor', x: 220, max: 18 },
+        { title: 'Landed', x: 400, max: 10 },
+        { title: 'SRP', x: 480, max: 10 },
+        { title: 'Margin', x: 550, max: 10 },
       ];
 
       for (const column of columns) {
@@ -489,9 +507,9 @@ export class InventoryComponent implements OnInit {
       }
       y -= 12;
 
-      for (const row of group.rows) {
+      for (const [rowIndex, row] of group.rows.entries()) {
         ensureSpace(70);
-        page.drawText(ellipsis(row.serialNumber || '-', columns[0].max), { x: columns[0].x, y, size: 8, font });
+        page.drawText((rowIndex + 1).toString(), { x: columns[0].x, y, size: 8, font });
         page.drawText(ellipsis(row.indoorSerial || '-', columns[1].max), { x: columns[1].x, y, size: 8, font });
         page.drawText(ellipsis(row.outdoorSerial || '-', columns[2].max), { x: columns[2].x, y, size: 8, font });
         page.drawText((row.landedCost ?? 0).toFixed(2), { x: columns[3].x, y, size: 8, font });
@@ -1016,15 +1034,7 @@ export class InventoryComponent implements OnInit {
     return this.activeTabTotalSellingAmount - this.activeTabTotalCostAmount;
   }
 
-  isLandCostingCategoryBreak(group: LandCostingReportGroup, rowIndex: number): boolean {
-    if (rowIndex <= 0) {
-      return true;
-    }
 
-    const current = group.rows[rowIndex]?.category ?? '';
-    const previous = group.rows[rowIndex - 1]?.category ?? '';
-    return current !== previous;
-  }
 
   get hasTreeSearch(): boolean {
     return this.normalizeSearchText(this.treeSearch).length > 0;
@@ -2163,6 +2173,10 @@ export class InventoryComponent implements OnInit {
               landedCost?: number;
               srp?: number;
               marginAmount?: number;
+              status?: string;
+              isDefective?: boolean;
+              isReturned?: boolean;
+              serialStatus?: string;
             }>;
           }>;
         };
@@ -2200,13 +2214,14 @@ export class InventoryComponent implements OnInit {
         poDate: group.poDate ?? null,
         rows: Array.isArray(group.rows)
           ? group.rows.map((row) => ({
-              category: String(row.category ?? '').trim(),
-              serialNumber: String(row.serialNumber ?? '').trim(),
               indoorSerial: String(row.indoorSerial ?? '').trim(),
               outdoorSerial: String(row.outdoorSerial ?? '').trim(),
               landedCost: Number(row.landedCost) || 0,
               srp: Number(row.srp) || 0,
               marginAmount: Number(row.marginAmount) || 0,
+              serialStatus: String(row.serialStatus ?? 'In-Stock').trim(),
+              isDefective: Boolean(row.isDefective ?? false),
+              isReturned: Boolean(row.isReturned ?? false),
             }))
           : [],
       }));

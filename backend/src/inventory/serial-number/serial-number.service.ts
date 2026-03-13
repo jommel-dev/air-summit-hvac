@@ -53,6 +53,9 @@ type LandCostingRow = {
   vendorName: string | null;
   landedCost: string | null;
   srp: string | null;
+  status: string | null;
+  isDefective: boolean | null;
+  isReturned: boolean | null;
 };
 
 @Injectable()
@@ -633,8 +636,19 @@ export class SerialNumberService {
              ''
            )::numeric,
            0
-         )::text AS srp
+         )::text AS srp,
+         ss.status AS "status",
+         CASE
+           WHEN sn."isDefective" IS NOT NULL THEN sn."isDefective"
+           ELSE false
+         END AS "isDefective",
+         CASE
+           WHEN sn."isReturned" IS NOT NULL THEN sn."isReturned"
+           ELSE false
+         END AS "isReturned"
        FROM serial_scope ss
+       LEFT JOIN tblserial_numbers sn
+         ON sn."serialNumber" = ss.serial_number
        LEFT JOIN tblproducts p
          ON p.id::text = ss.product_id
        LEFT JOIN tblcapacity c
@@ -671,16 +685,6 @@ export class SerialNumberService {
          )) = 'purchase'
        WHERE ss.serial_number <> ''
          AND ss.purchase_id <> ''
-         AND ss.status NOT IN (
-           'scanned',
-           'reserved',
-           'delivered',
-           'installed',
-           'sold',
-           'released',
-           'out',
-           'outbound'
-         )
          AND (
            $1::text IS NULL
            OR ss.branch_id = $1::text
@@ -729,6 +733,9 @@ export class SerialNumberService {
           landedCost,
           srp,
           marginAmount,
+          status: String(row.status ?? '').trim(),
+          isDefective: Boolean(row.isDefective ?? false),
+          isReturned: Boolean(row.isReturned ?? false),
         };
       });
 
@@ -740,9 +747,9 @@ export class SerialNumberService {
         poDate: string | null;
         landedCost: number;
         srp: number;
-        indoorSerials: string[];
-        outdoorSerials: string[];
-        others: Array<{ serialNumber: string; unitType: string }>;
+        indoorSerials: Array<{ serial: string; status: string; isDefective: boolean; isReturned: boolean }>;
+        outdoorSerials: Array<{ serial: string; status: string; isDefective: boolean; isReturned: boolean }>;
+        others: Array<{ serialNumber: string; unitType: string; status: string; isDefective: boolean; isReturned: boolean }>;
       }>();
 
       for (const row of normalizedRows) {
@@ -774,54 +781,81 @@ export class SerialNumberService {
 
         const group = groupMap.get(groupKey)!;
         if (row.unitType.includes('indoor')) {
-          group.indoorSerials.push(row.serialNumber);
+          group.indoorSerials.push({
+            serial: row.serialNumber,
+            status: row.status,
+            isDefective: row.isDefective,
+            isReturned: row.isReturned,
+          });
           continue;
         }
 
         if (row.unitType.includes('outdoor')) {
-          group.outdoorSerials.push(row.serialNumber);
+          group.outdoorSerials.push({
+            serial: row.serialNumber,
+            status: row.status,
+            isDefective: row.isDefective,
+            isReturned: row.isReturned,
+          });
           continue;
         }
 
         group.others.push({
           serialNumber: row.serialNumber,
           unitType: row.unitType || 'other',
+          status: row.status,
+          isDefective: row.isDefective,
+          isReturned: row.isReturned,
         });
       }
 
       const groups = Array.from(groupMap.values()).map((group) => {
         const rows: Array<{
-          category: string;
-          serialNumber: string;
           indoorSerial: string;
           outdoorSerial: string;
           landedCost: number;
           srp: number;
           marginAmount: number;
+          serialStatus: string;
+          isDefective: boolean;
+          isReturned: boolean;
         }> = [];
 
         const maxPairCount = Math.max(group.indoorSerials.length, group.outdoorSerials.length);
         for (let index = 0; index < maxPairCount; index += 1) {
+          const indoor = group.indoorSerials[index];
+          const outdoor = group.outdoorSerials[index];
+
+          const serialStatus =
+            [indoor, outdoor].some((s) => s?.isDefective) ? 'Defective' :
+            [indoor, outdoor].some((s) => s?.isReturned) ? 'Returned' :
+            [indoor, outdoor].some((s) => (s?.status ?? '').toLowerCase() === 'installed') ? 'Installed' :
+            'In-Stock';
+
           rows.push({
-            category: 'Indoor/Outdoor',
-            serialNumber: String(index + 1),
-            indoorSerial: group.indoorSerials[index] ?? '',
-            outdoorSerial: group.outdoorSerials[index] ?? '',
+            indoorSerial: indoor?.serial ?? '',
+            outdoorSerial: outdoor?.serial ?? '',
             landedCost: group.landedCost,
             srp: group.srp,
             marginAmount: group.srp - group.landedCost,
+            serialStatus,
+            isDefective: Boolean(indoor?.isDefective || outdoor?.isDefective),
+            isReturned: Boolean(indoor?.isReturned || outdoor?.isReturned),
           });
         }
 
+        // Add any "other" serials as their own rows (placed in Indoor column)
         for (const other of group.others) {
+          const serialStatus = other.isDefective ? 'Defective' : other.isReturned ? 'Returned' : (other.status || 'In-Stock');
           rows.push({
-            category: other.unitType,
-            serialNumber: other.serialNumber,
-            indoorSerial: '',
+            indoorSerial: other.serialNumber,
             outdoorSerial: '',
             landedCost: group.landedCost,
             srp: group.srp,
             marginAmount: group.srp - group.landedCost,
+            serialStatus,
+            isDefective: other.isDefective,
+            isReturned: other.isReturned,
           });
         }
 
