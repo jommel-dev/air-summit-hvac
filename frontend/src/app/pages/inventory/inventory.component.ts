@@ -91,6 +91,9 @@ interface LandCostingReportGroup {
   poNumber: string;
   poDate: string | null;
   rows: LandCostingReportItemRow[];
+  inStockCount: number;
+  inStockIndoorCount: number;
+  inStockOutdoorCount: number;
 }
 
 @Component({
@@ -400,6 +403,7 @@ export class InventoryComponent implements OnInit {
         ]);
       }
 
+      worksheet.addRow([`In-Stock Indoor: ${group.inStockIndoorCount} | In-Stock Outdoor: ${group.inStockOutdoorCount}`]);
       worksheet.addRow([]);
     }
 
@@ -518,7 +522,9 @@ export class InventoryComponent implements OnInit {
         y -= 11;
       }
 
-      y -= 8;
+      ensureSpace(20);
+      page.drawText(`In-Stock Indoor: ${group.inStockIndoorCount} | In-Stock Outdoor: ${group.inStockOutdoorCount}`, { x: 40, y, size: 9, font });
+      y -= 12;
     }
 
     ensureSpace(60);
@@ -2206,25 +2212,33 @@ export class InventoryComponent implements OnInit {
       this.landCostingDateTo = String(response.data.item.dateTo ?? this.landCostingDateTo);
 
       const groups = Array.isArray(response.data.item.groups) ? response.data.item.groups : [];
-      this.landCostingGroups = groups.map((group) => ({
-        productName: String(group.productName ?? '').trim(),
-        capacityName: String(group.capacityName ?? '').trim(),
-        vendorName: String(group.vendorName ?? '').trim(),
-        poNumber: String(group.poNumber ?? '').trim(),
-        poDate: group.poDate ?? null,
-        rows: Array.isArray(group.rows)
-          ? group.rows.map((row) => ({
-              indoorSerial: String(row.indoorSerial ?? '').trim(),
-              outdoorSerial: String(row.outdoorSerial ?? '').trim(),
-              landedCost: Number(row.landedCost) || 0,
-              srp: Number(row.srp) || 0,
-              marginAmount: Number(row.marginAmount) || 0,
-              serialStatus: String(row.serialStatus ?? 'In-Stock').trim(),
-              isDefective: Boolean(row.isDefective ?? false),
-              isReturned: Boolean(row.isReturned ?? false),
-            }))
-          : [],
-      }));
+      this.landCostingGroups = groups.map((group) => {
+        const mappedGroup = {
+          productName: String(group.productName ?? '').trim(),
+          capacityName: String(group.capacityName ?? '').trim(),
+          vendorName: String(group.vendorName ?? '').trim(),
+          poNumber: String(group.poNumber ?? '').trim(),
+          poDate: group.poDate ?? null,
+          rows: Array.isArray(group.rows)
+            ? group.rows.map((row) => ({
+                indoorSerial: String(row.indoorSerial ?? '').trim(),
+                outdoorSerial: String(row.outdoorSerial ?? '').trim(),
+                landedCost: Number(row.landedCost) || 0,
+                srp: Number(row.srp) || 0,
+                marginAmount: Number(row.marginAmount) || 0,
+                serialStatus: String(row.serialStatus ?? 'In-Stock').trim(),
+                isDefective: Boolean(row.isDefective ?? false),
+                isReturned: Boolean(row.isReturned ?? false),
+              }))
+            : [],
+        };
+        return {
+          ...mappedGroup,
+          inStockCount: mappedGroup.rows.filter(row => row.serialStatus.toLowerCase() === 'in-stock').length,
+          inStockIndoorCount: mappedGroup.rows.filter(row => row.indoorSerial && row.serialStatus.toLowerCase() === 'in-stock').length,
+          inStockOutdoorCount: mappedGroup.rows.filter(row => row.outdoorSerial && row.serialStatus.toLowerCase() === 'in-stock').length,
+        };
+      });
 
       this.landCostingTotals = {
         serialCount: Number(response.data.item.totals?.serialCount) || this.landCostingGroups.reduce((total, group) => total + group.rows.length, 0),
