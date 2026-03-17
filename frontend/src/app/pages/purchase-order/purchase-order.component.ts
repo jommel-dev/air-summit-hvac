@@ -39,11 +39,18 @@ interface PurchaseUnitTypeFormItem {
 }
 
 interface PurchasePaymentFormItem {
-  method: string;
+  method: 'Cash' | 'Bank Transfer' | 'Terms' | 'Terms with DP' | 'Cheque' | 'Credit Card' | 'Installment';
   amount: number;
   terms: string;
   termsDueDate: string;
+  autoTermsDueDate: boolean;
+  status: string;
   paymentDate: string;
+  bankName: string;
+  referenceNo: string;
+  checkNo: string;
+  chequeDate: string;
+  issuedBy: string;
   downPayment: number;
 }
 
@@ -83,6 +90,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   createError = '';
   createSuccess = '';
   isExportingSerials = false;
+  isImportingSerials = false;
   sendingForApprovalIds = new Set<number>();
   approvingPurchaseIds = new Set<number>();
   catalogProducts: ProductOption[] = [];
@@ -91,6 +99,15 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   isVendorDropdownOpen = false;
   activeProductTabIndex = 0;
   selectedUnitTypeByProduct: Record<number, string> = {};
+  readonly paymentMethodOptions: PurchasePaymentFormItem['method'][] = [
+    'Cash',
+    'Bank Transfer',
+    'Terms',
+    'Terms with DP',
+    'Cheque',
+    'Credit Card',
+    'Installment',
+  ];
 
   createForm = {
     vendorId: '',
@@ -175,6 +192,31 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   get pendingSerialScanCount(): number {
     return this.queuedSerialScans.length + this.activeSerialFlushCount;
+  }
+
+  get isFormDrawerBusy(): boolean {
+    return this.isCreating || this.isImportingSerials || this.isFlushingQueuedSerials;
+  }
+
+  get formDrawerBusyMessage(): string {
+    if (this.isImportingSerials) {
+      return 'Uploading serial numbers from CSV...';
+    }
+
+    if (this.isFlushingQueuedSerials) {
+      const count = this.pendingSerialScanCount;
+      return count > 0
+        ? `Saving serial numbers... ${count} item${count > 1 ? 's' : ''} remaining.`
+        : 'Saving serial numbers...';
+    }
+
+    if (this.isCreating) {
+      return this.drawerMode === 'create'
+        ? 'Creating purchase order...'
+        : 'Updating purchase order...';
+    }
+
+    return 'Processing request...';
   }
 
   onVendorSearchChange(value: string): void {
@@ -758,6 +800,33 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.downloadBlob(new Blob([csvLines.join('\r\n')], { type: 'text/csv;charset=utf-8;' }), fileName);
   }
 
+  openSerialCsvImportPicker(): void {
+    const input = document.getElementById('purchaseSerialCsvInput') as HTMLInputElement | null;
+    if (!input) {
+      this.createError = 'CSV upload input is unavailable.';
+      return;
+    }
+
+    input.click();
+  }
+
+  async onSerialCsvSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement | null;
+    const file = input?.files?.[0] ?? null;
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      await this.importSerialsFromCsv(file);
+    } finally {
+      if (input) {
+        input.value = '';
+      }
+    }
+  }
+
   canCreateOrUpdatePurchase(): boolean {
     return this.rbacService.canAccess('purchase_order', 'canUpdate') ||
       this.rbacService.canAccess('purchase_order', 'canCreate');
@@ -929,6 +998,186 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     return `"${normalized}"`;
   }
 
+  private async importSerialsFromCsv(file: File): Promise<void> {
+    if (this.drawerMode !== 'edit' || !this.editingPurchaseId) {
+      this.createError = 'CSV serial import is only available when editing a purchase order.';
+      return;
+    }
+
+    const activeItem = this.getActiveProductItem();
+    if (!activeItem) {
+      this.createError = 'Select a product before importing serial numbers.';
+      return;
+    }
+
+    const productId = Number(activeItem.productId);
+    const capacityId = Number(activeItem.capacityId);
+    if (!Number.isFinite(productId) || !Number.isFinite(capacityId)) {
+      this.createError = 'Select product and capacity before importing serial numbers.';
+      return;
+    }
+
+    if (this.hasPendingSerialScanWork()) {
+      const flushed = await this.flushAllQueuedSerialScans();
+      if (!flushed) {
+        this.createError = 'Pending serial scans must finish saving before CSV import.';
+        return;
+      }
+    }
+
+    this.isImportingSerials = true;
+    this.createError = '';
+    this.createSuccess = '';
+
+    try {
+      const csvContent = await file.text();
+      const rows = this.parseSerialCsvRows(csvContent);
+      if (rows.length === 0) {
+        this.createError = 'CSV file has no serial rows to import.';
+        return;
+      }
+
+      const normalizedRows = rows.map((row) => ({
+        serialNumber: this.normalizeSerial(row.serialNumber),
+        unitType: this.normalizeUnitTypeLabel(row.unitType),
+      }));
+
+      const validRows = normalizedRows.filter((row) => row.serialNumber && row.unitType);
+      if (validRows.length === 0) {
+        this.createError = 'CSV file must contain serialNumber and unitType values.';
+        return;
+      }
+
+      const uniqueRows: Array<{ serialNumber: string; unitType: string }> = [];
+      const seen = new Set<string>();
+      for (const row of validRows) {
+        const key = `${row.unitType}::${row.serialNumber.toLowerCase()}`;
+        if (seen.has(key)) {
+          continue;
+        }
+
+        seen.add(key);
+        uniqueRows.push(row);
+      }
+
+      const response = await this.purchaseOrderService.scanPurchaseSerialBatch({
+        items: uniqueRows.map((row) => ({
+          serialNumber: row.serialNumber,
+          purchaseId: this.editingPurchaseId as number,
+          expectedProductId: productId,
+          expectedCapacityId: capacityId,
+          unitType: row.unitType,
+        })),
+      });
+
+      const results = Array.isArray(response.items) ? response.items : [];
+      let successCount = 0;
+      let failureCount = 0;
+
+      uniqueRows.forEach((row, index) => {
+        const result = results[index];
+        const unitEntry = this.ensureUnitEntryForProduct(this.activeProductTabIndex, row.unitType);
+        if (!unitEntry) {
+          failureCount += 1;
+          return;
+        }
+
+        if (!result?.success) {
+          failureCount += 1;
+          unitEntry.scanError = result?.message ?? 'Failed to import serial number';
+          unitEntry.scanSuccess = '';
+          return;
+        }
+
+        const savedSerial = this.normalizeSerial(result.item?.serialNumber ?? row.serialNumber);
+        this.appendLocalSerial(unitEntry, savedSerial);
+        unitEntry.scanError = '';
+        unitEntry.scanSuccess = result.message ?? 'Serial number imported successfully';
+        successCount += 1;
+      });
+
+      if (successCount > 0) {
+        this.createSuccess = `${successCount} serial number${successCount > 1 ? 's' : ''} imported successfully.`;
+      }
+
+      if (failureCount > 0) {
+        this.createError = `${failureCount} serial number${failureCount > 1 ? 's' : ''} failed to import.`;
+      }
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.createError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to import CSV serial numbers.';
+      } else if (error instanceof Error) {
+        this.createError = error.message;
+      } else {
+        this.createError = 'Failed to import CSV serial numbers.';
+      }
+    } finally {
+      this.isImportingSerials = false;
+    }
+  }
+
+  private parseSerialCsvRows(csvContent: string): Array<{ serialNumber: string; unitType: string }> {
+    const lines = String(csvContent ?? '')
+      .replace(/^\uFEFF/, '')
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length > 0);
+
+    if (lines.length === 0) {
+      return [];
+    }
+
+    const header = this.parseCsvLine(lines[0]).map((value) => value.trim().toLowerCase());
+    const serialIndex = header.findIndex((value) => value === 'serialnumber' || value === 'serial_number');
+    const unitTypeIndex = header.findIndex((value) => value === 'unittype' || value === 'unit_type');
+
+    if (serialIndex === -1 || unitTypeIndex === -1) {
+      throw new Error('CSV header must include serialNumber and unitType columns.');
+    }
+
+    return lines.slice(1).map((line) => {
+      const columns = this.parseCsvLine(line);
+      return {
+        serialNumber: String(columns[serialIndex] ?? '').trim(),
+        unitType: String(columns[unitTypeIndex] ?? '').trim(),
+      };
+    });
+  }
+
+  private parseCsvLine(line: string): string[] {
+    const values: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let index = 0; index < line.length; index += 1) {
+      const character = line[index];
+
+      if (character === '"') {
+        const nextCharacter = line[index + 1];
+        if (inQuotes && nextCharacter === '"') {
+          current += '"';
+          index += 1;
+          continue;
+        }
+
+        inQuotes = !inQuotes;
+        continue;
+      }
+
+      if (character === ',' && !inQuotes) {
+        values.push(current);
+        current = '';
+        continue;
+      }
+
+      current += character;
+    }
+
+    values.push(current);
+    return values;
+  }
+
   private async createExcelWorkbook(): Promise<{ addWorksheet: (name?: string) => any; xlsx: { writeBuffer: () => Promise<ArrayBuffer> } }> {
     const excelJsModule = await import('exceljs').catch(async () => import('exceljs/dist/exceljs.min.js'));
 
@@ -1004,6 +1253,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }, 0);
 
     this.createForm.totalAmount = total;
+    this.syncPaymentAmounts();
   }
 
   getCapacitiesByProduct(productId: string): ProductCapacityOption[] {
@@ -1013,6 +1263,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   addPaymentDetail(): void {
     this.createForm.paymentDetails = [...this.createForm.paymentDetails, this.createEmptyPaymentItem()];
+    this.syncPaymentAmounts();
   }
 
   removePaymentDetail(index: number): void {
@@ -1021,6 +1272,116 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
 
     this.createForm.paymentDetails = this.createForm.paymentDetails.filter((_, itemIndex) => itemIndex !== index);
+    this.syncPaymentAmounts();
+  }
+
+  onPaymentMethodChange(index: number): void {
+    const payment = this.createForm.paymentDetails[index];
+    if (!payment) {
+      return;
+    }
+
+    payment.status = this.getAutoPaymentStatus(payment.method);
+
+    if (payment.method !== 'Terms' && payment.method !== 'Terms with DP' && payment.method !== 'Installment') {
+      payment.terms = '';
+      payment.termsDueDate = '';
+    }
+
+    if (payment.method !== 'Terms with DP' && payment.method !== 'Installment') {
+      payment.downPayment = 0;
+    }
+
+    if (payment.method !== 'Cash' && payment.method !== 'Credit Card') {
+      payment.paymentDate = '';
+    }
+
+    if (payment.method !== 'Bank Transfer' && payment.method !== 'Cheque') {
+      payment.bankName = '';
+    }
+
+    if (payment.method !== 'Bank Transfer') {
+      payment.referenceNo = '';
+    }
+
+    if (payment.method !== 'Cheque') {
+      payment.checkNo = '';
+      payment.chequeDate = '';
+      payment.issuedBy = '';
+    }
+
+    if (payment.autoTermsDueDate) {
+      this.onTermsChanged(index);
+    }
+
+    this.syncPaymentAmounts();
+  }
+
+  toggleAutoTermsDueDate(index: number): void {
+    const payment = this.createForm.paymentDetails[index];
+    if (!payment) {
+      return;
+    }
+
+    payment.autoTermsDueDate = !payment.autoTermsDueDate;
+    if (payment.autoTermsDueDate) {
+      this.onTermsChanged(index);
+    }
+  }
+
+  isAutoTermsDueDate(index: number): boolean {
+    const payment = this.createForm.paymentDetails[index];
+    return payment?.autoTermsDueDate ?? true;
+  }
+
+  onTermsChanged(index: number): void {
+    const payment = this.createForm.paymentDetails[index];
+    if (!payment) {
+      return;
+    }
+
+    const isTermsMethod =
+      payment.method === 'Terms' ||
+      payment.method === 'Terms with DP';
+
+    if (!isTermsMethod) {
+      payment.termsDueDate = '';
+      this.syncPaymentAmounts();
+      return;
+    }
+
+    if (!payment.autoTermsDueDate) {
+      this.syncPaymentAmounts();
+      return;
+    }
+
+    const termDays = Number(payment.terms);
+    if (!Number.isFinite(termDays) || termDays <= 0) {
+      payment.termsDueDate = '';
+      this.syncPaymentAmounts();
+      return;
+    }
+
+    payment.termsDueDate = this.calculateDueDateFromToday(Math.floor(termDays), payment.paymentDate);
+    this.syncPaymentAmounts();
+  }
+
+  onPaymentDateFieldChange(): void {
+    this.syncPaymentAmounts();
+  }
+
+  shouldShowPaymentField(method: PurchasePaymentFormItem['method'], field: string): boolean {
+    const methodMap: Record<PurchasePaymentFormItem['method'], Set<string>> = {
+      Cash: new Set(['amount', 'paymentDate']),
+      'Bank Transfer': new Set(['amount', 'bankName', 'referenceNo']),
+      Terms: new Set(['amount', 'terms', 'termsDueDate']),
+      'Terms with DP': new Set(['amount', 'terms', 'termsDueDate', 'downPayment']),
+      Cheque: new Set(['amount', 'bankName', 'checkNo', 'chequeDate', 'issuedBy']),
+      'Credit Card': new Set(['amount', 'paymentDate']),
+      Installment: new Set(['amount', 'terms', 'termsDueDate', 'downPayment']),
+    };
+
+    return methodMap[method]?.has(field) ?? false;
   }
 
   setActiveProductTab(index: number): void {
@@ -1424,6 +1785,43 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     return item.unitTypes.find((entry) => entry.label === unitLabel) ?? null;
   }
 
+  private ensureUnitEntryForProduct(
+    productIndex: number,
+    unitLabel: string,
+  ): PurchaseUnitTypeFormItem | null {
+    const item = this.createForm.productItems[productIndex];
+    if (!item) {
+      return null;
+    }
+
+    const normalizedLabel = this.normalizeUnitTypeLabel(unitLabel);
+    let unitEntry = item.unitTypes.find((entry) => entry.label === normalizedLabel) ?? null;
+    if (unitEntry) {
+      return unitEntry;
+    }
+
+    unitEntry = this.createUnitTypeEntry(normalizedLabel, 0, []);
+    item.unitTypes = [...item.unitTypes, unitEntry];
+    return unitEntry;
+  }
+
+  private appendLocalSerial(unitEntry: PurchaseUnitTypeFormItem, serialNumber: string): void {
+    const normalizedSerial = this.normalizeSerial(serialNumber);
+    if (!normalizedSerial) {
+      return;
+    }
+
+    const exists = unitEntry.serials.some(
+      (entry) => this.normalizeSerial(entry).toLowerCase() === normalizedSerial.toLowerCase(),
+    );
+    if (exists) {
+      return;
+    }
+
+    unitEntry.serials = [...unitEntry.serials, normalizedSerial];
+    unitEntry.serialInput = unitEntry.serials.join('\n');
+  }
+
   private removeLocalSerial(unitEntry: PurchaseUnitTypeFormItem, serialNumber: string): void {
     const normalizedTarget = this.normalizeSerial(serialNumber).toLowerCase();
     unitEntry.serials = unitEntry.serials.filter(
@@ -1562,8 +1960,13 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         method: payment.method.trim() || undefined,
         terms: payment.terms.trim() || undefined,
         termsDueDate: payment.termsDueDate || null,
-        status: 'unpaid' as const,
+        status: this.normalizePayloadPaymentStatus(payment.status),
         paymentDate: payment.paymentDate || null,
+        bankName: payment.bankName.trim() || undefined,
+        referenceNo: payment.referenceNo.trim() || undefined,
+        checkNo: payment.checkNo.trim() || undefined,
+        chequeDate: payment.chequeDate || null,
+        issuedBy: payment.issuedBy.trim() || undefined,
         downPayment: Number(payment.downPayment) || 0,
       })),
       productItems: this.createForm.productItems.map((item) => ({
@@ -1663,11 +2066,18 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
     const paymentDetails = detail.paymentDetails.length > 0
       ? detail.paymentDetails.map((payment) => ({
-          method: payment.method ?? '',
+          method: this.toPaymentMethod(payment.method),
           amount: Number(payment.amount) || 0,
           terms: payment.terms ?? '',
           termsDueDate: this.toDateInputValue(payment.termsDueDate),
+          autoTermsDueDate: true,
+          status: payment.status ?? 'unpaid',
           paymentDate: this.toDateInputValue(payment.paymentDate),
+          bankName: payment.bankName ?? '',
+          referenceNo: payment.referenceNo ?? '',
+          checkNo: payment.checkNo ?? '',
+          chequeDate: this.toDateInputValue(payment.chequeDate),
+          issuedBy: payment.issuedBy ?? '',
           downPayment: Number(payment.downPayment) || 0,
         }))
       : [this.createEmptyPaymentItem()];
@@ -1846,6 +2256,109 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
   }
 
+  private getAutoPaymentStatus(method: PurchasePaymentFormItem['method']): string {
+    if (method === 'Cash' || method === 'Bank Transfer') {
+      return 'paid';
+    }
+
+    return 'unpaid';
+  }
+
+  private toPaymentMethod(value: unknown): PurchasePaymentFormItem['method'] {
+    const normalized = String(value ?? '').trim().toLowerCase();
+
+    if (normalized === 'cash') return 'Cash';
+    if (normalized === 'bank transfer' || normalized === 'bank_transfer') return 'Bank Transfer';
+    if (normalized === 'terms') return 'Terms';
+    if (normalized === 'terms with dp' || normalized === 'terms_with_dp') return 'Terms with DP';
+    if (normalized === 'cheque' || normalized === 'check') return 'Cheque';
+    if (normalized === 'credit card' || normalized === 'credit_card') return 'Credit Card';
+    if (normalized === 'installment') return 'Installment';
+
+    return 'Cash';
+  }
+
+  private calculateDueDateFromToday(termDays: number, baseDateInput?: string): string {
+    const baseDate = baseDateInput ? new Date(baseDateInput) : new Date();
+    if (Number.isNaN(baseDate.getTime())) {
+      return '';
+    }
+
+    baseDate.setHours(0, 0, 0, 0);
+    baseDate.setDate(baseDate.getDate() + termDays);
+
+    const year = baseDate.getFullYear();
+    const month = String(baseDate.getMonth() + 1).padStart(2, '0');
+    const day = String(baseDate.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private getDisplayPaymentStatus(payment: PurchasePaymentFormItem): string {
+    const autoStatus = this.getAutoPaymentStatus(payment.method);
+    if (autoStatus === 'paid') {
+      return 'paid';
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const isOverdueDate = (rawDate: string): boolean => {
+      if (!rawDate) {
+        return false;
+      }
+
+      const parsed = new Date(rawDate);
+      if (Number.isNaN(parsed.getTime())) {
+        return false;
+      }
+
+      parsed.setHours(0, 0, 0, 0);
+      return parsed < today;
+    };
+
+    if ((payment.method === 'Terms' || payment.method === 'Terms with DP') && isOverdueDate(payment.termsDueDate)) {
+      return 'overdue';
+    }
+
+    if (payment.method === 'Cheque' && isOverdueDate(payment.chequeDate)) {
+      return 'overdue';
+    }
+
+    return 'unpaid';
+  }
+
+  private syncPaymentAmounts(): void {
+    const computedAmount = Number(this.createForm.totalAmount) || 0;
+    this.createForm.paymentDetails = this.createForm.paymentDetails.map((payment: PurchasePaymentFormItem) => {
+      const nextPayment: PurchasePaymentFormItem = {
+        ...payment,
+        amount: computedAmount,
+      };
+
+      return {
+        ...nextPayment,
+        status: this.getDisplayPaymentStatus(nextPayment),
+      };
+    });
+  }
+
+  private normalizePayloadPaymentStatus(value: unknown): 'unpaid' | 'paid' | 'partial' | 'overdue' {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (normalized === 'paid') {
+      return 'paid';
+    }
+
+    if (normalized === 'partial') {
+      return 'partial';
+    }
+
+    if (normalized === 'overdue') {
+      return 'overdue';
+    }
+
+    return 'unpaid';
+  }
+
   private toDateInputValue(value: string | null | undefined): string {
     if (!value) {
       return '';
@@ -1879,11 +2392,18 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   private createEmptyPaymentItem(): PurchasePaymentFormItem {
     return {
-      method: '',
+      method: 'Cash',
       amount: 0,
       terms: '',
       termsDueDate: '',
+      autoTermsDueDate: true,
+      status: 'paid',
       paymentDate: '',
+      bankName: '',
+      referenceNo: '',
+      checkNo: '',
+      chequeDate: '',
+      issuedBy: '',
       downPayment: 0,
     };
   }

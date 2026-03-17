@@ -1236,25 +1236,32 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
     const isTermsMethod =
       payment.method === 'Terms' ||
-      payment.method === 'Terms with DP' ||
-      payment.method === 'Installment';
+      payment.method === 'Terms with DP';
 
     if (!isTermsMethod) {
       payment.termsDueDate = '';
+      this.syncPaymentAmounts();
       return;
     }
 
     if (!payment.autoTermsDueDate) {
+      this.syncPaymentAmounts();
       return;
     }
 
     const termDays = Number(payment.terms);
     if (!Number.isFinite(termDays) || termDays <= 0) {
       payment.termsDueDate = '';
+      this.syncPaymentAmounts();
       return;
     }
 
-    payment.termsDueDate = this.calculateDueDateFromToday(Math.floor(termDays));
+    payment.termsDueDate = this.calculateDueDateFromToday(Math.floor(termDays), payment.paymentDate);
+    this.syncPaymentAmounts();
+  }
+
+  onPaymentDateFieldChange(): void {
+    this.syncPaymentAmounts();
   }
 
   shouldShowPaymentField(method: SalesPaymentFormItem['method'], field: string): boolean {
@@ -2174,11 +2181,11 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   }
 
   private getAutoPaymentStatus(method: SalesPaymentFormItem['method']): string {
-    if (method === 'Terms' || method === 'Terms with DP' || method === 'Installment') {
-      return 'unpaid';
+    if (method === 'Cash' || method === 'Bank Transfer') {
+      return 'paid';
     }
 
-    return 'paid';
+    return 'unpaid';
   }
 
   private toPaymentMethod(value: unknown): SalesPaymentFormItem['method'] {
@@ -2195,24 +2202,68 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     return 'Cash';
   }
 
-  private calculateDueDateFromToday(termDays: number): string {
+  private calculateDueDateFromToday(termDays: number, baseDateInput?: string): string {
+    const baseDate = baseDateInput ? new Date(baseDateInput) : new Date();
+    if (Number.isNaN(baseDate.getTime())) {
+      return '';
+    }
+
+    baseDate.setHours(0, 0, 0, 0);
+    baseDate.setDate(baseDate.getDate() + termDays);
+
+    const year = baseDate.getFullYear();
+    const month = String(baseDate.getMonth() + 1).padStart(2, '0');
+    const day = String(baseDate.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  private getDisplayPaymentStatus(payment: SalesPaymentFormItem): string {
+    const autoStatus = this.getAutoPaymentStatus(payment.method);
+    if (autoStatus === 'paid') {
+      return 'paid';
+    }
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    today.setDate(today.getDate() + termDays);
 
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+    const isOverdueDate = (rawDate: string): boolean => {
+      if (!rawDate) {
+        return false;
+      }
+
+      const parsed = new Date(rawDate);
+      if (Number.isNaN(parsed.getTime())) {
+        return false;
+      }
+
+      parsed.setHours(0, 0, 0, 0);
+      return parsed < today;
+    };
+
+    if ((payment.method === 'Terms' || payment.method === 'Terms with DP') && isOverdueDate(payment.termsDueDate)) {
+      return 'overdue';
+    }
+
+    if (payment.method === 'Cheque' && isOverdueDate(payment.postDated)) {
+      return 'overdue';
+    }
+
+    return 'unpaid';
   }
 
   private syncPaymentAmounts(): void {
     const computedAmount = Number(this.form.totalAmount) || 0;
-    this.form.paymentDetails = this.form.paymentDetails.map((payment: any) => ({
-      ...payment,
-      amount: computedAmount,
-      status: this.getAutoPaymentStatus(payment.method),
-    }));
+    this.form.paymentDetails = this.form.paymentDetails.map((payment: SalesPaymentFormItem) => {
+      const nextPayment: SalesPaymentFormItem = {
+        ...payment,
+        amount: computedAmount,
+      };
+
+      return {
+        ...nextPayment,
+        status: this.getDisplayPaymentStatus(nextPayment),
+      };
+    });
   }
 
   private toDateInputValue(value: string | null | undefined): string {

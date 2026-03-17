@@ -10,8 +10,13 @@ export class CreatePurchasePaymentDetailsDto {
 	terms?: string;
 	amount?: number;
 	termsDueDate?: string | null;
-	status?: 'unpaid' | 'paid' | 'partial';
+	status?: 'unpaid' | 'paid' | 'partial' | 'overdue';
 	paymentDate?: string | null;
+	bankName?: string;
+	referenceNo?: string;
+	checkNo?: string;
+	chequeDate?: string | null;
+	issuedBy?: string;
 	downPayment?: number;
 }
 

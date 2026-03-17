@@ -1075,9 +1075,15 @@ export class SerialNumberService {
     };
   }
 
-  async scanPurchaseOrder(dto: ScanPurchaseOrderDto, userId?: number) {
+  async scanPurchaseOrder(dto: ScanPurchaseOrderDto, userId?: number, branchIdInput?: number) {
     const serialNumber = this.normalizeSerialNumber(dto.serialNumber);
     const purchaseId = Number(dto.purchaseId);
+    const requestBranchId =
+      branchIdInput === undefined || branchIdInput === null
+        ? dto.branchId === undefined || dto.branchId === null || dto.branchId === ('' as unknown)
+          ? null
+          : Number(dto.branchId)
+        : Number(branchIdInput);
     const expectedProductId =
       dto.expectedProductId === null ||
       dto.expectedProductId === undefined ||
@@ -1098,6 +1104,28 @@ export class SerialNumberService {
     if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
       return { success: false, message: 'purchaseId must be a valid number' };
     }
+    if (requestBranchId !== null && (!Number.isFinite(requestBranchId) || requestBranchId <= 0)) {
+      return { success: false, message: 'branchId must be a valid number' };
+    }
+
+    const purchaseBranchResult = await this.databaseService.query<{ branchId: string | null }>(
+      `SELECT
+         COALESCE(to_jsonb(po)->>'branchId', to_jsonb(po)->>'branch_id', null) AS "branchId"
+       FROM tblpo po
+       WHERE po.id::text = $1
+       LIMIT 1`,
+      [String(purchaseId)],
+    );
+
+    const purchaseBranchIdRaw = purchaseBranchResult.rows[0]?.branchId;
+    const purchaseBranchId =
+      purchaseBranchIdRaw === null || purchaseBranchIdRaw === undefined || purchaseBranchIdRaw === ''
+        ? null
+        : Number(purchaseBranchIdRaw);
+    const branchId = requestBranchId ??
+      (Number.isFinite(purchaseBranchId) && (purchaseBranchId as number) > 0
+        ? (purchaseBranchId as number)
+        : null);
 
     const serialColumns = await this.getTableColumns('tblserial_numbers');
     const serialNumberColumn = this.pickColumn(serialColumns, [
@@ -1108,6 +1136,8 @@ export class SerialNumberService {
       'purchaseId',
       'purchase_id',
       'po_id',
+      'purchaseOrderId',
+      'purchase_order_id',
     ]);
     const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
     const serialProductIdColumn = this.pickColumn(serialColumns, [
@@ -1119,6 +1149,7 @@ export class SerialNumberService {
       'capacity_id',
     ]);
     const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+    const serialBranchIdColumn = this.pickColumn(serialColumns, ['branchId', 'branch_id']);
     const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
     const serialCreatedByColumn = this.pickColumn(serialColumns, [
       'created_by',
@@ -1139,7 +1170,14 @@ export class SerialNumberService {
         COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number') AS "serialNumber",
         COALESCE(to_jsonb(sn)->>'status', null) AS status,
         COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id', null) AS "salesId",
-        COALESCE(to_jsonb(sn)->>'purchaseId', to_jsonb(sn)->>'purchase_id', to_jsonb(sn)->>'po_id', null) AS "purchaseId",
+        COALESCE(
+          to_jsonb(sn)->>'purchaseId',
+          to_jsonb(sn)->>'purchase_id',
+          to_jsonb(sn)->>'po_id',
+          to_jsonb(sn)->>'purchaseOrderId',
+          to_jsonb(sn)->>'purchase_order_id',
+          null
+        ) AS "purchaseId",
         COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', null) AS "productId",
         COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', null) AS "capacityId",
         COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', null) AS "branchId",
@@ -1268,6 +1306,9 @@ export class SerialNumberService {
         if (serialUnitTypeColumn) {
           serialRecord[serialUnitTypeColumn] = unitType;
         }
+        if (serialBranchIdColumn && branchId !== null) {
+          serialRecord[serialBranchIdColumn] = branchId;
+        }
         if (serialStatusColumn) {
           serialRecord[serialStatusColumn] = 'scanned';
         }
@@ -1280,7 +1321,7 @@ export class SerialNumberService {
       }
 
       if (!createdId) {
-        return this.scanPurchaseOrder(dto, userId);
+        return this.scanPurchaseOrder(dto, userId, branchId ?? undefined);
       }
 
       const createdResult = await this.databaseService.query<
@@ -1291,7 +1332,14 @@ export class SerialNumberService {
            COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number') AS "serialNumber",
            COALESCE(to_jsonb(sn)->>'status', null) AS status,
            COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id', null) AS "salesId",
-           COALESCE(to_jsonb(sn)->>'purchaseId', to_jsonb(sn)->>'purchase_id', to_jsonb(sn)->>'po_id', null) AS "purchaseId",
+           COALESCE(
+             to_jsonb(sn)->>'purchaseId',
+             to_jsonb(sn)->>'purchase_id',
+             to_jsonb(sn)->>'po_id',
+             to_jsonb(sn)->>'purchaseOrderId',
+             to_jsonb(sn)->>'purchase_order_id',
+             null
+           ) AS "purchaseId",
            COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', null) AS "productId",
            COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', null) AS "capacityId",
            COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', null) AS "branchId",
@@ -1322,6 +1370,7 @@ export class SerialNumberService {
           purchaseId: String(purchaseId),
           salesId: null,
           status: 'scanned',
+          branchId: branchId !== null ? String(branchId) : created.branchId,
           unitType,
         },
       };
@@ -1406,6 +1455,9 @@ export class SerialNumberService {
     if (serialUnitTypeColumn) {
       updateRecord[serialUnitTypeColumn] = unitType;
     }
+    if (serialBranchIdColumn && branchId !== null) {
+      updateRecord[serialBranchIdColumn] = branchId;
+    }
     if (serialStatusColumn) {
       updateRecord[serialStatusColumn] = 'scanned';
     }
@@ -1434,12 +1486,13 @@ export class SerialNumberService {
         purchaseId: String(purchaseId),
         salesId: null,
         status: 'scanned',
+        branchId: branchId !== null ? String(branchId) : serial.branchId,
         unitType,
       },
     };
   }
 
-  async scanPurchaseOrderBatch(dto: ScanPurchaseOrderBatchDto, userId?: number) {
+  async scanPurchaseOrderBatch(dto: ScanPurchaseOrderBatchDto, userId?: number, branchIdInput?: number) {
     const items = Array.isArray(dto.items) ? dto.items : [];
     if (items.length === 0) {
       return {
@@ -1463,12 +1516,13 @@ export class SerialNumberService {
       const payload: ScanPurchaseOrderBatchItemDto = {
         serialNumber: entry.serialNumber,
         purchaseId: entry.purchaseId,
+        branchId: entry.branchId,
         expectedProductId: entry.expectedProductId,
         expectedCapacityId: entry.expectedCapacityId,
         unitType: entry.unitType,
       };
 
-      const result = await this.scanPurchaseOrder(payload, userId);
+      const result = await this.scanPurchaseOrder(payload, userId, branchIdInput);
       results.push({
         serialNumber: this.normalizeSerialNumber(entry.serialNumber),
         success: Boolean(result.success),
@@ -1516,6 +1570,8 @@ export class SerialNumberService {
       'purchaseId',
       'purchase_id',
       'po_id',
+      'purchaseOrderId',
+      'purchase_order_id',
     ]);
     if (!serialPurchaseIdColumn) {
       return {
@@ -1533,7 +1589,14 @@ export class SerialNumberService {
       `SELECT
          sn.id,
          COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id', null) AS "salesId",
-        COALESCE(to_jsonb(sn)->>'purchaseId', to_jsonb(sn)->>'purchase_id', to_jsonb(sn)->>'po_id', null) AS "purchaseId",
+        COALESCE(
+          to_jsonb(sn)->>'purchaseId',
+          to_jsonb(sn)->>'purchase_id',
+          to_jsonb(sn)->>'po_id',
+          to_jsonb(sn)->>'purchaseOrderId',
+          to_jsonb(sn)->>'purchase_order_id',
+          null
+        ) AS "purchaseId",
          COALESCE(to_jsonb(sn)->>'unitType', to_jsonb(sn)->>'unit_type', null) AS "unitType"
        FROM tblserial_numbers sn
        WHERE LOWER(

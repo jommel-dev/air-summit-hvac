@@ -141,6 +141,7 @@ export interface SalesCustomerDetail {
   name: string;
   customer_type: 'regular' | 'sub_dealer';
   current_balance: number;
+  credit_limit?: number;
   payment_terms: number;
   address: string;
   contact_person: string;

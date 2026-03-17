@@ -51,6 +51,7 @@ export class CustomersComponent implements OnInit {
   payments: SalesCustomerPayment[] = [];
   concerns: SalesCustomerConcern[] = [];
   statements: SalesStatementOfAccountItem[] = [];
+  isDetailLoading = false;
 
   soaForm = {
     periodFrom: '',
@@ -170,6 +171,7 @@ export class CustomersComponent implements OnInit {
   closeDrawer(): void {
     this.isDrawerOpen = false;
     this.selectedCustomer = null;
+    this.isDetailLoading = false;
   }
 
   private createEmptyForm(): Partial<SalesCustomerDetail> {
@@ -250,6 +252,9 @@ export class CustomersComponent implements OnInit {
       return;
     }
 
+    this.isDetailLoading = true;
+    this.uiError = '';
+
     try {
       this.orders = [];
       this.payments = [];
@@ -269,6 +274,8 @@ export class CustomersComponent implements OnInit {
       this.statements = statementsResult.items;
     } catch (error: unknown) {
       this.uiError = (error as Error)?.message || 'Failed to load customer details';
+    } finally {
+      this.isDetailLoading = false;
     }
   }
 

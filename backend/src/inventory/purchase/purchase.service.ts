@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { DatabaseService } from 'src/database/database.service';
@@ -30,6 +30,14 @@ type PurchaseCountRow = {
 };
 
 type PurchaseMode = 'deliveries' | 'approvals' | 'master-data';
+type PurchasePaymentMethod =
+  | 'Cash'
+  | 'Bank Transfer'
+  | 'Terms'
+  | 'Terms with DP'
+  | 'Cheque'
+  | 'Credit Card'
+  | 'Installment';
 type TableColumnMeta = {
   column_name: string;
   data_type: string;
@@ -56,6 +64,11 @@ type PurchasePaymentRow = {
   termsDueDate: string | null;
   status: string | null;
   paymentDate: string | null;
+  bankName: string | null;
+  referenceNo: string | null;
+  checkNo: string | null;
+  chequeDate: string | null;
+  issuedBy: string | null;
   downPayment: string | null;
 };
 
@@ -205,6 +218,170 @@ export class PurchaseService {
     return String(value ?? '')
       .trim()
       .replace(/\s+/g, ' ');
+  }
+
+  private toPurchasePaymentMethod(value: unknown): PurchasePaymentMethod {
+    const normalized = String(value ?? '')
+      .trim()
+      .toLowerCase();
+
+    if (normalized === 'cash') return 'Cash';
+    if (normalized === 'bank transfer' || normalized === 'bank_transfer') return 'Bank Transfer';
+    if (normalized === 'terms') return 'Terms';
+    if (normalized === 'terms with dp' || normalized === 'terms_with_dp') return 'Terms with DP';
+    if (normalized === 'cheque' || normalized === 'check') return 'Cheque';
+    if (normalized === 'credit card' || normalized === 'credit_card') return 'Credit Card';
+    if (normalized === 'installment') return 'Installment';
+
+    throw new BadRequestException(`Invalid payment method: ${String(value ?? '')}`);
+  }
+
+  private hasPaymentValue(value: unknown): boolean {
+    if (value === null || value === undefined) {
+      return false;
+    }
+
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) {
+        return false;
+      }
+
+      return value !== 0;
+    }
+
+    if (typeof value === 'string') {
+      return value.trim().length > 0;
+    }
+
+    return true;
+  }
+
+  private getAutoPaymentStatus(method: PurchasePaymentMethod): string {
+    if (method === 'Cash' || method === 'Bank Transfer') {
+      return 'paid';
+    }
+
+    return 'unpaid';
+  }
+
+  private toPositiveIntegerOrNull(value: unknown): number | null {
+    const raw = String(value ?? '').trim();
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = Number(raw.match(/\d+/)?.[0] ?? Number.NaN);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return null;
+    }
+
+    return Math.floor(parsed);
+  }
+
+  private deriveTermsDueDate(
+    paymentDetails: Record<string, unknown>,
+    method: PurchasePaymentMethod,
+  ): string | null {
+    const explicitDueDate = this.toIsoDateOrNull(paymentDetails.termsDueDate);
+    if (explicitDueDate) {
+      return explicitDueDate;
+    }
+
+    if (method !== 'Terms' && method !== 'Terms with DP') {
+      return null;
+    }
+
+    const termDays = this.toPositiveIntegerOrNull(paymentDetails.terms);
+    if (!termDays) {
+      return null;
+    }
+
+    const baseDateIso = this.toIsoDateOrNull(paymentDetails.paymentDate) ?? new Date().toISOString();
+    const baseDate = new Date(baseDateIso);
+    if (Number.isNaN(baseDate.getTime())) {
+      return null;
+    }
+
+    baseDate.setUTCHours(0, 0, 0, 0);
+    baseDate.setUTCDate(baseDate.getUTCDate() + termDays);
+
+    return baseDate.toISOString();
+  }
+
+  private resolvePaymentStatusForDisplay(
+    methodValue: unknown,
+    statusValue: unknown,
+    termsDueDateValue: unknown,
+    chequeDateValue: unknown,
+  ): string {
+    const normalizedStatus = String(statusValue ?? '').trim().toLowerCase();
+    if (normalizedStatus === 'paid') {
+      return 'paid';
+    }
+
+    let method: PurchasePaymentMethod | null = null;
+    try {
+      method = this.toPurchasePaymentMethod(methodValue);
+    } catch {
+      method = null;
+    }
+
+    if (method === 'Terms' || method === 'Terms with DP' || method === 'Cheque') {
+      const dueSource = method === 'Cheque' ? chequeDateValue : termsDueDateValue;
+      const dueDateIso = this.toIsoDateOrNull(dueSource);
+      if (dueDateIso) {
+        const dueDate = new Date(dueDateIso);
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+        if (!Number.isNaN(dueDate.getTime()) && dueDate < today) {
+          return 'overdue';
+        }
+      }
+    }
+
+    return 'unpaid';
+  }
+
+  private validatePurchasePaymentDetails(
+    paymentDetails: Record<string, unknown>,
+    index: number,
+  ): PurchasePaymentMethod {
+    const method = this.toPurchasePaymentMethod(paymentDetails.method);
+
+    const allowedFieldsByMethod: Record<PurchasePaymentMethod, Set<string>> = {
+      Cash: new Set(['amount', 'paymentDate']),
+      'Bank Transfer': new Set(['amount', 'bankName', 'referenceNo']),
+      Terms: new Set(['amount', 'terms', 'termsDueDate']),
+      'Terms with DP': new Set(['amount', 'terms', 'termsDueDate', 'downPayment']),
+      Cheque: new Set(['amount', 'bankName', 'checkNo', 'chequeDate', 'issuedBy']),
+      'Credit Card': new Set(['amount', 'paymentDate']),
+      Installment: new Set(['amount', 'terms', 'termsDueDate', 'downPayment']),
+    };
+
+    const optionalFields = [
+      'terms',
+      'termsDueDate',
+      'paymentDate',
+      'bankName',
+      'referenceNo',
+      'checkNo',
+      'chequeDate',
+      'issuedBy',
+      'downPayment',
+    ] as const;
+
+    const disallowedFields = optionalFields.filter(
+      (field) =>
+        this.hasPaymentValue(paymentDetails[field]) && !allowedFieldsByMethod[method].has(field),
+    );
+
+    if (disallowedFields.length > 0) {
+      throw new BadRequestException(
+        `paymentDetails[${index}] has invalid field(s) for method ${method}: ${disallowedFields.join(', ')}`,
+      );
+    }
+
+    return method;
   }
 
   private toComparableNumberString(value: unknown): string {
@@ -794,6 +971,16 @@ export class PurchaseService {
               'payment_date',
               'paymentDate',
             ]);
+            const bankNameColumn = this.pickColumn(paymentColumns, ['bank_name', 'bankName']);
+            const referenceNoColumn = this.pickColumn(paymentColumns, ['reference_no', 'referenceNo']);
+            const checkNoColumn = this.pickColumn(paymentColumns, ['check_no', 'checkNo']);
+            const chequeDateColumn = this.pickColumn(paymentColumns, [
+              'cheque_date',
+              'chequeDate',
+              'post_dated',
+              'postDated',
+            ]);
+            const issuedByColumn = this.pickColumn(paymentColumns, ['issued_by', 'issuedBy']);
             const termsColumn = this.pickColumn(paymentColumns, ['terms']);
             const termsDueDateColumn = this.pickColumn(paymentColumns, [
               'terms_due_date',
@@ -806,19 +993,30 @@ export class PurchaseService {
             ]);
 
             if (paymentPoIdColumn) {
-              for (const paymentDetails of paymentDetailsList) {
+              for (const [paymentIndex, paymentDetails] of paymentDetailsList.entries()) {
+                if (!paymentDetails || typeof paymentDetails !== 'object') {
+                  throw new BadRequestException(`paymentDetails[${paymentIndex}] must be an object`);
+                }
+
+                const paymentPayload = paymentDetails as Record<string, unknown>;
+                const method = this.validatePurchasePaymentDetails(paymentPayload, paymentIndex);
                 const paymentRecord: Record<string, unknown> = {
                   [paymentPoIdColumn]: purchaseOrderId,
                 };
 
-                const normalizedPaymentStatus = String(
-                  paymentDetails.status ?? 'unpaid',
-                ).trim().toLowerCase();
-                const downPayment = this.toOptionalNumber(paymentDetails.downPayment);
-                const providedPaymentAmount = this.toOptionalNumber(paymentDetails.amount);
+                const downPayment = this.toOptionalNumber(paymentPayload.downPayment);
+                const providedPaymentAmount = this.toOptionalNumber(paymentPayload.amount);
+
+                const resolvedTermsDueDate = this.deriveTermsDueDate(paymentPayload, method);
+                const paymentStatus = this.resolvePaymentStatusForDisplay(
+                  method,
+                  paymentPayload.status ?? this.getAutoPaymentStatus(method),
+                  resolvedTermsDueDate,
+                  paymentPayload.chequeDate,
+                );
 
                 const fallbackPaymentAmount =
-                  normalizedPaymentStatus === 'paid'
+                  paymentStatus === 'paid'
                     ? totalAmount
                     : (downPayment ?? 0);
 
@@ -830,26 +1028,41 @@ export class PurchaseService {
                 if (amountColumn) {
                   paymentRecord[amountColumn] = paymentAmount;
                 }
-                if (methodColumn && paymentDetails.method) {
-                  paymentRecord[methodColumn] = String(paymentDetails.method).trim();
+                if (methodColumn) {
+                  paymentRecord[methodColumn] = method;
                 }
 
-                const paymentDate = this.toIsoDateOrNull(paymentDetails.paymentDate);
+                const paymentDate = this.toIsoDateOrNull(paymentPayload.paymentDate);
                 if (paymentDateColumn && paymentDate) {
                   paymentRecord[paymentDateColumn] = paymentDate;
                 }
-
-                if (termsColumn && paymentDetails.terms) {
-                  paymentRecord[termsColumn] = String(paymentDetails.terms).trim();
+                if (bankNameColumn && paymentPayload.bankName) {
+                  paymentRecord[bankNameColumn] = String(paymentPayload.bankName).trim();
+                }
+                if (referenceNoColumn && paymentPayload.referenceNo) {
+                  paymentRecord[referenceNoColumn] = String(paymentPayload.referenceNo).trim();
+                }
+                if (checkNoColumn && paymentPayload.checkNo) {
+                  paymentRecord[checkNoColumn] = String(paymentPayload.checkNo).trim();
+                }
+                const chequeDate = this.toIsoDateOrNull(paymentPayload.chequeDate);
+                if (chequeDateColumn && chequeDate) {
+                  paymentRecord[chequeDateColumn] = chequeDate;
+                }
+                if (issuedByColumn && paymentPayload.issuedBy) {
+                  paymentRecord[issuedByColumn] = String(paymentPayload.issuedBy).trim();
                 }
 
-                const termsDueDate = this.toIsoDateOrNull(paymentDetails.termsDueDate);
-                if (termsDueDateColumn && termsDueDate) {
-                  paymentRecord[termsDueDateColumn] = termsDueDate;
+                if (termsColumn && paymentPayload.terms) {
+                  paymentRecord[termsColumn] = String(paymentPayload.terms).trim();
                 }
 
-                if (paymentStatusColumn && paymentDetails.status) {
-                  paymentRecord[paymentStatusColumn] = String(paymentDetails.status).trim();
+                if (termsDueDateColumn && resolvedTermsDueDate) {
+                  paymentRecord[termsDueDateColumn] = resolvedTermsDueDate;
+                }
+
+                if (paymentStatusColumn) {
+                  paymentRecord[paymentStatusColumn] = paymentStatus;
                 }
 
                 if (downPaymentColumn && downPayment !== null) {
@@ -1149,6 +1362,8 @@ export class PurchaseService {
             'purchaseId',
             'purchase_id',
             'po_id',
+            'purchaseOrderId',
+            'purchase_order_id',
           ]);
 
           const serialUpdateResult = serialPurchaseIdColumn
@@ -1164,7 +1379,9 @@ export class PurchaseService {
                  WHERE COALESCE(
                    to_jsonb(sn)->>'purchaseId',
                    to_jsonb(sn)->>'purchase_id',
-                   to_jsonb(sn)->>'po_id'
+                   to_jsonb(sn)->>'po_id',
+                   to_jsonb(sn)->>'purchaseOrderId',
+                   to_jsonb(sn)->>'purchase_order_id'
                  ) = $2`,
                 ['in-stock', String(id)],
               );
@@ -1340,6 +1557,33 @@ export class PurchaseService {
              to_jsonb(pp)->>'paymentDate',
              null
            ) AS "paymentDate",
+           COALESCE(
+             to_jsonb(pp)->>'bank_name',
+             to_jsonb(pp)->>'bankName',
+             null
+           ) AS "bankName",
+           COALESCE(
+             to_jsonb(pp)->>'reference_no',
+             to_jsonb(pp)->>'referenceNo',
+             null
+           ) AS "referenceNo",
+           COALESCE(
+             to_jsonb(pp)->>'check_no',
+             to_jsonb(pp)->>'checkNo',
+             null
+           ) AS "checkNo",
+           COALESCE(
+             to_jsonb(pp)->>'cheque_date',
+             to_jsonb(pp)->>'chequeDate',
+             to_jsonb(pp)->>'post_dated',
+             to_jsonb(pp)->>'postDated',
+             null
+           ) AS "chequeDate",
+           COALESCE(
+             to_jsonb(pp)->>'issued_by',
+             to_jsonb(pp)->>'issuedBy',
+             null
+           ) AS "issuedBy",
            COALESCE(
              NULLIF(
                COALESCE(
@@ -1577,6 +1821,11 @@ export class PurchaseService {
             termsDueDate: payment.termsDueDate,
             status: payment.status ?? 'unpaid',
             paymentDate: payment.paymentDate,
+            bankName: payment.bankName ?? '',
+            referenceNo: payment.referenceNo ?? '',
+            checkNo: payment.checkNo ?? '',
+            chequeDate: payment.chequeDate,
+            issuedBy: payment.issuedBy ?? '',
             downPayment: this.toOptionalNumber(payment.downPayment) ?? 0,
           })),
           productItems: mappedProductItems,
@@ -1882,6 +2131,16 @@ export class PurchaseService {
           ]);
           const methodColumn = this.pickColumn(paymentColumns, ['method']);
           const paymentDateColumn = this.pickColumn(paymentColumns, ['payment_date', 'paymentDate']);
+          const bankNameColumn = this.pickColumn(paymentColumns, ['bank_name', 'bankName']);
+          const referenceNoColumn = this.pickColumn(paymentColumns, ['reference_no', 'referenceNo']);
+          const checkNoColumn = this.pickColumn(paymentColumns, ['check_no', 'checkNo']);
+          const chequeDateColumn = this.pickColumn(paymentColumns, [
+            'cheque_date',
+            'chequeDate',
+            'post_dated',
+            'postDated',
+          ]);
+          const issuedByColumn = this.pickColumn(paymentColumns, ['issued_by', 'issuedBy']);
           const termsColumn = this.pickColumn(paymentColumns, ['terms']);
           const termsDueDateColumn = this.pickColumn(paymentColumns, ['terms_due_date', 'termsDueDate']);
           const paymentStatusColumn = this.pickColumn(paymentColumns, ['status']);
@@ -1901,14 +2160,25 @@ export class PurchaseService {
               [String(id)],
             );
 
-            for (const paymentDetails of paymentDetailsList) {
-              const normalizedPaymentStatus = String(
-                paymentDetails.status ?? 'unpaid',
-              ).trim().toLowerCase();
-              const downPayment = this.toOptionalNumber(paymentDetails.downPayment);
-              const providedPaymentAmount = this.toOptionalNumber(paymentDetails.amount);
+            for (const [paymentIndex, paymentDetails] of paymentDetailsList.entries()) {
+              if (!paymentDetails || typeof paymentDetails !== 'object') {
+                throw new BadRequestException(`paymentDetails[${paymentIndex}] must be an object`);
+              }
+
+              const paymentPayload = paymentDetails as Record<string, unknown>;
+              const method = this.validatePurchasePaymentDetails(paymentPayload, paymentIndex);
+
+              const downPayment = this.toOptionalNumber(paymentPayload.downPayment);
+              const providedPaymentAmount = this.toOptionalNumber(paymentPayload.amount);
+              const resolvedTermsDueDate = this.deriveTermsDueDate(paymentPayload, method);
+              const paymentStatus = this.resolvePaymentStatusForDisplay(
+                method,
+                paymentPayload.status ?? this.getAutoPaymentStatus(method),
+                resolvedTermsDueDate,
+                paymentPayload.chequeDate,
+              );
               const fallbackPaymentAmount =
-                normalizedPaymentStatus === 'paid' ? totalAmount : downPayment ?? 0;
+                paymentStatus === 'paid' ? totalAmount : downPayment ?? 0;
               const paymentAmount =
                 providedPaymentAmount !== null
                   ? providedPaymentAmount
@@ -1921,26 +2191,41 @@ export class PurchaseService {
               if (amountColumn) {
                 paymentRecord[amountColumn] = paymentAmount;
               }
-              if (methodColumn && paymentDetails.method) {
-                paymentRecord[methodColumn] = String(paymentDetails.method).trim();
+              if (methodColumn) {
+                paymentRecord[methodColumn] = method;
               }
 
-              const paymentDate = this.toIsoDateOrNull(paymentDetails.paymentDate);
+              const paymentDate = this.toIsoDateOrNull(paymentPayload.paymentDate);
               if (paymentDateColumn && paymentDate) {
                 paymentRecord[paymentDateColumn] = paymentDate;
               }
-
-              if (termsColumn && paymentDetails.terms) {
-                paymentRecord[termsColumn] = String(paymentDetails.terms).trim();
+              if (bankNameColumn && paymentPayload.bankName) {
+                paymentRecord[bankNameColumn] = String(paymentPayload.bankName).trim();
+              }
+              if (referenceNoColumn && paymentPayload.referenceNo) {
+                paymentRecord[referenceNoColumn] = String(paymentPayload.referenceNo).trim();
+              }
+              if (checkNoColumn && paymentPayload.checkNo) {
+                paymentRecord[checkNoColumn] = String(paymentPayload.checkNo).trim();
+              }
+              const chequeDate = this.toIsoDateOrNull(paymentPayload.chequeDate);
+              if (chequeDateColumn && chequeDate) {
+                paymentRecord[chequeDateColumn] = chequeDate;
+              }
+              if (issuedByColumn && paymentPayload.issuedBy) {
+                paymentRecord[issuedByColumn] = String(paymentPayload.issuedBy).trim();
               }
 
-              const termsDueDate = this.toIsoDateOrNull(paymentDetails.termsDueDate);
-              if (termsDueDateColumn && termsDueDate) {
-                paymentRecord[termsDueDateColumn] = termsDueDate;
+              if (termsColumn && paymentPayload.terms) {
+                paymentRecord[termsColumn] = String(paymentPayload.terms).trim();
               }
 
-              if (paymentStatusColumn && paymentDetails.status) {
-                paymentRecord[paymentStatusColumn] = String(paymentDetails.status).trim();
+              if (termsDueDateColumn && resolvedTermsDueDate) {
+                paymentRecord[termsDueDateColumn] = resolvedTermsDueDate;
+              }
+
+              if (paymentStatusColumn) {
+                paymentRecord[paymentStatusColumn] = paymentStatus;
               }
 
               if (downPaymentColumn && downPayment !== null) {

@@ -269,13 +269,16 @@
     class="relative h-full w-full max-w-[90vw] overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl dark:bg-gray-900"
     (click)="$event.stopPropagation()"
   >
+    <!-- Header with Close Button -->
     <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
       <div>
-        <div class="text-xl font-semibold text-gray-900 dark:text-gray-100">
+        <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">
           {{ selectedCustomer?.name }}
         </div>
         <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Type: {{ selectedCustomer?.customer_type }}
+          <span class="inline-block rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-700 dark:bg-brand-900/30 dark:text-brand-300">
+            {{ selectedCustomer?.customer_type === 'sub_dealer' ? 'Sub-Dealer' : 'Regular Customer' }}
+          </span>
         </div>
       </div>
       <button
@@ -288,204 +291,358 @@
 
     <div class="my-5 h-px bg-gray-200 dark:bg-gray-700"></div>
 
-    <div class="rounded-xl border border-gray-200 bg-gray-50 p-2 dark:border-gray-700 dark:bg-gray-800">
-      <div class="flex flex-wrap gap-2">
+    <!-- Customer Details Section -->
+    <div class="mb-6 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+      <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-gray-100">Customer Details</h3>
+      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <!-- Contact Person -->
+        <div>
+          <p class="text-xs text-gray-500 dark:text-gray-400">Contact Person</p>
+          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            {{ selectedCustomer?.contact_person || 'N/A' }}
+          </p>
+        </div>
+
+        <!-- Contact Number -->
+        <div>
+          <p class="text-xs text-gray-500 dark:text-gray-400">Contact Number</p>
+          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            {{ selectedCustomer?.contact_number || 'N/A' }}
+          </p>
+        </div>
+
+        <!-- Email -->
+        <div>
+          <p class="text-xs text-gray-500 dark:text-gray-400">Email</p>
+          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            {{ selectedCustomer?.email || 'N/A' }}
+          </p>
+        </div>
+
+        <!-- Address -->
+        <div class="md:col-span-2 lg:col-span-3">
+          <p class="text-xs text-gray-500 dark:text-gray-400">Address</p>
+          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            {{ selectedCustomer?.address || 'N/A' }}
+          </p>
+        </div>
+
+        <!-- TIN Number -->
+        <div>
+          <p class="text-xs text-gray-500 dark:text-gray-400">TIN Number</p>
+          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            {{ selectedCustomer?.tin_number || 'N/A' }}
+          </p>
+        </div>
+
+        <!-- Payment Terms -->
+        <div>
+          <p class="text-xs text-gray-500 dark:text-gray-400">Payment Terms (Days)</p>
+          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+            {{ selectedCustomer?.payment_terms || '0' }}
+          </p>
+        </div>
+
+        <!-- Current Balance -->
+        <div class="rounded-lg bg-white p-3 dark:bg-gray-700">
+          <p class="text-xs text-gray-500 dark:text-gray-400">Current Balance</p>
+          <p class="mt-1 text-lg font-bold" [ngClass]="(selectedCustomer?.current_balance ?? 0) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'">
+            {{ (selectedCustomer?.current_balance ?? 0) | number:'1.2-2' }}
+          </p>
+        </div>
+
+        <!-- Credit Limit (for sub-dealers) -->
+        <div *ngIf="selectedCustomer?.customer_type === 'sub_dealer'" class="rounded-lg bg-white p-3 dark:bg-gray-700">
+          <p class="text-xs text-gray-500 dark:text-gray-400">Credit Limit</p>
+          <p class="mt-1 text-lg font-bold text-blue-600 dark:text-blue-400">
+            {{ (selectedCustomer?.credit_limit ?? 0) | number:'1.2-2' }}
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="my-5 h-px bg-gray-200 dark:bg-gray-700"></div>
+
+    <!-- Tab Navigation -->
+    <div class="mb-6 rounded-lg border border-gray-200 bg-white p-1 dark:border-gray-700 dark:bg-gray-800">
+      <div class="flex flex-wrap gap-1">
         <button
-          class="rounded-lg px-4 py-2 text-sm font-semibold transition"
+          class="flex-1 rounded-md px-4 py-3 text-sm font-semibold transition duration-200"
           [ngClass]="{
-            'bg-brand-500 text-white shadow': detailTab === 'orders',
-            'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'orders'
+            'bg-brand-500 text-white shadow-md': detailTab === 'orders',
+            'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'orders'
           }"
           (click)="detailTab = 'orders'"
         >
+          <svg class="mr-2 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
           Orders
         </button>
         <button
-          class="rounded-lg px-4 py-2 text-sm font-semibold transition"
+          class="flex-1 rounded-md px-4 py-3 text-sm font-semibold transition duration-200"
           [ngClass]="{
-            'bg-brand-500 text-white shadow': detailTab === 'payments',
-            'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'payments'
+            'bg-brand-500 text-white shadow-md': detailTab === 'payments',
+            'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'payments'
           }"
           (click)="detailTab = 'payments'"
         >
+          <svg class="mr-2 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
           Payments
         </button>
         <button
-          class="rounded-lg px-4 py-2 text-sm font-semibold transition"
+          class="flex-1 rounded-md px-4 py-3 text-sm font-semibold transition duration-200"
           [ngClass]="{
-            'bg-brand-500 text-white shadow': detailTab === 'statement',
-            'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'statement'
+            'bg-brand-500 text-white shadow-md': detailTab === 'statement',
+            'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'statement'
           }"
           (click)="detailTab = 'statement'"
         >
-          Statement of Account
+          <svg class="mr-2 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          SOA
         </button>
         <button
-          class="rounded-lg px-4 py-2 text-sm font-semibold transition"
+          class="flex-1 rounded-md px-4 py-3 text-sm font-semibold transition duration-200"
           [ngClass]="{
-            'bg-brand-500 text-white shadow': detailTab === 'concerns',
-            'text-gray-700 hover:bg-white dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'concerns'
+            'bg-brand-500 text-white shadow-md': detailTab === 'concerns',
+            'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'concerns'
           }"
           (click)="detailTab = 'concerns'"
         >
+          <svg class="mr-2 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
           Concerns
         </button>
       </div>
     </div>
 
-    <div *ngIf="detailTab === 'orders'" class="space-y-3">
-      <div *ngIf="orders.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
-        No orders found.
+    <!-- Tab Content -->
+    <div class="space-y-4">
+      <div *ngIf="isDetailLoading" class="rounded-xl border border-gray-200 bg-gray-50 p-8 text-center dark:border-gray-700 dark:bg-gray-800">
+        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm dark:bg-gray-900">
+          <svg class="h-6 w-6 animate-spin text-brand-500" viewBox="0 0 24 24" fill="none">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+          </svg>
+        </div>
+        <h3 class="mt-4 text-sm font-semibold text-gray-900 dark:text-gray-100">Loading customer activity</h3>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Fetching orders, payments, statements, and concerns.</p>
       </div>
-      <div *ngIf="orders.length > 0" class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-300">
-            <tr>
-              <th class="px-4 py-3">SO Number</th>
-              <th class="px-4 py-3">Type</th>
-              <th class="px-4 py-3">Amount</th>
-              <th class="px-4 py-3">Status</th>
-              <th class="px-4 py-3">Created</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-            <tr *ngFor="let order of orders" class="hover:bg-gray-50 dark:hover:bg-gray-800">
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.soNumber }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.salesType }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.totalAmount | number:'1.2-2' }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.status }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.createdAt }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
 
-    <div *ngIf="detailTab === 'payments'" class="space-y-3">
-      <div *ngIf="payments.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
-        No payments found.
-      </div>
-      <div *ngIf="payments.length > 0" class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-300">
-            <tr>
-              <th class="px-4 py-3">Date</th>
-              <th class="px-4 py-3">Amount</th>
-              <th class="px-4 py-3">Method</th>
-              <th class="px-4 py-3">Reference</th>
-              <th class="px-4 py-3">Notes</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-            <tr *ngFor="let payment of payments" class="hover:bg-gray-50 dark:hover:bg-gray-800">
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ payment.paymentDate }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ payment.paymentAmount | number:'1.2-2' }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ payment.paymentMethod }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ payment.referenceNo }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ payment.paymentNotes }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div *ngIf="detailTab === 'statement'" class="space-y-3">
-      <div class="grid gap-4 md:grid-cols-4">
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Period From</label>
-          <input
-            type="date"
-            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            [(ngModel)]="soaForm.periodFrom"
-          />
+      <!-- Orders Tab -->
+      <div *ngIf="detailTab === 'orders' && !isDetailLoading" class="space-y-4">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Sales Orders Connected to Customer</h3>
+        <div *ngIf="orders.length === 0" class="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-800">
+          <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No sales orders found for this customer.</p>
         </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Period To</label>
-          <input
-            type="date"
-            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            [(ngModel)]="soaForm.periodTo"
-          />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Due Date</label>
-          <input
-            type="date"
-            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            [(ngModel)]="soaForm.dueDate"
-          />
-        </div>
-        <div class="flex items-end">
-          <button
-            class="w-full rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
-            [disabled]="isGeneratingSoa || !soaForm.periodFrom || !soaForm.periodTo"
-            (click)="generateStatementOfAccount()"
-          >
-            Generate SOA
-          </button>
+        <div *ngIf="orders.length > 0" class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead class="bg-gray-50 dark:bg-gray-800">
+              <tr>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">SO Number</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Type</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Amount</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Status</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Created</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+              <tr *ngFor="let order of orders" class="hover:bg-gray-50 dark:hover:bg-gray-800">
+                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
+                  <span class="font-medium">{{ order.soNumber }}</span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.salesType }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.totalAmount | number:'1.2-2' }}</td>
+                <td class="px-4 py-3 text-sm">
+                  <span class="inline-block rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                    {{ order.status }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.createdAt }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <div *ngIf="statements.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
-        No statements found.
+      <!-- Payments Tab -->
+      <div *ngIf="detailTab === 'payments' && !isDetailLoading" class="space-y-4">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Payment History</h3>
+        <div *ngIf="payments.length === 0" class="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-800">
+          <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No payments recorded for this customer.</p>
+        </div>
+        <div *ngIf="payments.length > 0" class="space-y-3">
+          <div *ngFor="let payment of payments" class="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+            <div class="flex items-start justify-between">
+              <div class="flex-1">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ payment.paymentDate }}</span>
+                  <span class="inline-block rounded-full bg-green-100 px-2 py-1 text-xs font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                    {{ payment.paymentMethod }}
+                  </span>
+                </div>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ payment.paymentNotes || 'No notes' }}</p>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Ref: {{ payment.referenceNo || 'N/A' }}</p>
+              </div>
+              <div class="text-right">
+                <p class="text-lg font-bold text-green-600 dark:text-green-400">
+                  {{ payment.paymentAmount | number:'1.2-2' }}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div *ngIf="statements.length > 0" class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-300">
-            <tr>
-              <th class="px-4 py-3">SOA #</th>
-              <th class="px-4 py-3">Period</th>
-              <th class="px-4 py-3">Opening</th>
-              <th class="px-4 py-3">Charges</th>
-              <th class="px-4 py-3">Payments</th>
-              <th class="px-4 py-3">Closing</th>
-              <th class="px-4 py-3">Status</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-            <tr *ngFor="let soa of statements" class="hover:bg-gray-50 dark:hover:bg-gray-800">
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.soaNumber }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
-                {{ soa.periodFrom }} - {{ soa.periodTo }}
-              </td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.openingBalance | number:'1.2-2' }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.totalCharges | number:'1.2-2' }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.totalPayments | number:'1.2-2' }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.closingBalance | number:'1.2-2' }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ soa.status }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
 
-    <div *ngIf="detailTab === 'concerns'" class="space-y-3">
-      <div *ngIf="concerns.length === 0" class="text-sm text-gray-500 dark:text-gray-400">
-        No concerns found.
+      <!-- Statement of Account Tab -->
+      <div *ngIf="detailTab === 'statement' && !isDetailLoading" class="space-y-4">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Statement of Account</h3>
+        <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+          <h4 class="mb-3 text-xs font-semibold text-gray-600 dark:text-gray-300">Generate New Statement</h4>
+          <div class="grid gap-3 md:grid-cols-4">
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Period From</label>
+              <input
+                type="date"
+                class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                [(ngModel)]="soaForm.periodFrom"
+              />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Period To</label>
+              <input
+                type="date"
+                class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                [(ngModel)]="soaForm.periodTo"
+              />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Due Date</label>
+              <input
+                type="date"
+                class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+                [(ngModel)]="soaForm.dueDate"
+              />
+            </div>
+            <div class="flex items-end">
+              <button
+                class="w-full rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                [disabled]="isGeneratingSoa || !soaForm.periodFrom || !soaForm.periodTo"
+                (click)="generateStatementOfAccount()"
+              >
+                {{ isGeneratingSoa ? 'Generating...' : 'Generate SOA' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div *ngIf="statements.length === 0" class="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-800">
+          <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No statements of account generated yet.</p>
+        </div>
+        <div *ngIf="statements.length > 0" class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead class="bg-gray-50 dark:bg-gray-800">
+              <tr>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">SOA #</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Period</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">Opening</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">Charges</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">Payments</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">Closing</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Status</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+              <tr *ngFor="let soa of statements" class="hover:bg-gray-50 dark:hover:bg-gray-800">
+                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ soa.soaNumber }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
+                  {{ soa.periodFrom }} - {{ soa.periodTo }}
+                </td>
+                <td class="px-4 py-3 text-right text-sm text-gray-700 dark:text-gray-200">{{ soa.openingBalance | number:'1.2-2' }}</td>
+                <td class="px-4 py-3 text-right text-sm text-orange-600 dark:text-orange-400">{{ soa.totalCharges | number:'1.2-2' }}</td>
+                <td class="px-4 py-3 text-right text-sm text-green-600 dark:text-green-400">{{ soa.totalPayments | number:'1.2-2' }}</td>
+                <td class="px-4 py-3 text-right text-sm font-medium" [ngClass]="soa.closingBalance > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'">
+                  {{ soa.closingBalance | number:'1.2-2' }}
+                </td>
+                <td class="px-4 py-3 text-sm">
+                  <span [ngClass]="{
+                    'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': soa.status === 'draft',
+                    'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300': soa.status === 'sent',
+                    'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300': soa.status === 'paid',
+                    'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300': soa.status === 'overdue'
+                  }" class="inline-block rounded-full px-2 py-1 text-xs font-semibold">
+                    {{ soa.status | uppercase }}
+                  </span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
-      <div *ngIf="concerns.length > 0" class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-300">
-            <tr>
-              <th class="px-4 py-3">SO Number</th>
-              <th class="px-4 py-3">Type</th>
-              <th class="px-4 py-3">Subject</th>
-              <th class="px-4 py-3">Status</th>
-              <th class="px-4 py-3">Priority</th>
-              <th class="px-4 py-3">Resolved At</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-            <tr *ngFor="let concern of concerns" class="hover:bg-gray-50 dark:hover:bg-gray-800">
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.soNumber }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.concernType }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.concernSubject }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.concernStatus }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.priority }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.resolvedAt }}</td>
-            </tr>
-          </tbody>
-        </table>
+
+      <!-- Concerns/Service Tab -->
+      <div *ngIf="detailTab === 'concerns' && !isDetailLoading" class="space-y-4">
+        <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Service Concerns & Inquiries</h3>
+        <div *ngIf="concerns.length === 0" class="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-800">
+          <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No service concerns recorded for this customer.</p>
+        </div>
+        <div *ngIf="concerns.length > 0" class="overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead class="bg-gray-50 dark:bg-gray-800">
+              <tr>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">SO Number</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Type</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Subject</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Status</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Priority</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Resolved</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+              <tr *ngFor="let concern of concerns" class="hover:bg-gray-50 dark:hover:bg-gray-800">
+                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ concern.soNumber }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.concernType }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.concernSubject }}</td>
+                <td class="px-4 py-3 text-sm">
+                  <span [ngClass]="{
+                    'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300': concern.concernStatus === 'open',
+                    'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300': concern.concernStatus === 'in-progress',
+                    'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300': concern.concernStatus === 'closed'
+                  }" class="inline-block rounded-full px-2 py-1 text-xs font-semibold">
+                    {{ concern.concernStatus }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-sm">
+                  <span [ngClass]="{
+                    'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300': concern.priority === 'high',
+                    'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300': concern.priority === 'medium',
+                    'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300': concern.priority === 'low'
+                  }" class="inline-block rounded-full px-2 py-1 text-xs font-semibold">
+                    {{ concern.priority }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.resolvedAt || 'Not resolved' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 

@@ -150,11 +150,89 @@ export class SalesOrderService {
   }
 
   private getAutoPaymentStatus(method: SalesPaymentMethod): string {
-    if (method === 'Terms' || method === 'Terms with DP' || method === 'Installment') {
-      return 'unpaid';
+    if (method === 'Cash' || method === 'Bank Transfer') {
+      return 'paid';
     }
 
-    return 'paid';
+    return 'unpaid';
+  }
+
+  private toPositiveIntegerOrNull(value: unknown): number | null {
+    const raw = String(value ?? '').trim();
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = Number(raw.match(/\d+/)?.[0] ?? Number.NaN);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return null;
+    }
+
+    return Math.floor(parsed);
+  }
+
+  private deriveTermsDueDate(
+    paymentDetails: Record<string, unknown>,
+    method: SalesPaymentMethod,
+  ): string | null {
+    const explicitDueDate = this.toIsoDateOrNull(paymentDetails.termsDueDate);
+    if (explicitDueDate) {
+      return explicitDueDate;
+    }
+
+    if (method !== 'Terms' && method !== 'Terms with DP') {
+      return null;
+    }
+
+    const termDays = this.toPositiveIntegerOrNull(paymentDetails.terms);
+    if (!termDays) {
+      return null;
+    }
+
+    const baseDateIso = this.toIsoDateOrNull(paymentDetails.paymentDate) ?? new Date().toISOString();
+    const baseDate = new Date(baseDateIso);
+    if (Number.isNaN(baseDate.getTime())) {
+      return null;
+    }
+
+    baseDate.setUTCHours(0, 0, 0, 0);
+    baseDate.setUTCDate(baseDate.getUTCDate() + termDays);
+
+    return baseDate.toISOString();
+  }
+
+  private resolvePaymentStatusForDisplay(
+    methodValue: unknown,
+    statusValue: unknown,
+    termsDueDateValue: unknown,
+    postDatedValue: unknown,
+  ): string {
+    const normalizedStatus = String(statusValue ?? '').trim().toLowerCase();
+    if (normalizedStatus === 'paid') {
+      return 'paid';
+    }
+
+    let method: SalesPaymentMethod | null = null;
+    try {
+      method = this.toSalesPaymentMethod(methodValue);
+    } catch {
+      method = null;
+    }
+
+    if (method === 'Terms' || method === 'Terms with DP' || method === 'Cheque') {
+      const dueSource = method === 'Cheque' ? postDatedValue : termsDueDateValue;
+      const dueDateIso = this.toIsoDateOrNull(dueSource);
+      if (dueDateIso) {
+        const dueDate = new Date(dueDateIso);
+        const today = new Date();
+        today.setUTCHours(0, 0, 0, 0);
+        if (!Number.isNaN(dueDate.getTime()) && dueDate < today) {
+          return 'overdue';
+        }
+      }
+    }
+
+    return 'unpaid';
   }
 
   private validateSalesPaymentDetails(
@@ -845,7 +923,7 @@ export class SalesOrderService {
               }
               if (termsDueDateColumn) {
                 paymentRecord[termsDueDateColumn] =
-                  this.toIsoDateOrNull(paymentPayload.termsDueDate) ?? null;
+                  this.deriveTermsDueDate(paymentPayload, method) ?? null;
               }
               if (paymentStatusColumn) {
                 paymentRecord[paymentStatusColumn] = this.getAutoPaymentStatus(method);
@@ -1787,7 +1865,7 @@ export class SalesOrderService {
       const countResult = await this.databaseService.query<{ count: string }>(
         `SELECT COUNT(*)::text AS count
          FROM tblsales_order so
-         WHERE COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') = $1`,
+         WHERE so.customer_id::text = $1`,
         [id],
       );
       const total = Number(countResult.rows[0]?.count ?? 0);
@@ -1795,22 +1873,22 @@ export class SalesOrderService {
 
       const result = await this.databaseService.query<{
         id: number;
-        soNumber: string | null;
-        totalAmount: string | null;
+        so_number: string | null;
+        total_amount: string | null;
         status: string | null;
         salesType: string | null;
-        createdAt: string | null;
+        created_at: string | null;
       }>(
         `SELECT
            so.id,
-           COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', '') AS "soNumber",
-           COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') AS "totalAmount",
-           COALESCE(so.status, '') AS status,
-           COALESCE(to_jsonb(so)->>'sales_type', to_jsonb(so)->>'salesType', '') AS "salesType",
-           COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt', NULL) AS "createdAt"
+           so.so_number,
+           so.total_amount::text,
+           COALESCE(so.status, 'pending') AS status,
+           so."salesType",
+           so.created_at::text
          FROM tblsales_order so
-         WHERE COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') = $1
-         ORDER BY COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt', NOW()) DESC
+         WHERE so.customer_id::text = $1
+         ORDER BY so.created_at DESC NULLS LAST
          LIMIT $2
          OFFSET $3`,
         [id, limit, offset],
@@ -1820,11 +1898,11 @@ export class SalesOrderService {
         success: true,
         items: result.rows.map((row) => ({
           id: row.id,
-          soNumber: row.soNumber ?? '',
-          totalAmount: this.toOptionalNumber(row.totalAmount) ?? 0,
-          status: row.status ?? '',
+          soNumber: row.so_number ?? '',
+          totalAmount: this.toOptionalNumber(row.total_amount) ?? 0,
+          status: row.status ?? 'pending',
           salesType: row.salesType ?? '',
-          createdAt: row.createdAt ?? null,
+          createdAt: row.created_at ?? null,
         })),
         meta: { page, limit, total, totalPages },
       };
@@ -1898,30 +1976,30 @@ export class SalesOrderService {
     try {
       const result = await this.databaseService.query<{
         id: number;
-        salesId: number;
-        soNumber: string | null;
-        concernType: string | null;
-        concernSubject: string | null;
-        concernDescription: string | null;
-        concernStatus: string | null;
+        sales_id: number;
+        so_number: string | null;
+        concern_type: string | null;
+        concern_subject: string | null;
+        concern_description: string | null;
+        concern_status: string | null;
         priority: string | null;
-        resolutionNotes: string | null;
-        resolvedAt: string | null;
+        resolution_notes: string | null;
+        resolved_at: string | null;
       }>(
         `SELECT
            cd.id,
-           cd.sales_id AS "salesId",
-           COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', '') AS "soNumber",
-           COALESCE(cd.concern_type, '') AS "concernType",
-           COALESCE(cd.concern_subject, '') AS "concernSubject",
-           COALESCE(cd.concern_description, '') AS "concernDescription",
-           COALESCE(cd.concern_status, '') AS "concernStatus",
-           COALESCE(cd.priority, '') AS priority,
-           COALESCE(cd.resolution_notes, '') AS "resolutionNotes",
-           COALESCE(cd.resolved_at, NULL) AS "resolvedAt"
+           cd.sales_id,
+           so.so_number,
+           cd.concern_type,
+           cd.concern_subject,
+           cd.concern_description,
+           cd.concern_status,
+           cd.priority,
+           cd.resolution_notes,
+           cd.resolved_at::text
          FROM tblconcern_details cd
          LEFT JOIN tblsales_order so ON so.id = cd.sales_id
-         WHERE COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') = $1
+         WHERE cd.customer_id::text = $1
          ORDER BY cd.id DESC`,
         [id],
       );
@@ -1930,15 +2008,15 @@ export class SalesOrderService {
         success: true,
         items: result.rows.map((row) => ({
           id: row.id,
-          salesId: row.salesId,
-          soNumber: row.soNumber ?? '',
-          concernType: row.concernType ?? '',
-          concernSubject: row.concernSubject ?? '',
-          concernDescription: row.concernDescription ?? '',
-          concernStatus: row.concernStatus ?? '',
+          salesId: row.sales_id,
+          soNumber: row.so_number ?? '',
+          concernType: row.concern_type ?? '',
+          concernSubject: row.concern_subject ?? '',
+          concernDescription: row.concern_description ?? '',
+          concernStatus: row.concern_status ?? '',
           priority: row.priority ?? '',
-          resolutionNotes: row.resolutionNotes ?? '',
-          resolvedAt: row.resolvedAt ?? null,
+          resolutionNotes: row.resolution_notes ?? '',
+          resolvedAt: row.resolved_at ?? null,
         })),
       };
     } catch (error) {
@@ -2057,10 +2135,10 @@ export class SalesOrderService {
       const openingBalance = this.toOptionalNumber(lastStatementResult.rows[0]?.closing_balance) ?? 0;
 
       const chargeResult = await this.databaseService.query<{ total_charges: string | null }>(
-        `SELECT COALESCE(SUM(COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric), 0)::text AS total_charges
+        `SELECT COALESCE(SUM(COALESCE(so.total_amount, 0)::numeric), 0)::text AS total_charges
          FROM tblsales_order so
-         WHERE COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') = $1
-           AND COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt', NOW())::date BETWEEN $2::date AND $3::date`,
+         WHERE so.customer_id::text = $1
+           AND COALESCE(so.created_at, NOW())::date BETWEEN $2::date AND $3::date`,
         [id, dto.periodFrom, dto.periodTo],
       );
 
@@ -2534,7 +2612,12 @@ export class SalesOrderService {
             amount: this.toOptionalNumber(payment.amount) ?? 0,
             terms: payment.terms ?? '',
             termsDueDate: payment.termsDueDate,
-            status: payment.status ?? 'paid',
+            status: this.resolvePaymentStatusForDisplay(
+              payment.method,
+              payment.status,
+              payment.termsDueDate,
+              payment.postDated,
+            ),
             referenceNo: payment.referenceNo ?? '',
             paymentDate: payment.paymentDate,
             issuedBy: payment.issuedBy ?? '',
@@ -2917,7 +3000,9 @@ export class SalesOrderService {
               if (methodColumn) paymentRecord[methodColumn] = method;
               if (amountColumn) paymentRecord[amountColumn] = amount;
               if (termsColumn && paymentPayload.terms) paymentRecord[termsColumn] = String(paymentPayload.terms).trim();
-              if (termsDueDateColumn) paymentRecord[termsDueDateColumn] = this.toIsoDateOrNull(paymentPayload.termsDueDate);
+              if (termsDueDateColumn) {
+                paymentRecord[termsDueDateColumn] = this.deriveTermsDueDate(paymentPayload, method);
+              }
               if (paymentStatusColumn) paymentRecord[paymentStatusColumn] = this.getAutoPaymentStatus(method);
               if (referenceNoColumn && paymentPayload.referenceNo) paymentRecord[referenceNoColumn] = String(paymentPayload.referenceNo).trim();
               if (paymentDateColumn) paymentRecord[paymentDateColumn] = this.toIsoDateOrNull(paymentPayload.paymentDate);

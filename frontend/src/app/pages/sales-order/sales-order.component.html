@@ -396,6 +396,22 @@
                     </select>
                   </div>
                   <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Status</label>
+                    <div class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800">
+                      <span
+                        class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold"
+                        [ngClass]="{
+                          'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-400': (payment.status || '').toLowerCase() === 'paid',
+                          'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400': (payment.status || '').toLowerCase() === 'overdue',
+                          'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400': (payment.status || '').toLowerCase() === 'unpaid',
+                          'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300': !['paid', 'unpaid', 'overdue'].includes((payment.status || '').toLowerCase())
+                        }"
+                      >
+                        {{ (payment.status || 'unpaid') | uppercase }}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Amount</label>
                     <input type="number" [(ngModel)]="payment.amount" [name]="'payment_amount_' + pIndex" placeholder="0.00" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
                   </div>
@@ -420,6 +436,7 @@
                       <input
                         type="date"
                         [(ngModel)]="payment.termsDueDate"
+                        (ngModelChange)="onPaymentDateFieldChange()"
                         [name]="'payment_terms_due_' + pIndex"
                         (focus)="openDatePicker($event)"
                         (click)="openDatePicker($event)"
@@ -436,7 +453,7 @@
                   @if (shouldShowPaymentField(payment.method, 'paymentDate')) {
                     <div>
                       <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payment Date</label>
-                      <input type="date" [(ngModel)]="payment.paymentDate" [name]="'payment_date_' + pIndex" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      <input type="date" [(ngModel)]="payment.paymentDate" (ngModelChange)="onPaymentDateFieldChange()" [name]="'payment_date_' + pIndex" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
                     </div>
                   }
                   @if (shouldShowPaymentField(payment.method, 'issuedBy')) {
@@ -472,7 +489,7 @@
                   @if (shouldShowPaymentField(payment.method, 'postDated')) {
                     <div>
                       <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Post Dated</label>
-                      <input type="text" [(ngModel)]="payment.postDated" [name]="'payment_post_dated_' + pIndex" placeholder="Post-dated details" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                      <input type="date" [(ngModel)]="payment.postDated" (ngModelChange)="onPaymentDateFieldChange()" [name]="'payment_post_dated_' + pIndex" (focus)="openDatePicker($event)" (click)="openDatePicker($event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
                     </div>
                   }
                   @if (shouldShowPaymentField(payment.method, 'downPayment')) {
