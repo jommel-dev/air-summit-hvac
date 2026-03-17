@@ -19,6 +19,11 @@ export interface PurchaseOrderDetailPayment {
   termsDueDate: string | null;
   status: string;
   paymentDate: string | null;
+  bankName: string;
+  referenceNo: string;
+  checkNo: string;
+  chequeDate: string | null;
+  issuedBy: string;
   downPayment: number;
 }
 
@@ -130,8 +135,13 @@ export interface CreatePurchaseRequestPayload {
         method?: string;
         terms?: string;
         termsDueDate?: string | null;
-        status?: 'unpaid' | 'paid' | 'partial';
+        status?: 'unpaid' | 'paid' | 'partial' | 'overdue';
         paymentDate?: string | null;
+        bankName?: string;
+        referenceNo?: string;
+        checkNo?: string;
+        chequeDate?: string | null;
+        issuedBy?: string;
         downPayment?: number;
       }
     | Array<{
@@ -139,8 +149,13 @@ export interface CreatePurchaseRequestPayload {
         method?: string;
         terms?: string;
         termsDueDate?: string | null;
-        status?: 'unpaid' | 'paid' | 'partial';
+        status?: 'unpaid' | 'paid' | 'partial' | 'overdue';
         paymentDate?: string | null;
+        bankName?: string;
+        referenceNo?: string;
+        checkNo?: string;
+        chequeDate?: string | null;
+        issuedBy?: string;
         downPayment?: number;
       }>;
   productItems: Array<{

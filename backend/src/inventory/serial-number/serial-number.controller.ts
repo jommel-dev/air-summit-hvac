@@ -60,23 +60,27 @@ export class SerialNumberController {
   @Post('scan-purchase-order')
   scanPurchaseOrder(
     @Body() dto: ScanPurchaseOrderDto,
-    @Req() request: { user?: { sub?: unknown } },
+    @Query('branchId') branchIdQuery: string | undefined,
+    @Req() request: { user?: Record<string, unknown> },
   ) {
     const userId = Number(request.user?.sub);
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
+    const branchId = this.resolveBranchId(request, branchIdQuery);
 
-    return this.serialNumberService.scanPurchaseOrder(dto, normalizedUserId);
+    return this.serialNumberService.scanPurchaseOrder(dto, normalizedUserId, branchId);
   }
 
   @Post('scan-purchase-order/batch')
   scanPurchaseOrderBatch(
     @Body() dto: ScanPurchaseOrderBatchDto,
-    @Req() request: { user?: { sub?: unknown } },
+    @Query('branchId') branchIdQuery: string | undefined,
+    @Req() request: { user?: Record<string, unknown> },
   ) {
     const userId = Number(request.user?.sub);
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
+    const branchId = this.resolveBranchId(request, branchIdQuery);
 
-    return this.serialNumberService.scanPurchaseOrderBatch(dto, normalizedUserId);
+    return this.serialNumberService.scanPurchaseOrderBatch(dto, normalizedUserId, branchId);
   }
 
   @Post('remove-purchase-order')
