@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import {
@@ -45,6 +45,15 @@ interface PurchasePaymentFormItem {
   termsDueDate: string;
   paymentDate: string;
   downPayment: number;
+}
+
+interface QueuedPurchaseSerialScan {
+  productIndex: number;
+  unitLabel: string;
+  serialNumber: string;
+  purchaseId: number;
+  productId: number;
+  capacityId: number;
 }
 
 @Component({
@@ -97,8 +106,16 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private vendorDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly serialScanDebounceMs = 120;
+  private readonly serialBatchSize = 20;
+  private readonly serialBatchIdleMs = 1000;
+  private readonly serialBatchIntervalMs = 5000;
   private serialScanTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   private serialScanErrorTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+  isFlushingQueuedSerials = false;
+  private activeSerialFlushCount = 0;
+  private queuedSerialScans: QueuedPurchaseSerialScan[] = [];
+  private queuedSerialFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private queuedSerialIntervalTimer: ReturnType<typeof setInterval> | null = null;
   private readonly purchaseTabPermissionKeyMap: Record<PurchaseTab, string[]> = {
     deliveries: ['purchase-order.tab.deliveries', 'purchase-order.tab.local'],
     approvals: ['purchase-order.tab.approvals'],
@@ -141,6 +158,23 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       clearTimeout(timer);
     }
     this.serialScanErrorTimers = {};
+
+    this.clearQueuedSerialFlushTimer();
+    this.stopQueuedSerialAutoFlush();
+  }
+
+  @HostListener('window:beforeunload', ['$event'])
+  onBeforeUnload(event: BeforeUnloadEvent): void {
+    if (!this.isFormDrawerOpen) {
+      return;
+    }
+
+    event.preventDefault();
+    event.returnValue = '';
+  }
+
+  get pendingSerialScanCount(): number {
+    return this.queuedSerialScans.length + this.activeSerialFlushCount;
   }
 
   onVendorSearchChange(value: string): void {
@@ -273,6 +307,14 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.createSuccess = '';
 
     try {
+      if (this.drawerMode === 'edit') {
+        const flushed = await this.flushAllQueuedSerialScans();
+        if (!flushed) {
+          this.createError = 'Pending serial scans must finish saving before updating the purchase order.';
+          return;
+        }
+      }
+
       const payload = this.buildPurchasePayload();
       const response =
         this.drawerMode === 'edit' && this.editingPurchaseId
@@ -294,7 +336,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           ? 'Purchase request updated successfully'
           : 'Purchase request created successfully');
       this.resetCreateForm();
-      this.closeCreateDrawer();
+      await this.closeCreateDrawer();
       this.page = 1;
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
@@ -493,7 +535,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       }
 
       this.createSuccess = response.message ?? 'Purchase order reverted to in-progress';
-      this.closeCreateDrawer();
+      await this.closeCreateDrawer();
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
@@ -530,7 +572,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       }
 
       this.createSuccess = response.message ?? 'Purchase order approved successfully';
-      this.closeCreateDrawer();
+      await this.closeCreateDrawer();
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
@@ -591,6 +633,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.editingPurchaseId = null;
     this.createError = '';
     this.createSuccess = '';
+    this.stopQueuedSerialAutoFlush();
     this.isFormDrawerOpen = true;
   }
 
@@ -606,6 +649,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.isFormDrawerOpen = true;
     this.createError = '';
     this.createSuccess = '';
+    this.startQueuedSerialAutoFlush();
 
     try {
       const detail = await this.purchaseOrderService.getPurchaseById(item.id);
@@ -629,10 +673,16 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
   }
 
-  closeCreateDrawer(): void {
-    this.isFormDrawerOpen = false;
-    this.isProcessingApprovalAction = false;
-    this.isExportingSerials = false;
+  async closeCreateDrawer(): Promise<void> {
+    if (this.drawerMode === 'edit') {
+      const flushed = await this.flushAllQueuedSerialScans();
+      if (!flushed) {
+        this.createError = 'Pending serial scans must finish saving before closing the drawer.';
+        return;
+      }
+    }
+
+    this.finalizeDrawerClose();
   }
 
   hasAnyScannedSerials(): boolean {
@@ -795,6 +845,21 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.vendorSearch = '';
     this.activeProductTabIndex = 0;
     this.selectedUnitTypeByProduct = {};
+    this.queuedSerialScans = [];
+    this.activeSerialFlushCount = 0;
+    this.isFlushingQueuedSerials = false;
+    this.clearQueuedSerialFlushTimer();
+  }
+
+  private finalizeDrawerClose(): void {
+    this.stopQueuedSerialAutoFlush();
+    this.clearQueuedSerialFlushTimer();
+    this.queuedSerialScans = [];
+    this.activeSerialFlushCount = 0;
+    this.isFlushingQueuedSerials = false;
+    this.isFormDrawerOpen = false;
+    this.isProcessingApprovalAction = false;
+    this.isExportingSerials = false;
   }
 
   private buildScannedSerialExportRows(): Array<{
@@ -1086,46 +1151,30 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
-    unitEntry.isScanning = true;
-
-    try {
-      const response = await this.purchaseOrderService.scanPurchaseSerial({
-        serialNumber,
-        purchaseId: this.editingPurchaseId,
-        expectedProductId: productId,
-        expectedCapacityId: capacityId,
-        unitType: unitLabel,
-      });
-
-      if (!response.success) {
-        unitEntry.scanError = response.message ?? 'Failed to scan serial number';
-        return;
-      }
-
-      const normalizedSerial = this.normalizeSerial(response.item?.serialNumber ?? serialNumber);
-      const existingSerialsLower = new Set(
-        unitEntry.serials.map((entry) => this.normalizeSerial(entry).toLowerCase()),
-      );
-
-      if (!existingSerialsLower.has(normalizedSerial.toLowerCase())) {
-        unitEntry.serials = [...unitEntry.serials, normalizedSerial];
-      }
+    const existingInCurrentUnit = unitEntry.serials.some(
+      (entry) => this.normalizeSerial(entry).toLowerCase() === normalizedIncoming,
+    );
+    if (existingInCurrentUnit) {
+      unitEntry.scanError = 'Serial number already scanned for this unit type';
       unitEntry.scanInput = '';
-      unitEntry.scanSuccess = response.message ?? 'Serial number scanned successfully';
-      unitEntry.scanError = '';
-      unitEntry.serialInput = unitEntry.serials.join('\n');
       this.focusSerialScanInput(productIndex, unitLabel);
-    } catch (error: unknown) {
-      if (axios.isAxiosError(error)) {
-        unitEntry.scanError =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Failed to scan serial number';
-      } else {
-        unitEntry.scanError = 'Failed to scan serial number';
-      }
-    } finally {
-      unitEntry.isScanning = false;
+      return;
     }
+
+    unitEntry.serials = [...unitEntry.serials, serialNumber];
+    unitEntry.serialInput = unitEntry.serials.join('\n');
+    unitEntry.scanInput = '';
+    unitEntry.scanSuccess = 'Serial number queued for saving';
+    unitEntry.scanError = '';
+    this.queueSerialScan({
+      productIndex,
+      unitLabel,
+      serialNumber,
+      purchaseId: this.editingPurchaseId,
+      productId,
+      capacityId,
+    });
+    this.focusSerialScanInput(productIndex, unitLabel);
   }
 
   onSerialScanInputChange(productIndex: number, unitLabel: string, value: string): void {
@@ -1191,6 +1240,214 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }, 3000);
   }
 
+  private queueSerialScan(scan: QueuedPurchaseSerialScan): void {
+    this.queuedSerialScans = [...this.queuedSerialScans, scan];
+
+    if (this.queuedSerialScans.length >= this.serialBatchSize) {
+      void this.flushQueuedSerialScans();
+      return;
+    }
+
+    this.scheduleQueuedSerialFlush();
+  }
+
+  private scheduleQueuedSerialFlush(): void {
+    this.clearQueuedSerialFlushTimer();
+    this.queuedSerialFlushTimer = setTimeout(() => {
+      this.queuedSerialFlushTimer = null;
+      void this.flushQueuedSerialScans();
+    }, this.serialBatchIdleMs);
+  }
+
+  private clearQueuedSerialFlushTimer(): void {
+    if (!this.queuedSerialFlushTimer) {
+      return;
+    }
+
+    clearTimeout(this.queuedSerialFlushTimer);
+    this.queuedSerialFlushTimer = null;
+  }
+
+  private startQueuedSerialAutoFlush(): void {
+    this.stopQueuedSerialAutoFlush();
+    this.queuedSerialIntervalTimer = setInterval(() => {
+      if (this.queuedSerialScans.length === 0) {
+        return;
+      }
+
+      void this.flushQueuedSerialScans();
+    }, this.serialBatchIntervalMs);
+  }
+
+  private stopQueuedSerialAutoFlush(): void {
+    if (!this.queuedSerialIntervalTimer) {
+      return;
+    }
+
+    clearInterval(this.queuedSerialIntervalTimer);
+    this.queuedSerialIntervalTimer = null;
+  }
+
+  private async flushAllQueuedSerialScans(): Promise<boolean> {
+    this.clearQueuedSerialFlushTimer();
+
+    while (this.queuedSerialScans.length > 0) {
+      const flushed = await this.flushQueuedSerialScans();
+      if (!flushed) {
+        return false;
+      }
+    }
+
+    return !this.isFlushingQueuedSerials;
+  }
+
+  private async flushQueuedSerialScans(): Promise<boolean> {
+    if (this.isFlushingQueuedSerials) {
+      return false;
+    }
+
+    if (this.queuedSerialScans.length === 0) {
+      return true;
+    }
+
+    this.clearQueuedSerialFlushTimer();
+
+    const batch = this.queuedSerialScans.splice(0, this.serialBatchSize);
+    this.isFlushingQueuedSerials = true;
+    this.activeSerialFlushCount = batch.length;
+    this.setBatchScanningState(batch, true);
+
+    try {
+      const response = await this.purchaseOrderService.scanPurchaseSerialBatch({
+        items: batch.map((entry) => ({
+          serialNumber: entry.serialNumber,
+          purchaseId: entry.purchaseId,
+          expectedProductId: entry.productId,
+          expectedCapacityId: entry.capacityId,
+          unitType: entry.unitLabel,
+        })),
+      });
+
+      const results = Array.isArray(response.items) ? response.items : [];
+      batch.forEach((entry, index) => {
+        const result = results[index];
+        const unitEntry = this.getUnitEntry(entry.productIndex, entry.unitLabel);
+        if (!unitEntry) {
+          return;
+        }
+
+        if (!result?.success) {
+          this.removeLocalSerial(unitEntry, entry.serialNumber);
+          unitEntry.scanError = result?.message ?? 'Failed to save serial number';
+          unitEntry.scanSuccess = '';
+          return;
+        }
+
+        const normalizedSavedSerial = this.normalizeSerial(
+          result.item?.serialNumber ?? entry.serialNumber,
+        );
+        this.replaceLocalSerial(unitEntry, entry.serialNumber, normalizedSavedSerial);
+        unitEntry.scanError = '';
+        unitEntry.scanSuccess =
+          response.summary && response.summary.successCount > 1
+            ? `${response.summary.successCount} serial numbers saved`
+            : result.message ?? 'Serial number saved successfully';
+      });
+
+      if (!response.success && (response.summary?.failureCount ?? 0) > 0) {
+        this.createError = response.message ?? 'Some serial numbers failed to save.';
+      }
+
+      return true;
+    } catch (error: unknown) {
+      this.queuedSerialScans = [...batch, ...this.queuedSerialScans];
+      this.createError = 'Failed to save scanned serial numbers. Retrying automatically.';
+      this.setBatchScanError(batch, 'Failed to save serial numbers. They remain queued.');
+
+      if (axios.isAxiosError(error)) {
+        this.createError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          this.createError;
+      }
+
+      return false;
+    } finally {
+      this.isFlushingQueuedSerials = false;
+      this.activeSerialFlushCount = 0;
+      this.setBatchScanningState(batch, false);
+
+      if (this.queuedSerialScans.length > 0) {
+        this.scheduleQueuedSerialFlush();
+      }
+    }
+  }
+
+  private setBatchScanningState(batch: QueuedPurchaseSerialScan[], isScanning: boolean): void {
+    const visited = new Set<string>();
+    for (const entry of batch) {
+      const key = `${entry.productIndex}::${entry.unitLabel}`;
+      if (visited.has(key)) {
+        continue;
+      }
+
+      visited.add(key);
+      const unitEntry = this.getUnitEntry(entry.productIndex, entry.unitLabel);
+      if (unitEntry) {
+        unitEntry.isScanning = isScanning;
+      }
+    }
+  }
+
+  private setBatchScanError(batch: QueuedPurchaseSerialScan[], message: string): void {
+    const visited = new Set<string>();
+    for (const entry of batch) {
+      const key = `${entry.productIndex}::${entry.unitLabel}`;
+      if (visited.has(key)) {
+        continue;
+      }
+
+      visited.add(key);
+      const unitEntry = this.getUnitEntry(entry.productIndex, entry.unitLabel);
+      if (unitEntry) {
+        unitEntry.scanError = message;
+        unitEntry.scanSuccess = '';
+      }
+    }
+  }
+
+  private getUnitEntry(productIndex: number, unitLabel: string): PurchaseUnitTypeFormItem | null {
+    const item = this.createForm.productItems[productIndex];
+    if (!item) {
+      return null;
+    }
+
+    return item.unitTypes.find((entry) => entry.label === unitLabel) ?? null;
+  }
+
+  private removeLocalSerial(unitEntry: PurchaseUnitTypeFormItem, serialNumber: string): void {
+    const normalizedTarget = this.normalizeSerial(serialNumber).toLowerCase();
+    unitEntry.serials = unitEntry.serials.filter(
+      (entry) => this.normalizeSerial(entry).toLowerCase() !== normalizedTarget,
+    );
+    unitEntry.serialInput = unitEntry.serials.join('\n');
+  }
+
+  private replaceLocalSerial(
+    unitEntry: PurchaseUnitTypeFormItem,
+    oldSerial: string,
+    nextSerial: string,
+  ): void {
+    const normalizedOldSerial = this.normalizeSerial(oldSerial).toLowerCase();
+    unitEntry.serials = unitEntry.serials.map((entry) =>
+      this.normalizeSerial(entry).toLowerCase() === normalizedOldSerial ? nextSerial : entry,
+    );
+    unitEntry.serialInput = unitEntry.serials.join('\n');
+  }
+
+  private hasPendingSerialScanWork(): boolean {
+    return this.queuedSerialScans.length > 0 || this.isFlushingQueuedSerials;
+  }
+
   private focusSerialScanInput(productIndex: number, unitLabel: string): void {
     setTimeout(() => {
       const inputId = `scanInput_${productIndex}_${unitLabel}`;
@@ -1220,6 +1477,26 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
     const unitEntry = item.unitTypes.find((entry) => entry.label === unitLabel);
     if (!unitEntry) {
+      return;
+    }
+
+    const normalizedTarget = this.normalizeSerial(serialNumber).toLowerCase();
+    const queuedSerialCountBefore = this.queuedSerialScans.length;
+    this.queuedSerialScans = this.queuedSerialScans.filter(
+      (entry) =>
+        !(
+          entry.productIndex === productIndex &&
+          entry.unitLabel === unitLabel &&
+          this.normalizeSerial(entry.serialNumber).toLowerCase() === normalizedTarget
+        ),
+    );
+
+    const removedFromQueue = this.queuedSerialScans.length !== queuedSerialCountBefore;
+
+    if (removedFromQueue) {
+      this.removeLocalSerial(unitEntry, serialNumber);
+      unitEntry.scanSuccess = 'Queued serial number removed';
+      unitEntry.scanError = '';
       return;
     }
 

@@ -72,6 +72,25 @@ interface ScanPurchaseSerialResponse {
   };
 }
 
+interface ScanPurchaseSerialBatchResponse {
+  success: boolean;
+  message?: string;
+  summary?: {
+    total: number;
+    successCount: number;
+    failureCount: number;
+  };
+  items?: Array<{
+    serialNumber: string;
+    success: boolean;
+    message?: string;
+    item?: {
+      serialNumber?: string | null;
+      unitType?: string | null;
+    };
+  }>;
+}
+
 export interface PurchaseListMeta {
   page: number;
   limit: number;
@@ -259,6 +278,23 @@ export class PurchaseOrderService {
   }): Promise<ScanPurchaseSerialResponse> {
     const response = await apiClient.post<ScanPurchaseSerialResponse>(
       '/serial-number/scan-purchase-order',
+      payload,
+    );
+
+    return response.data;
+  }
+
+  async scanPurchaseSerialBatch(payload: {
+    items: Array<{
+      serialNumber: string;
+      purchaseId: number;
+      expectedProductId?: number;
+      expectedCapacityId?: number;
+      unitType?: string;
+    }>;
+  }): Promise<ScanPurchaseSerialBatchResponse> {
+    const response = await apiClient.post<ScanPurchaseSerialBatchResponse>(
+      '/serial-number/scan-purchase-order/batch',
       payload,
     );
 

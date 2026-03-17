@@ -15,6 +15,7 @@ import { CreateSerialNumberDto } from './dto/create-serial-number.dto';
 import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { ScanSalesOrderDto } from './dto/scan-sales-order.dto';
 import { ScanPurchaseOrderDto } from './dto/scan-purchase-order.dto';
+import { ScanPurchaseOrderBatchDto } from './dto/scan-purchase-order-batch.dto';
 import { RemovePurchaseOrderSerialDto } from './dto/remove-purchase-order-serial.dto';
 import { RemoveSalesOrderSerialDto } from './dto/remove-sales-order-serial.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
@@ -65,6 +66,17 @@ export class SerialNumberController {
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
 
     return this.serialNumberService.scanPurchaseOrder(dto, normalizedUserId);
+  }
+
+  @Post('scan-purchase-order/batch')
+  scanPurchaseOrderBatch(
+    @Body() dto: ScanPurchaseOrderBatchDto,
+    @Req() request: { user?: { sub?: unknown } },
+  ) {
+    const userId = Number(request.user?.sub);
+    const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
+
+    return this.serialNumberService.scanPurchaseOrderBatch(dto, normalizedUserId);
   }
 
   @Post('remove-purchase-order')
