@@ -5,6 +5,7 @@ import { combineLatest, Subscription } from 'rxjs';
 import { SafeHtmlPipe } from '../../pipe/safe-html.pipe';
 import { MenuKey, RbacService } from '../../services/rbac.service';
 import { SidebarService } from '../../services/sidebar.service';
+import { BusinessSettingsService } from '../../services/business-settings.service';
 
 type NavItem = {
   name: string;
@@ -21,6 +22,11 @@ type NavItem = {
   templateUrl: './app-sidebar.component.html',
 })
 export class AppSidebarComponent {
+  private readonly defaultBusinessLogoLight = '/images/fwdslogo.png';
+  private readonly defaultBusinessLogoDark = '/images/fwdslogo-dark.png';
+  logoLightSrc = this.defaultBusinessLogoLight;
+  logoDarkSrc = this.defaultBusinessLogoDark;
+
   private readonly allNavItems: NavItem[] = [
     {
       name: 'Dashboard',
@@ -82,6 +88,12 @@ export class AppSidebarComponent {
       path: '/users/user-management',
       icon: `<svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C9.92893 2 8.25 3.67893 8.25 5.75C8.25 7.82107 9.92893 9.5 12 9.5C14.0711 9.5 15.75 7.82107 15.75 5.75C15.75 3.67893 14.0711 2 12 2ZM9.75 5.75C9.75 4.50736 10.7574 3.5 12 3.5C13.2426 3.5 14.25 4.50736 14.25 5.75C14.25 6.99264 13.2426 8 12 8C10.7574 8 9.75 6.99264 9.75 5.75ZM4 18.25C4 14.7982 6.79822 12 10.25 12H13.75C17.2018 12 20 14.7982 20 18.25V21.25C20 21.6642 19.6642 22 19.25 22C18.8358 22 18.5 21.6642 18.5 21.25V18.25C18.5 15.6266 16.3734 13.5 13.75 13.5H10.25C7.62665 13.5 5.5 15.6266 5.5 18.25V21.25C5.5 21.6642 5.16421 22 4.75 22C4.33579 22 4 21.6642 4 21.25V18.25Z" fill="currentColor"></path></svg>`,
     },
+    {
+      name: 'Settings',
+      menuKey: 'settings',
+      path: '/users/settings',
+      icon: `<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.2588 2.75C10.2588 2.33579 10.5946 2 11.0088 2H12.9912C13.4054 2 13.7412 2.33579 13.7412 2.75V4.04918C14.3052 4.19587 14.8474 4.42032 15.3518 4.71557L16.2713 3.79604C16.5642 3.50314 17.0391 3.50314 17.332 3.79604L18.7339 5.19796C19.0268 5.49085 19.0268 5.96572 18.7339 6.25862L17.8144 7.17815C18.1097 7.6826 18.3341 8.2248 18.4808 8.78879H19.78C20.1942 8.78879 20.53 9.12458 20.53 9.53879V11.5212C20.53 11.9354 20.1942 12.2712 19.78 12.2712H18.4808C18.3341 12.8352 18.1097 13.3774 17.8144 13.8818L18.7339 14.8014C19.0268 15.0943 19.0268 15.5691 18.7339 15.862L17.332 17.264C17.0391 17.5569 16.5642 17.5569 16.2713 17.264L15.3518 16.3444C14.8474 16.6397 14.3052 16.8641 13.7412 17.0108V18.31C13.7412 18.7242 13.4054 19.06 12.9912 19.06H11.0088C10.5946 19.06 10.2588 18.7242 10.2588 18.31V17.0108C9.69483 16.8641 9.15263 16.6397 8.64819 16.3444L7.72866 17.264C7.43577 17.5569 6.96089 17.5569 6.668 17.264L5.26608 15.862C4.97319 15.5691 4.97319 15.0943 5.26608 14.8014L6.18562 13.8818C5.89036 13.3774 5.66591 12.8352 5.51922 12.2712H4.22C3.80579 12.2712 3.47 11.9354 3.47 11.5212V9.53879C3.47 9.12458 3.80579 8.78879 4.22 8.78879H5.51922C5.66591 8.2248 5.89036 7.6826 6.18562 7.17815L5.26608 6.25862C4.97319 5.96572 4.97319 5.49085 5.26608 5.19796L6.668 3.79604C6.96089 3.50314 7.43577 3.50314 7.72866 3.79604L8.64819 4.71557C9.15263 4.42032 9.69483 4.19587 10.2588 4.04918V2.75ZM12 8.02998C10.6193 8.02998 9.5 9.14926 9.5 10.53C9.5 11.9107 10.6193 13.03 12 13.03C13.3807 13.03 14.5 11.9107 14.5 10.53C14.5 9.14926 13.3807 8.02998 12 8.02998Z" fill="currentColor"/></svg>`,
+    },
   ];
 
   navItems: NavItem[] = [];
@@ -102,6 +114,7 @@ export class AppSidebarComponent {
     private router: Router,
     private cdr: ChangeDetectorRef,
     private rbacService: RbacService,
+    private readonly businessSettingsService: BusinessSettingsService,
   ) {
     this.isExpanded$ = this.sidebarService.isExpanded$;
     this.isMobileOpen$ = this.sidebarService.isMobileOpen$;
@@ -109,6 +122,7 @@ export class AppSidebarComponent {
   }
 
   ngOnInit() {
+    void this.loadBusinessBranding();
     this.applyMenuAccess();
 
     this.subscription.add(
@@ -130,6 +144,17 @@ export class AppSidebarComponent {
     );
 
     this.setActiveMenuFromRoute(this.router.url);
+  }
+
+  private async loadBusinessBranding(): Promise<void> {
+    try {
+      const settings = await this.businessSettingsService.getBusinessProfile();
+      this.logoLightSrc = settings?.businessLogoLight || settings?.businessLogo || this.defaultBusinessLogoLight;
+      this.logoDarkSrc = settings?.businessLogoDark || settings?.businessLogo || this.defaultBusinessLogoDark;
+    } catch {
+      this.logoLightSrc = this.defaultBusinessLogoLight;
+      this.logoDarkSrc = this.defaultBusinessLogoDark;
+    }
   }
 
   ngOnDestroy() {

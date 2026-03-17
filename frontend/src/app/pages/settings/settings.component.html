@@ -1,0 +1,167 @@
+<div class="space-y-6">
+  <app-page-breadcrumb pageTitle="Settings"></app-page-breadcrumb>
+
+  <div *ngIf="uiError" class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+    {{ uiError }}
+  </div>
+
+  <div *ngIf="uiMessage" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+    {{ uiMessage }}
+  </div>
+
+  <div *ngIf="!canReadSettings" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+    You do not have permission to view settings.
+  </div>
+
+  <div
+    *ngIf="canReadSettings"
+    class="space-y-6 rounded-xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900"
+  >
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div>
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Business Name</label>
+        <input
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+          [(ngModel)]="form.businessName"
+          [disabled]="isLoading || isSaving"
+          placeholder="Enter business name"
+        />
+      </div>
+
+      <div>
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Business Owner</label>
+        <input
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+          [(ngModel)]="form.businessOwner"
+          [disabled]="isLoading || isSaving"
+          placeholder="Enter business owner"
+        />
+      </div>
+
+      <div>
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Business Contact</label>
+        <input
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+          [(ngModel)]="form.businessContact"
+          [disabled]="isLoading || isSaving"
+          placeholder="Enter business contact"
+        />
+      </div>
+
+      <div>
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Business Email</label>
+        <input
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+          [(ngModel)]="form.businessEmail"
+          [disabled]="isLoading || isSaving"
+          placeholder="Enter business email"
+        />
+      </div>
+
+      <div class="md:col-span-2">
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Business Address</label>
+        <textarea
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+          [(ngModel)]="form.businessAddress"
+          [disabled]="isLoading || isSaving"
+          rows="3"
+          placeholder="Enter business address"
+        ></textarea>
+      </div>
+    </div>
+
+    <div class="flex items-center justify-end">
+      <button
+        class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+        [disabled]="!canUpdateSettings || isSaving || isLoading"
+        (click)="saveBusinessProfile()"
+      >
+        {{ isSaving ? 'Saving...' : 'Save Business Info' }}
+      </button>
+    </div>
+
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+        <h4 class="mb-2 text-sm font-semibold text-gray-800 dark:text-gray-100">Light Mode Logo</h4>
+        <div class="mb-3 flex h-28 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50 dark:border-gray-700 dark:bg-gray-800">
+          <img
+            *ngIf="preview.businessLogoLight"
+            [src]="preview.businessLogoLight"
+            alt="Light logo"
+            class="max-h-24 max-w-full object-contain"
+          />
+          <span *ngIf="!preview.businessLogoLight" class="text-xs text-gray-500 dark:text-gray-400">No logo uploaded</span>
+        </div>
+        <input
+          type="file"
+          accept="image/*"
+          class="block w-full text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-brand-500 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-brand-600 dark:text-gray-300"
+          [disabled]="!canUpdateSettings || isUploadingLightLogo || isRemovingLightLogo"
+          (change)="onUploadLogo('light', $event)"
+        />
+        <button
+          type="button"
+          class="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+          [disabled]="!canUpdateSettings || isUploadingLightLogo || isRemovingLightLogo"
+          (click)="onRemoveLogo('light')"
+        >
+          {{ isRemovingLightLogo ? 'Removing...' : 'Remove Logo' }}
+        </button>
+        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ isUploadingLightLogo ? 'Uploading...' : 'PNG/JPG/SVG' }}</p>
+      </div>
+
+      <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+        <h4 class="mb-2 text-sm font-semibold text-gray-800 dark:text-gray-100">Dark Mode Logo</h4>
+        <div class="mb-3 flex h-28 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50 dark:border-gray-700 dark:bg-gray-800">
+          <img
+            *ngIf="preview.businessLogoDark"
+            [src]="preview.businessLogoDark"
+            alt="Dark logo"
+            class="max-h-24 max-w-full object-contain"
+          />
+          <span *ngIf="!preview.businessLogoDark" class="text-xs text-gray-500 dark:text-gray-400">No logo uploaded</span>
+        </div>
+        <input
+          type="file"
+          accept="image/*"
+          class="block w-full text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-brand-500 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-brand-600 dark:text-gray-300"
+          [disabled]="!canUpdateSettings || isUploadingDarkLogo || isRemovingDarkLogo"
+          (change)="onUploadLogo('dark', $event)"
+        />
+        <button
+          type="button"
+          class="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+          [disabled]="!canUpdateSettings || isUploadingDarkLogo || isRemovingDarkLogo"
+          (click)="onRemoveLogo('dark')"
+        >
+          {{ isRemovingDarkLogo ? 'Removing...' : 'Remove Logo' }}
+        </button>
+        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ isUploadingDarkLogo ? 'Uploading...' : 'PNG/JPG/SVG' }}</p>
+      </div>
+
+      <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+        <h4 class="mb-2 text-sm font-semibold text-gray-800 dark:text-gray-100">DR Template PDF</h4>
+        <div class="mb-3 flex h-28 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50 px-3 text-center dark:border-gray-700 dark:bg-gray-800">
+          <a
+            *ngIf="preview.drTemplatePdf"
+            [href]="preview.drTemplatePdf"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-xs font-semibold text-brand-600 hover:text-brand-700"
+          >
+            Preview current template
+          </a>
+          <span *ngIf="!preview.drTemplatePdf" class="text-xs text-gray-500 dark:text-gray-400">No template uploaded</span>
+        </div>
+        <input
+          type="file"
+          accept="application/pdf,.pdf"
+          class="block w-full text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-brand-500 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-brand-600 dark:text-gray-300"
+          [disabled]="!canUpdateSettings || isUploadingDrTemplate"
+          (change)="onUploadDrTemplate($event)"
+        />
+        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ isUploadingDrTemplate ? 'Uploading...' : 'PDF only' }}</p>
+      </div>
+    </div>
+  </div>
+</div>
