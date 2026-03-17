@@ -20,6 +20,10 @@ import {
 } from '../../shared/services/sales-order.service';
 import { MaterialTransactionItem } from '../../shared/services/sales-order-material.service';
 import { RbacService } from '../../shared/services/rbac.service';
+import {
+  BusinessProfileSettings,
+  BusinessSettingsService,
+} from '../../shared/services/business-settings.service';
 import axios from 'axios';
 import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
 
@@ -119,6 +123,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
   constructor(
     private readonly salesOrderService: SalesOrderService,
+    private readonly businessSettingsService: BusinessSettingsService,
     private readonly route: ActivatedRoute,
     private readonly sanitizer: DomSanitizer,
     private readonly rbacService: RbacService,
@@ -148,6 +153,9 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   drPreviewFilename = 'Delivery-Receipt.pdf';
   private drPreviewObjectUrl: string | null = null;
   private drTemplateBytes: Uint8Array | null = null;
+  private drTemplateSourceKey: string | null = null;
+  private readonly defaultDrTemplateSource = '/docs/DefaultHVAC-DR.pdf';
+  private businessProfileSettings: BusinessProfileSettings | null = null;
 
   isDrawerOpen = false;
   drawerMode: 'create' | 'edit' = 'create';
@@ -520,7 +528,8 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         await this.loadReferenceData();
       }
 
-      const pdfBytes = await this.buildDeliveryReceiptPdf(order, detail);
+      const businessProfile = await this.loadBusinessProfileSettings();
+      const pdfBytes = await this.buildDeliveryReceiptPdf(order, detail, businessProfile);
       const blobSafeBytes = new Uint8Array(pdfBytes.length);
       blobSafeBytes.set(pdfBytes);
       const blob = new Blob([blobSafeBytes], { type: 'application/pdf' });
@@ -589,8 +598,9 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   private async buildDeliveryReceiptPdf(
     row: SalesOrderRow,
     detail: SalesOrderDetailItem,
+    businessProfile: BusinessProfileSettings | null,
   ): Promise<Uint8Array> {
-    const templateBytes = await this.getDrTemplateBytes();
+    const templateBytes = await this.getDrTemplateBytes(businessProfile?.drTemplatePdf);
     const pdfDoc = await PDFDocument.load(Uint8Array.from(templateBytes));
     const page = pdfDoc.getPages()[0] ?? pdfDoc.addPage([595, 842]);
     const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -737,19 +747,38 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     return pdfDoc.save();
   }
 
-  private async getDrTemplateBytes(): Promise<Uint8Array> {
-    if (this.drTemplateBytes) {
+  private async getDrTemplateBytes(templateSource?: string | null): Promise<Uint8Array> {
+    const source = String(templateSource ?? '').trim() || this.defaultDrTemplateSource;
+    if (this.drTemplateBytes && this.drTemplateSourceKey === source) {
       return this.drTemplateBytes;
     }
 
-    const response = await fetch('docs/AirSummitDR.pdf');
+    let response = await fetch(source);
+    if (!response.ok && source !== this.defaultDrTemplateSource) {
+      response = await fetch(this.defaultDrTemplateSource);
+    }
+
     if (!response.ok) {
       throw new Error('Unable to load DR template PDF');
     }
 
     const bytes = new Uint8Array(await response.arrayBuffer());
     this.drTemplateBytes = bytes;
+    this.drTemplateSourceKey = source;
     return bytes;
+  }
+
+  private async loadBusinessProfileSettings(): Promise<BusinessProfileSettings | null> {
+    if (this.businessProfileSettings) {
+      return this.businessProfileSettings;
+    }
+
+    try {
+      this.businessProfileSettings = await this.businessSettingsService.getBusinessProfile();
+      return this.businessProfileSettings;
+    } catch {
+      return null;
+    }
   }
 
   private drawDrTemplateHeader(

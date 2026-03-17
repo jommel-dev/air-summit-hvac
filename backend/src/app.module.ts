@@ -17,6 +17,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { QuotationModule } from './sales/quotation/quotation.module';
 import { MaterialsModule } from './inventory/materials/materials.module';
 import { MaterialTransactionsModule } from './inventory/material-transactions/material-transactions.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -39,6 +40,7 @@ import { MaterialTransactionsModule } from './inventory/material-transactions/ma
     SalesOrderModule,
     DashboardModule,
     QuotationModule,
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

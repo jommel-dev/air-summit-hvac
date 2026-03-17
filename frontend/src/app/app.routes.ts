@@ -13,6 +13,7 @@ import { InventoryComponent } from './pages/inventory/inventory.component';
 import { QuotationComponent } from './pages/quotation/quotation.component';
 import { MaterialInventoryComponent } from './pages/material-inventory/material-inventory.component';
 import { SalesOrderMaterialsComponent } from './pages/sales-order-materials/sales-order-materials.component';
+import { SettingsComponent } from './pages/settings/settings.component';
 
 export const routes: Routes = [
   {
@@ -120,6 +121,16 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         title: 'Air Summit Aircon Services | User Management',
+      },
+      {
+        path: 'settings',
+        component: SettingsComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'settings',
+          permission: 'canRead',
+        },
+        title: 'Air Summit Aircon Services | Settings',
       },
     ]
   },

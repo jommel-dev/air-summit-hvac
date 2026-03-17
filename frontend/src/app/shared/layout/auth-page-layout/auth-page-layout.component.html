@@ -14,7 +14,15 @@
             <img
               width="500"
               height="48"
-              src="/images/air-summit-logo.png"
+              class="dark:hidden"
+              [src]="logoLightSrc"
+              alt="Logo"
+            />
+            <img
+              width="500"
+              height="48"
+              class="hidden dark:block"
+              [src]="logoDarkSrc"
               alt="Logo"
             />
           </a>
