@@ -4,6 +4,10 @@ import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { ScanSalesOrderDto } from './dto/scan-sales-order.dto';
 import { ScanPurchaseOrderDto } from './dto/scan-purchase-order.dto';
+import {
+  ScanPurchaseOrderBatchDto,
+  ScanPurchaseOrderBatchItemDto,
+} from './dto/scan-purchase-order-batch.dto';
 import { RemovePurchaseOrderSerialDto } from './dto/remove-purchase-order-serial.dto';
 import { RemoveSalesOrderSerialDto } from './dto/remove-sales-order-serial.dto';
 
@@ -1432,6 +1436,65 @@ export class SerialNumberService {
         status: 'scanned',
         unitType,
       },
+    };
+  }
+
+  async scanPurchaseOrderBatch(dto: ScanPurchaseOrderBatchDto, userId?: number) {
+    const items = Array.isArray(dto.items) ? dto.items : [];
+    if (items.length === 0) {
+      return {
+        success: false,
+        message: 'At least one serial scan item is required',
+        items: [],
+      };
+    }
+
+    const results: Array<{
+      serialNumber: string;
+      success: boolean;
+      message?: string;
+      item?: {
+        serialNumber?: string | null;
+        unitType?: string | null;
+      };
+    }> = [];
+
+    for (const entry of items) {
+      const payload: ScanPurchaseOrderBatchItemDto = {
+        serialNumber: entry.serialNumber,
+        purchaseId: entry.purchaseId,
+        expectedProductId: entry.expectedProductId,
+        expectedCapacityId: entry.expectedCapacityId,
+        unitType: entry.unitType,
+      };
+
+      const result = await this.scanPurchaseOrder(payload, userId);
+      results.push({
+        serialNumber: this.normalizeSerialNumber(entry.serialNumber),
+        success: Boolean(result.success),
+        message: result.message,
+        item: {
+          serialNumber: result.item?.serialNumber ?? null,
+          unitType: result.item?.unitType ?? entry.unitType ?? null,
+        },
+      });
+    }
+
+    const successCount = results.filter((entry) => entry.success).length;
+    const failureCount = results.length - successCount;
+
+    return {
+      success: failureCount === 0,
+      message:
+        failureCount === 0
+          ? `Successfully scanned ${successCount} serial number${successCount === 1 ? '' : 's'}`
+          : `Scanned ${successCount} serial number${successCount === 1 ? '' : 's'} with ${failureCount} failure${failureCount === 1 ? '' : 's'}`,
+      summary: {
+        total: results.length,
+        successCount,
+        failureCount,
+      },
+      items: results,
     };
   }
 

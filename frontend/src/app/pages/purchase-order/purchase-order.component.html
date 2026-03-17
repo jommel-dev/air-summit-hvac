@@ -31,7 +31,7 @@
   </div>
 
   @if (isFormDrawerOpen) {
-    <div class="fixed inset-0 z-[100000] bg-gray-900/40" (click)="closeCreateDrawer()"></div>
+    <div class="fixed inset-0 z-[100000] bg-gray-900/40"></div>
   }
 
   <aside class="fixed right-0 top-0 z-[100001] h-full w-full max-w-2xl transform border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
@@ -335,6 +335,11 @@
                           }
                           @if (!isMasterDataDrawerMode() && unitType.isScanning) {
                             <p class="text-xs text-gray-500 dark:text-gray-400">Scanning serial...</p>
+                          }
+                          @if (!isMasterDataDrawerMode() && pendingSerialScanCount > 0) {
+                            <p class="text-xs text-gray-500 dark:text-gray-400">
+                              {{ isFlushingQueuedSerials ? 'Saving scanned serials...' : (pendingSerialScanCount + ' scanned serial(s) queued for saving') }}
+                            </p>
                           }
 
                           @if (unitType.serials.length > 0) {
