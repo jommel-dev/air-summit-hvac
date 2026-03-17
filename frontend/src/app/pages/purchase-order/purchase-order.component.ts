@@ -655,8 +655,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.createError = '';
 
     try {
-      const excelJs = await import('exceljs');
-      const workbook = new excelJs.Workbook();
+      const workbook = await this.createExcelWorkbook();
       const worksheet = workbook.addWorksheet('Scanned Serials');
 
       worksheet.columns = [
@@ -676,7 +675,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         }),
         fileName,
       );
-    } catch {
+    } catch (error) {
+      console.error('PO serial Excel export failed:', error);
       this.createError = 'Failed to export serial numbers to Excel.';
     } finally {
       this.isExportingSerials = false;
@@ -864,13 +864,30 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     return `"${normalized}"`;
   }
 
+  private async createExcelWorkbook(): Promise<{ addWorksheet: (name?: string) => any; xlsx: { writeBuffer: () => Promise<ArrayBuffer> } }> {
+    const excelJsModule = await import('exceljs').catch(async () => import('exceljs/dist/exceljs.min.js'));
+
+    const workbookConstructor =
+      (excelJsModule as { Workbook?: new () => any }).Workbook ??
+      (excelJsModule as { default?: { Workbook?: new () => any } }).default?.Workbook;
+
+    if (!workbookConstructor) {
+      throw new Error('Excel workbook constructor is unavailable.');
+    }
+
+    return new workbookConstructor();
+  }
+
   private downloadBlob(blob: Blob, fileName: string): void {
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = objectUrl;
     anchor.download = fileName;
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
     anchor.click();
-    URL.revokeObjectURL(objectUrl);
+    document.body.removeChild(anchor);
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
   }
 
   addProductItem(): void {
