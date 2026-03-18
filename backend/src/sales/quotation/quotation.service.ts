@@ -296,6 +296,7 @@ export class QuotationService {
     const offset = (page - 1) * limit;
     const search = String(query.search ?? '').trim().toLowerCase();
     const status = String(query.status ?? '').trim().toLowerCase();
+    const branchId = Number(query.branchId);
 
     const params: unknown[] = [];
     const whereParts: string[] = [];
@@ -314,6 +315,14 @@ export class QuotationService {
       params.push(status);
       const idx = params.length;
       whereParts.push(`LOWER(COALESCE(q.status, '')) = $${idx}`);
+    }
+
+    if (Number.isFinite(branchId) && branchId > 0) {
+      params.push(String(branchId));
+      const idx = params.length;
+      whereParts.push(
+        `COALESCE(to_jsonb(q)->>'branchId', to_jsonb(q)->>'branch_id', '') = $${idx}`,
+      );
     }
 
     const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';

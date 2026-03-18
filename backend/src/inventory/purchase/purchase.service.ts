@@ -2563,6 +2563,7 @@ export class PurchaseService {
     const limit = this.normalizeLimit(query.limit);
     const offset = (page - 1) * limit;
     const search = (query.search ?? '').trim().toLowerCase();
+    const branchId = Number(query.branchId);
 
     const params: unknown[] = [];
     const whereParts: string[] = [];
@@ -2585,6 +2586,12 @@ export class PurchaseService {
         OR LOWER(COALESCE(base.vendor_name, '')) LIKE $${searchIndex}
         OR LOWER(COALESCE(base.computed_status, '')) LIKE $${searchIndex}
       )`);
+    }
+
+    if (Number.isFinite(branchId) && branchId > 0) {
+      params.push(String(branchId));
+      const branchIndex = params.length;
+      whereParts.push(`base.branch_id = $${branchIndex}`);
     }
 
     const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
@@ -2632,6 +2639,11 @@ export class PurchaseService {
         SELECT
           po.id,
           po.po_number,
+          COALESCE(
+            to_jsonb(po)->>'branchId',
+            to_jsonb(po)->>'branch_id',
+            ''
+          ) AS branch_id,
           po.vendor_id::text AS vendor_id,
           v.name AS vendor_name,
           po.total_amount,

@@ -10,6 +10,13 @@ type PermissionOverrideInput = {
   reason?: string | null;
 };
 
+type PermissionKeyInput = {
+  key?: string;
+  label?: string;
+  module?: string;
+  scope?: 'feature' | 'menu' | 'tab' | 'action';
+};
+
 @Injectable()
 export class UsersService {
   constructor(private readonly databaseService: DatabaseService) {}
@@ -42,6 +49,82 @@ export class UsersService {
           error instanceof Error
             ? error.message
             : 'Unable to load permission keys',
+      };
+    }
+  }
+
+  async createPermissionKey(input: PermissionKeyInput) {
+    const key = String(input.key ?? '').trim().toLowerCase();
+    const label = String(input.label ?? '').trim();
+    const module = String(input.module ?? '').trim().toLowerCase();
+    const scope = String(input.scope ?? '').trim().toLowerCase();
+    const allowedScopes = new Set(['feature', 'menu', 'tab', 'action']);
+
+    if (!key) {
+      return {
+        success: false,
+        message: 'Permission key is required',
+      };
+    }
+
+    if (!/^[a-z0-9]+[a-z0-9._-]*$/.test(key)) {
+      return {
+        success: false,
+        message: 'Permission key may only contain lowercase letters, numbers, dot, dash, and underscore',
+      };
+    }
+
+    if (!label) {
+      return {
+        success: false,
+        message: 'Permission label is required',
+      };
+    }
+
+    if (!module) {
+      return {
+        success: false,
+        message: 'Permission module is required',
+      };
+    }
+
+    if (!allowedScopes.has(scope)) {
+      return {
+        success: false,
+        message: 'Permission scope must be one of: feature, menu, tab, action',
+      };
+    }
+
+    try {
+      const existing = await this.databaseService.query<{ id: number }>(
+        `SELECT id
+         FROM auth_permission_keys
+         WHERE key = $1
+         LIMIT 1`,
+        [key],
+      );
+
+      if (existing.rowCount > 0) {
+        return {
+          success: false,
+          message: 'Permission key already exists',
+        };
+      }
+
+      await this.databaseService.query(
+        `INSERT INTO auth_permission_keys (key, label, module, scope)
+         VALUES ($1, $2, $3, $4)`,
+        [key, label, module, scope],
+      );
+
+      return this.findPermissionKeys();
+    } catch (error) {
+      return {
+        success: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Unable to create permission key',
       };
     }
   }
@@ -85,6 +168,88 @@ export class UsersService {
           error instanceof Error
             ? error.message
             : 'Unable to load role permissions',
+      };
+    }
+  }
+
+  async setRolePermissions(roleId: number, permissionKeys: string[]) {
+    if (!Number.isFinite(roleId) || roleId <= 0) {
+      return {
+        success: false,
+        message: 'Invalid role id',
+      };
+    }
+
+    const normalizedKeys = [...new Set(
+      (permissionKeys ?? [])
+        .map((item) => String(item ?? '').trim())
+        .filter((item) => item.length > 0),
+    )];
+
+    try {
+      const roleExists = await this.databaseService.query<{ id: number }>(
+        `SELECT id FROM tblrbac WHERE id = $1 LIMIT 1`,
+        [roleId],
+      );
+
+      if (roleExists.rowCount === 0) {
+        return {
+          success: false,
+          message: 'Role not found',
+        };
+      }
+
+      const keyRows = normalizedKeys.length
+        ? await this.databaseService.query<{ id: number; key: string }>(
+            `SELECT id, key
+             FROM auth_permission_keys
+             WHERE key = ANY($1::text[])`,
+            [normalizedKeys],
+          )
+        : { rows: [], rowCount: 0 };
+
+      const permissionIdByKey = new Map<string, number>(
+        keyRows.rows.map((row) => [row.key, row.id]),
+      );
+
+      const missingKeys = normalizedKeys.filter((key) => !permissionIdByKey.has(key));
+      if (missingKeys.length > 0) {
+        return {
+          success: false,
+          message: `Unknown permission keys: ${missingKeys.join(', ')}`,
+        };
+      }
+
+      await this.databaseService.withTransaction(async (client) => {
+        await client.query(
+          `DELETE FROM auth_role_permissions
+           WHERE role_id = $1`,
+          [roleId],
+        );
+
+        if (normalizedKeys.length === 0) {
+          return;
+        }
+
+        const permissionIds = normalizedKeys.map((key) => permissionIdByKey.get(key) ?? 0);
+        await client.query(
+          `INSERT INTO auth_role_permissions (role_id, permission_id)
+           SELECT
+             $1,
+             permission_id
+           FROM UNNEST($2::bigint[]) AS data(permission_id)`,
+          [roleId, permissionIds],
+        );
+      });
+
+      return this.findRolePermissions(roleId);
+    } catch (error) {
+      return {
+        success: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Unable to save role permissions',
       };
     }
   }

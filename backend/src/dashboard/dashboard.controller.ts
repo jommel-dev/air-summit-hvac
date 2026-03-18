@@ -9,12 +9,14 @@ export class DashboardController {
 
   @Get('overview')
   getOverview(@Req() request: { user?: Record<string, unknown> }) {
-    const branchId = Number(
+    const effectiveBranchId = Number(
       request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
     );
 
     return this.dashboardService.getOverview(
-      Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
+      Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
+        ? effectiveBranchId
+        : undefined,
     );
   }
 }

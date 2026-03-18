@@ -31,6 +31,7 @@ interface JwtPayload {
   username?: string;
   fullname?: string;
   email?: string;
+  branchId?: number | null;
   roleId?: number;
   roleName?: string;
   menus?: string;
@@ -370,5 +371,13 @@ export class RbacService {
 
   getEmail(): string {
     return this.getPayload()?.email ?? '-';
+  }
+
+  /** Returns the branchId from the JWT, or null if the user is not restricted to a branch. */
+  getBranchId(): number | null {
+    const raw = this.getPayload()?.branchId;
+    if (raw == null) return null;
+    const n = Number(raw);
+    return isNaN(n) || n === 0 ? null : n;
   }
 }

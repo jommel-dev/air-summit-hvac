@@ -20,6 +20,20 @@ import { QuotationService } from './quotation.service';
 export class QuotationController {
   constructor(private readonly quotationService: QuotationService) {}
 
+  private withEffectiveBranchScope(
+    query: ListQuotationQueryDto,
+    request: { user?: Record<string, unknown> },
+  ): ListQuotationQueryDto {
+    const branchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+
+    return {
+      ...query,
+      branchId: Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
+    };
+  }
+
   @Post()
   create(
     @Body() createQuotationDto: CreateQuotationDto,
@@ -38,8 +52,11 @@ export class QuotationController {
   }
 
   @Get()
-  findAll(@Query() query: ListQuotationQueryDto) {
-    return this.quotationService.findAll(query);
+  findAll(
+    @Query() query: ListQuotationQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.quotationService.findAll(this.withEffectiveBranchScope(query, request));
   }
 
   @Get(':id')

@@ -21,6 +21,20 @@ import { ListPurchaseQueryDto } from './dto/list-purchase-query.dto';
 export class PurchaseController {
   constructor(private readonly purchaseService: PurchaseService) {}
 
+  private withEffectiveBranchScope(
+    query: ListPurchaseQueryDto,
+    request: { user?: Record<string, unknown> },
+  ): ListPurchaseQueryDto {
+    const branchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+
+    return {
+      ...query,
+      branchId: Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
+    };
+  }
+
   @Post()
   async create(
     @Body() createPurchaseDto: CreatePurchaseDto,
@@ -41,23 +55,35 @@ export class PurchaseController {
   }
 
   @Get()
-  findAll(@Query() query: ListPurchaseQueryDto) {
-    return this.purchaseService.findAll(query);
+  findAll(
+    @Query() query: ListPurchaseQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.purchaseService.findAll(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('deliveries')
-  getDeliveries(@Query() query: ListPurchaseQueryDto) {
-    return this.purchaseService.getDeliveries(query);
+  getDeliveries(
+    @Query() query: ListPurchaseQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.purchaseService.getDeliveries(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('approvals')
-  getApprovals(@Query() query: ListPurchaseQueryDto) {
-    return this.purchaseService.getApprovals(query);
+  getApprovals(
+    @Query() query: ListPurchaseQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.purchaseService.getApprovals(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('master-data')
-  getMasterData(@Query() query: ListPurchaseQueryDto) {
-    return this.purchaseService.getMasterData(query);
+  getMasterData(
+    @Query() query: ListPurchaseQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.purchaseService.getMasterData(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('vendors/list')

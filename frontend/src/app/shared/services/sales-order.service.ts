@@ -262,6 +262,12 @@ export interface SalesOrderDetailServiceItem {
   total: number;
 }
 
+export interface BranchOption {
+  id: number;
+  branchName: string;
+  branchAddress?: string;
+}
+
 export interface SalesOrderDetailItem {
   id: number;
   soNumber: string | null;
@@ -344,6 +350,20 @@ interface ScanSalesSerialResponse {
 
 @Injectable({ providedIn: 'root' })
 export class SalesOrderService {
+  private mapBranchOption(item: BranchOption | Record<string, unknown> | null | undefined): BranchOption {
+    return {
+      id: Number((item as { id?: unknown } | null | undefined)?.id ?? 0),
+      branchName: String((item as { branchName?: unknown } | null | undefined)?.branchName ?? '').trim(),
+      branchAddress: String((item as { branchAddress?: unknown } | null | undefined)?.branchAddress ?? '').trim(),
+    };
+  }
+
+  private mapBranchOptions(items?: Array<BranchOption | Record<string, unknown>>): BranchOption[] {
+    return (items ?? [])
+      .map((item) => this.mapBranchOption(item))
+      .filter((item) => Number.isFinite(item.id) && item.id > 0);
+  }
+
   async createSalesOrder(payload: SalesOrderPayload): Promise<SalesOrderApiResponse> {
     const response = await apiClient.post<SalesOrderApiResponse>('/sales-order', payload);
     return response.data;
@@ -564,9 +584,46 @@ export class SalesOrderService {
     return response.data;
   }
 
-  async getBranches(): Promise<{ id: number; branchName: string }[]> {
-    const response = await apiClient.get<{ success: boolean; items?: { id: number; branchName: string }[] }>('/sales-order/branches');
-    return response.data.items ?? [];
+  async getBranches(): Promise<BranchOption[]> {
+    const response = await apiClient.get<{ success: boolean; items?: BranchOption[] }>('/sales-order/branches');
+    return this.mapBranchOptions(response.data.items);
+  }
+
+  async createBranch(
+    payload: { branchName: string; branchAddress?: string | null },
+  ): Promise<{ success: boolean; message?: string; items?: BranchOption[] }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; items?: BranchOption[] }>(
+      '/sales-order/branches',
+      payload,
+    );
+    return {
+      ...response.data,
+      items: this.mapBranchOptions(response.data.items),
+    };
+  }
+
+  async updateBranch(
+    branchId: number,
+    payload: { branchName: string; branchAddress?: string | null },
+  ): Promise<{ success: boolean; message?: string; items?: BranchOption[] }> {
+    const response = await apiClient.put<{ success: boolean; message?: string; items?: BranchOption[] }>(
+      `/sales-order/branches/${branchId}`,
+      payload,
+    );
+    return {
+      ...response.data,
+      items: this.mapBranchOptions(response.data.items),
+    };
+  }
+
+  async deleteBranch(branchId: number): Promise<{ success: boolean; message?: string; items?: BranchOption[] }> {
+    const response = await apiClient.delete<{ success: boolean; message?: string; items?: BranchOption[] }>(
+      `/sales-order/branches/${branchId}`,
+    );
+    return {
+      ...response.data,
+      items: this.mapBranchOptions(response.data.items),
+    };
   }
 
   async createStatementOfAccount(

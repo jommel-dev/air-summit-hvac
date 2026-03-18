@@ -32,18 +32,12 @@ export class SerialNumberController {
     const branchIdFromToken = Number(
       request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
     );
-    const branchIdFromQuery = Number(branchIdQuery);
-
-    const normalizedQueryBranchId =
-      Number.isFinite(branchIdFromQuery) && branchIdFromQuery > 0
-        ? branchIdFromQuery
-        : undefined;
     const normalizedTokenBranchId =
       Number.isFinite(branchIdFromToken) && branchIdFromToken > 0
         ? branchIdFromToken
         : undefined;
 
-    return normalizedQueryBranchId ?? normalizedTokenBranchId;
+    return normalizedTokenBranchId;
   }
 
   @Post('scan-sales-order')

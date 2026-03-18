@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   Body,
   Patch,
   Param,
@@ -29,6 +30,20 @@ export class SalesOrderController {
     private readonly materialTransactionsService: MaterialTransactionsService,
   ) {}
 
+  private withEffectiveBranchScope(
+    query: ListSalesOrderQueryDto,
+    request: { user?: Record<string, unknown> },
+  ): ListSalesOrderQueryDto {
+    const branchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+
+    return {
+      ...query,
+      branchId: Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
+    };
+  }
+
   @Post()
   create(
     @Body() createSalesOrderDto: CreateSalesOrderDto,
@@ -47,53 +62,83 @@ export class SalesOrderController {
   }
 
   @Get()
-  findAll(@Query() query: ListSalesOrderQueryDto) {
-    return this.salesOrderService.findAll(query);
+  findAll(
+    @Query() query: ListSalesOrderQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.findAll(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('deliveries')
-  getDeliveries(@Query() query: ListSalesOrderQueryDto) {
-    return this.salesOrderService.getDeliveries(query);
+  getDeliveries(
+    @Query() query: ListSalesOrderQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.getDeliveries(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('schedules')
-  getSchedules(@Query() query: ListSalesOrderQueryDto) {
-    return this.salesOrderService.getSchedules(query);
+  getSchedules(
+    @Query() query: ListSalesOrderQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.getSchedules(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('services')
-  getServices(@Query() query: ListSalesOrderQueryDto) {
-    return this.salesOrderService.getServices(query);
+  getServices(
+    @Query() query: ListSalesOrderQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.getServices(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('projects')
-  getProjects(@Query() query: ListSalesOrderQueryDto) {
-    return this.salesOrderService.getProjects(query);
+  getProjects(
+    @Query() query: ListSalesOrderQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.getProjects(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('distribution')
-  getDistribution(@Query() query: ListSalesOrderQueryDto) {
-    return this.salesOrderService.getDistribution(query);
+  getDistribution(
+    @Query() query: ListSalesOrderQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.getDistribution(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('sales-receivable')
-  getSalesReceivable(@Query() query: ListSalesOrderQueryDto) {
-    return this.salesOrderService.getSalesReceivable(query);
+  getSalesReceivable(
+    @Query() query: ListSalesOrderQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.getSalesReceivable(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('remitted-sales')
-  getRemittedSales(@Query() query: ListSalesOrderQueryDto) {
-    return this.salesOrderService.getRemittedSales(query);
+  getRemittedSales(
+    @Query() query: ListSalesOrderQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.getRemittedSales(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('approvals')
-  getApprovals(@Query() query: ListSalesOrderQueryDto) {
-    return this.salesOrderService.getApprovals(query);
+  getApprovals(
+    @Query() query: ListSalesOrderQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.getApprovals(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('master-data')
-  getMasterData(@Query() query: ListSalesOrderQueryDto) {
-    return this.salesOrderService.getMasterData(query);
+  getMasterData(
+    @Query() query: ListSalesOrderQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.getMasterData(this.withEffectiveBranchScope(query, request));
   }
 
   @Get('customers/list')
@@ -197,6 +242,24 @@ export class SalesOrderController {
   @Get('branches')
   getBranches() {
     return this.salesOrderService.getBranches();
+  }
+
+  @Post('branches')
+  createBranch(@Body() body: { branchName?: string; branchAddress?: string | null }) {
+    return this.salesOrderService.createBranch(body.branchName, body.branchAddress);
+  }
+
+  @Put('branches/:id')
+  updateBranch(
+    @Param('id') id: string,
+    @Body() body: { branchName?: string; branchAddress?: string | null },
+  ) {
+    return this.salesOrderService.updateBranch(+id, body.branchName, body.branchAddress);
+  }
+
+  @Delete('branches/:id')
+  deleteBranch(@Param('id') id: string) {
+    return this.salesOrderService.deleteBranch(+id);
   }
 
   @Post(':id/statement-of-account')

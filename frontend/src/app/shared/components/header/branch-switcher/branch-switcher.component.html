@@ -1,0 +1,115 @@
+<div class="relative">
+  <!--
+    Three states:
+    1. isLocked   — user has an assigned branch in JWT; cannot switch
+    2. canSwitch  — admin / superadmin / granted branch.switch permission; free to switch
+    3. read-only  — no assigned branch but no switch permission; shows badge only
+  -->
+  <button
+    (click)="toggleDropdown()"
+    [attr.title]="isLocked ? 'You are assigned to this branch' : canSwitch ? 'Switch branch' : 'Only admins can switch branches'"
+    [class.cursor-default]="!canSwitch"
+    [class.opacity-80]="!canSwitch"
+    class="dropdown-toggle flex items-center gap-1.5 h-11 px-3 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-full dark:bg-gray-900 dark:border-gray-800 dark:text-gray-400 transition-colors"
+    [class.hover:bg-gray-100]="canSwitch"
+    [class.hover:text-gray-800]="canSwitch"
+    [class.dark:hover:bg-gray-800]="canSwitch"
+    [class.dark:hover:text-white]="canSwitch"
+  >
+    <!-- Building / Branch icon -->
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" class="shrink-0">
+      <path fill-rule="evenodd" clip-rule="evenodd"
+        d="M3 21V5C3 3.9 3.9 3 5 3H19C20.1 3 21 3.9 21 5V21H3ZM5 5V19H19V5H5ZM7 7H9V9H7V7ZM11 7H13V9H11V7ZM15 7H17V9H15V7ZM7 11H9V13H7V11ZM11 11H13V13H11V11ZM15 11H17V13H15V11ZM7 15H9V17H7V15ZM11 15H13V17H11V15ZM15 15H17V17H15V15Z"
+        fill="currentColor" />
+    </svg>
+    <span class="hidden sm:block max-w-32 truncate text-xs">{{ activeBranchName }}</span>
+    <!-- State indicator -->
+    @if (isLocked) {
+      <!-- Hard-locked: assigned to a branch via user record -->
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+        class="shrink-0 text-gray-400 dark:text-gray-500">
+        <path fill-rule="evenodd" clip-rule="evenodd"
+          d="M12 2C9.79 2 8 3.79 8 6V8H6C4.9 8 4 8.9 4 10V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V10C20 8.9 19.1 8 18 8H16V6C16 3.79 14.21 2 12 2ZM12 4C13.1 4 14 4.9 14 6V8H10V6C10 4.9 10.9 4 12 4ZM12 17C10.9 17 10 16.1 10 15C10 13.9 10.9 13 12 13C13.1 13 14 13.9 14 15C14 16.1 13.1 17 12 17Z"
+          fill="currentColor" />
+      </svg>
+    } @else if (canSwitch) {
+      <!-- Admin / granted permission: show chevron -->
+      <svg
+        [class.rotate-180]="isOpen"
+        class="shrink-0 transition-transform duration-200"
+        width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M5 7.5L10 12.5L15 7.5" stroke="currentColor" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    } @else {
+      <!-- No switch permission (RBAC restricted) -->
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+        class="shrink-0 text-gray-400 dark:text-gray-500">
+        <path fill-rule="evenodd" clip-rule="evenodd"
+          d="M12 2C9.79 2 8 3.79 8 6V8H6C4.9 8 4 8.9 4 10V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V10C20 8.9 19.1 8 18 8H16V6C16 3.79 14.21 2 12 2ZM12 4C13.1 4 14 4.9 14 6V8H10V6C10 4.9 10.9 4 12 4ZM12 17C10.9 17 10 16.1 10 15C10 13.9 10.9 13 12 13C13.1 13 14 13.9 14 15C14 16.1 13.1 17 12 17Z"
+          fill="currentColor" />
+      </svg>
+    }
+  </button>
+
+  <!-- Dropdown panel -->
+  <app-dropdown
+    [isOpen]="isOpen"
+    (close)="closeDropdown()"
+    className="absolute right-0 mt-3 w-52 flex flex-col rounded-2xl border border-gray-200 bg-white shadow-theme-lg dark:border-gray-800 dark:bg-gray-dark overflow-hidden z-50">
+
+    <div class="px-3 pt-3 pb-1">
+      <p class="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wide">Switch Branch</p>
+    </div>
+
+    @if (isLoading) {
+      <div class="py-4 text-center text-sm text-gray-400">Loading…</div>
+    } @else if (branches.length === 0) {
+      <div class="py-4 text-center text-sm text-gray-400">No branches found</div>
+    } @else {
+      <ul class="py-1 max-h-64 overflow-y-auto">
+        @if (canSelectAllBranches) {
+          <li>
+            <button
+              type="button"
+              (click)="selectAllBranches()"
+              class="flex items-center justify-between w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/5 transition-colors"
+              [class.font-semibold]="activeBranchId === null"
+              [class.text-brand-600]="activeBranchId === null"
+            >
+              <span class="truncate">All Branches</span>
+              @if (activeBranchId === null) {
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                  class="shrink-0 ml-2 text-brand-500">
+                  <path d="M5 13L9 17L19 7" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              }
+            </button>
+          </li>
+          <li class="my-1 border-t border-gray-200 dark:border-gray-800"></li>
+        }
+        @for (branch of branches; track branch.id) {
+          <li>
+            <button
+              type="button"
+              (click)="selectBranch(branch)"
+              class="flex items-center justify-between w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-white/5 transition-colors"
+              [class.font-semibold]="activeBranchId === branch.id"
+              [class.text-brand-600]="activeBranchId === branch.id"
+            >
+              <span class="truncate">{{ branch.branchName }}</span>
+              @if (activeBranchId === branch.id) {
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                  class="shrink-0 ml-2 text-brand-500">
+                  <path d="M5 13L9 17L19 7" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              }
+            </button>
+          </li>
+        }
+      </ul>
+    }
+  </app-dropdown>
+</div>

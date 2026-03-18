@@ -12,6 +12,7 @@ import {
   UserPermissionOverrideApiItem,
   UserManagementService,
 } from '../../shared/services/user-management.service';
+import { BranchOption, SalesOrderService } from '../../shared/services/sales-order.service';
 import { NotificationService } from '../../shared/services/notification.service';
 import axios from 'axios';
 
@@ -54,6 +55,7 @@ type OverrideEffect = 'inherit' | 'allow' | 'deny';
 export class UserManagementComponent implements OnInit {
   users: UserRow[] = [];
   roleOptions: RoleOption[] = [];
+  branchOptions: BranchOption[] = [];
   permissionOptions: PermissionOption[] = [];
   userSearch = '';
   permissionSearch = '';
@@ -63,6 +65,7 @@ export class UserManagementComponent implements OnInit {
 
   isLoadingUsers = false;
   isLoadingRoles = false;
+  isLoadingBranches = false;
   isLoadingPermissionKeys = false;
   isLoadingRolePermissions = false;
   isLoadingPermissionContext = false;
@@ -82,12 +85,14 @@ export class UserManagementComponent implements OnInit {
 
   constructor(
     private readonly userManagementService: UserManagementService,
+    private readonly salesOrderService: SalesOrderService,
     private readonly notificationService: NotificationService,
   ) {}
 
   ngOnInit(): void {
     void this.loadUsers();
     void this.loadRoles();
+    void this.loadBranches();
     void this.loadPermissionKeys();
   }
 
@@ -240,6 +245,9 @@ export class UserManagementComponent implements OnInit {
         contact: String(detail.contact ?? '').trim(),
         birthdate: this.toDateInputValue(detail.birthdate),
         roleId: roleId > 0 ? roleId : '',
+        branchId: Number(detail.branchId ?? detail.branchid ?? detail.branch_id ?? 0) > 0
+          ? Number(detail.branchId ?? detail.branchid ?? detail.branch_id)
+          : '',
         status: this.normalizeStatus(detail.status),
       };
 
@@ -289,6 +297,7 @@ export class UserManagementComponent implements OnInit {
     const fullname = this.createForm.fullname.trim();
     const password = this.createForm.password;
     const roleId = Number(this.createForm.roleId);
+    const branchId = Number(this.createForm.branchId);
 
     if (!username || !fullname || (this.drawerMode === 'create' && !password)) {
       this.notificationService.warning(
@@ -312,6 +321,7 @@ export class UserManagementComponent implements OnInit {
         username,
         fullname,
         roleId,
+        branchId: Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
         status: this.createForm.status,
         email: this.createForm.email.trim() || undefined,
         address: this.createForm.address.trim() || undefined,
@@ -659,6 +669,22 @@ export class UserManagementComponent implements OnInit {
     }
   }
 
+  private async loadBranches(): Promise<void> {
+    this.isLoadingBranches = true;
+
+    try {
+      this.branchOptions = await this.salesOrderService.getBranches();
+    } catch (error: unknown) {
+      this.branchOptions = [];
+      this.notificationService.error(
+        'Branch Loading Failed',
+        this.extractApiError(error, 'Failed to load branches.'),
+      );
+    } finally {
+      this.isLoadingBranches = false;
+    }
+  }
+
   private async loadRolePermissions(roleId: number): Promise<void> {
     this.isLoadingRolePermissions = true;
 
@@ -754,6 +780,7 @@ export class UserManagementComponent implements OnInit {
     contact: string;
     birthdate: string;
     roleId: number | '';
+    branchId: number | '';
     status: number;
   } {
     return {
@@ -765,6 +792,7 @@ export class UserManagementComponent implements OnInit {
       contact: '',
       birthdate: '',
       roleId: '',
+      branchId: '',
       status: 1,
     };
   }

@@ -680,7 +680,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   async openEditDrawer(item: PurchaseOrderItem): Promise<void> {
-    if (!this.canCreateOrUpdatePurchase()) {
+    if (!this.canOpenPurchaseDrawer()) {
       this.createError = 'You do not have permission to update purchase orders.';
       return;
     }
@@ -801,6 +801,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   openSerialCsvImportPicker(): void {
+    if (!this.canImportPurchaseCsv()) {
+      this.createError = 'You do not have permission to import CSV serial numbers.';
+      return;
+    }
+
     const input = document.getElementById('purchaseSerialCsvInput') as HTMLInputElement | null;
     if (!input) {
       this.createError = 'CSV upload input is unavailable.';
@@ -811,6 +816,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   async onSerialCsvSelected(event: Event): Promise<void> {
+    if (!this.canImportPurchaseCsv()) {
+      this.createError = 'You do not have permission to import CSV serial numbers.';
+      return;
+    }
+
     const input = event.target as HTMLInputElement | null;
     const file = input?.files?.[0] ?? null;
 
@@ -830,6 +840,17 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   canCreateOrUpdatePurchase(): boolean {
     return this.rbacService.canAccess('purchase_order', 'canUpdate') ||
       this.rbacService.canAccess('purchase_order', 'canCreate');
+  }
+
+  canImportPurchaseCsv(): boolean {
+    return (
+      this.canCreateOrUpdatePurchase() ||
+      this.rbacService.hasEffectivePermissionKey('purchase-order.button.import-csv')
+    );
+  }
+
+  canOpenPurchaseDrawer(): boolean {
+    return this.canCreateOrUpdatePurchase() || this.canImportPurchaseCsv();
   }
 
   canApprovePurchaseOrder(): boolean {
@@ -999,6 +1020,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   private async importSerialsFromCsv(file: File): Promise<void> {
+    if (!this.canImportPurchaseCsv()) {
+      this.createError = 'You do not have permission to import CSV serial numbers.';
+      return;
+    }
+
     if (this.drawerMode !== 'edit' || !this.editingPurchaseId) {
       this.createError = 'CSV serial import is only available when editing a purchase order.';
       return;
