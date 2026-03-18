@@ -4,6 +4,7 @@ import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { ThemeToggleButtonComponent } from '../../components/common/theme-toggle/theme-toggle-button.component';
 import { UserDropdownComponent } from '../../components/header/user-dropdown/user-dropdown.component';
+import { BranchSwitcherComponent } from '../../components/header/branch-switcher/branch-switcher.component';
 
 @Component({
   selector: 'app-header',
@@ -12,6 +13,7 @@ import { UserDropdownComponent } from '../../components/header/user-dropdown/use
     RouterModule,
     ThemeToggleButtonComponent,
     UserDropdownComponent,
+    BranchSwitcherComponent,
   ],
   templateUrl: './app-header.component.html',
 })

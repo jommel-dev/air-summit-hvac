@@ -487,7 +487,7 @@
 
       <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
         <button type="button" (click)="closeCreateDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
-        @if (drawerMode === 'edit' && !isMasterDataDrawerMode()) {
+        @if (drawerMode === 'edit' && !isMasterDataDrawerMode() && canImportPurchaseCsv()) {
           <input
             id="purchaseSerialCsvInput"
             type="file"
@@ -654,7 +654,7 @@
                       </button>
                     }
 
-                    @if (canCreateOrUpdatePurchase()) {
+                    @if (canOpenPurchaseDrawer()) {
                       <button
                         type="button"
                         (click)="openEditDrawer(item)"

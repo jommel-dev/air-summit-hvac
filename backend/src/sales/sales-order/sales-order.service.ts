@@ -388,6 +388,7 @@ export class SalesOrderService {
     const limit = this.normalizeLimit(query.limit);
     const offset = (page - 1) * limit;
     const search = String(query.search ?? '').trim().toLowerCase();
+    const branchId = Number(query.branchId);
 
     const params: unknown[] = [];
     const whereParts: string[] = [];
@@ -458,6 +459,12 @@ export class SalesOrderService {
           )
         )
       )`);
+    }
+
+    if (Number.isFinite(branchId) && branchId > 0) {
+      params.push(String(branchId));
+      const branchIndex = params.length;
+      whereParts.push(`base.branch_id = $${branchIndex}`);
     }
 
     if (search) {
@@ -559,6 +566,11 @@ export class SalesOrderService {
             to_jsonb(so)->>'sales_type',
             ''
           ) AS sales_type,
+          COALESCE(
+            to_jsonb(so)->>'branchId',
+            to_jsonb(so)->>'branch_id',
+            ''
+          ) AS branch_id,
           COALESCE(
             to_jsonb(so)->>'projectName',
             to_jsonb(so)->>'project_name',
@@ -2198,8 +2210,14 @@ export class SalesOrderService {
       const result = await this.databaseService.query<{
         id: number;
         branchName: string | null;
+        branchAddress: string | null;
       }>(
-        `SELECT id, COALESCE("branchName", '') AS "branchName" FROM tblbranches ORDER BY COALESCE("branchName", '') ASC`,
+        `SELECT
+           id,
+           COALESCE("branchName", '') AS "branchName",
+           COALESCE("branchAddress", '') AS "branchAddress"
+         FROM tblbranches
+         ORDER BY COALESCE("branchName", '') ASC`,
       );
 
       return {
@@ -2207,6 +2225,7 @@ export class SalesOrderService {
         items: result.rows.map((row) => ({
           id: row.id,
           branchName: row.branchName ?? '',
+          branchAddress: row.branchAddress ?? '',
         })),
       };
     } catch (error) {
@@ -2214,6 +2233,200 @@ export class SalesOrderService {
         success: false,
         message: error instanceof Error ? error.message : 'Failed to load branches',
         items: [],
+      };
+    }
+  }
+
+  async createBranch(branchNameInput?: string, branchAddressInput?: string | null) {
+    const branchName = String(branchNameInput ?? '').trim();
+    const branchAddress = String(branchAddressInput ?? '').trim();
+    if (!branchName) {
+      return {
+        success: false,
+        message: 'Branch name is required',
+      };
+    }
+
+    try {
+      const existingResult = await this.databaseService.query<{ id: number }>(
+        `SELECT id
+         FROM tblbranches
+         WHERE lower(COALESCE("branchName", '')) = lower($1)
+         LIMIT 1`,
+        [branchName],
+      );
+
+      if (existingResult.rowCount > 0) {
+        return {
+          success: false,
+          message: 'Branch name already exists',
+        };
+      }
+
+      await this.databaseService.query(
+        `INSERT INTO tblbranches ("branchName", "branchAddress")
+         VALUES ($1, $2)`,
+        [branchName, branchAddress || null],
+      );
+
+      return this.getBranches();
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to create branch',
+      };
+    }
+  }
+
+  async updateBranch(
+    branchId: number,
+    branchNameInput?: string,
+    branchAddressInput?: string | null,
+  ) {
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return {
+        success: false,
+        message: 'Invalid branch id',
+      };
+    }
+
+    const branchName = String(branchNameInput ?? '').trim();
+    const branchAddress = String(branchAddressInput ?? '').trim();
+
+    if (!branchName) {
+      return {
+        success: false,
+        message: 'Branch name is required',
+      };
+    }
+
+    try {
+      const existingBranch = await this.databaseService.query<{ id: number }>(
+        `SELECT id
+         FROM tblbranches
+         WHERE id = $1
+         LIMIT 1`,
+        [branchId],
+      );
+
+      if (existingBranch.rowCount === 0) {
+        return {
+          success: false,
+          message: 'Branch not found',
+        };
+      }
+
+      const duplicateBranch = await this.databaseService.query<{ id: number }>(
+        `SELECT id
+         FROM tblbranches
+         WHERE lower(COALESCE("branchName", '')) = lower($1)
+           AND id <> $2
+         LIMIT 1`,
+        [branchName, branchId],
+      );
+
+      if (duplicateBranch.rowCount > 0) {
+        return {
+          success: false,
+          message: 'Branch name already exists',
+        };
+      }
+
+      await this.databaseService.query(
+        `UPDATE tblbranches
+         SET "branchName" = $1,
+             "branchAddress" = $2
+         WHERE id = $3`,
+        [branchName, branchAddress || null, branchId],
+      );
+
+      return this.getBranches();
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to update branch',
+      };
+    }
+  }
+
+  async deleteBranch(branchId: number) {
+    if (!Number.isFinite(branchId) || branchId <= 0) {
+      return {
+        success: false,
+        message: 'Invalid branch id',
+      };
+    }
+
+    try {
+      const existingBranch = await this.databaseService.query<{ id: number }>(
+        `SELECT id
+         FROM tblbranches
+         WHERE id = $1
+         LIMIT 1`,
+        [branchId],
+      );
+
+      if (existingBranch.rowCount === 0) {
+        return {
+          success: false,
+          message: 'Branch not found',
+        };
+      }
+
+      const referenceCounts = await this.databaseService.query<{
+        usersCount: string;
+        purchaseOrdersCount: string;
+        salesOrdersCount: string;
+        serialsCount: string;
+        transferDetailsCount: string;
+      }>(
+        `SELECT
+           (SELECT COUNT(*)::text FROM tblusers u WHERE COALESCE(to_jsonb(u)->>'branchId', to_jsonb(u)->>'branch_id', '') = $1) AS "usersCount",
+           (SELECT COUNT(*)::text FROM tblpurchase_orders po WHERE COALESCE(to_jsonb(po)->>'branchId', to_jsonb(po)->>'branch_id', '') = $1) AS "purchaseOrdersCount",
+           (SELECT COUNT(*)::text FROM tblsales_order so WHERE COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') = $1) AS "salesOrdersCount",
+           (SELECT COUNT(*)::text FROM tblserial_numbers sn WHERE COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', '') = $1) AS "serialsCount",
+           (
+             CASE
+               WHEN to_regclass('public.tbltransfer_details') IS NULL THEN '0'
+               ELSE (
+                 SELECT COUNT(*)::text
+                 FROM public.tbltransfer_details td
+                 WHERE td.from_branch_id = $2 OR td.to_branch_id = $2
+               )
+             END
+           ) AS "transferDetailsCount"`,
+        [String(branchId), branchId],
+      );
+
+      const counts = referenceCounts.rows[0];
+      const blockers = [
+        { label: 'users', count: Number(counts?.usersCount ?? 0) },
+        { label: 'purchase orders', count: Number(counts?.purchaseOrdersCount ?? 0) },
+        { label: 'sales orders', count: Number(counts?.salesOrdersCount ?? 0) },
+        { label: 'serial records', count: Number(counts?.serialsCount ?? 0) },
+        { label: 'transfer details', count: Number(counts?.transferDetailsCount ?? 0) },
+      ].filter((item) => Number.isFinite(item.count) && item.count > 0);
+
+      if (blockers.length > 0) {
+        return {
+          success: false,
+          message: `Cannot delete branch because it is used by: ${blockers
+            .map((item) => `${item.count} ${item.label}`)
+            .join(', ')}`,
+        };
+      }
+
+      await this.databaseService.query(
+        `DELETE FROM tblbranches
+         WHERE id = $1`,
+        [branchId],
+      );
+
+      return this.getBranches();
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to delete branch',
       };
     }
   }

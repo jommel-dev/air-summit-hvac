@@ -7,6 +7,7 @@ import {
   setSessionTokens,
 } from './auth-storage';
 import { RbacService } from './rbac.service';
+import { BranchService } from './branch.service';
 
 export interface LoginResponse {
   success: boolean;
@@ -25,7 +26,10 @@ export interface LoginResponse {
   providedIn: 'root',
 })
 export class AuthService {
-  constructor(private readonly rbacService: RbacService) {}
+  constructor(
+    private readonly rbacService: RbacService,
+    private readonly branchService: BranchService,
+  ) {}
 
   async login(username: string, password: string, persist = false): Promise<LoginResponse> {
     const response = await apiClient.post<LoginResponse>('/login', {
@@ -44,6 +48,7 @@ export class AuthService {
   logout(): void {
     this.rbacService.clearEffectivePermissionCache();
     clearAccessToken();
+    this.branchService.reset();
   }
 
   async refreshSession(): Promise<LoginResponse> {

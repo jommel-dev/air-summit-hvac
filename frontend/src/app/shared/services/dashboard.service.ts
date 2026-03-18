@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { apiClient } from './api-client';
+import { BranchService } from './branch.service';
 
 export type DashboardTrend = 'up' | 'down';
 
@@ -49,8 +50,13 @@ interface DashboardOverviewResponse {
 
 @Injectable({ providedIn: 'root' })
 export class DashboardService {
+  constructor(private readonly branchService: BranchService) {}
+
   async getOverview(): Promise<DashboardOverview> {
-    const response = await apiClient.get<DashboardOverviewResponse>('/dashboard/overview');
+    const branchId = this.branchService.getActiveBranchId();
+    const response = await apiClient.get<DashboardOverviewResponse>('/dashboard/overview', {
+      params: branchId ? { branchId } : undefined,
+    });
 
     if (!response.data.success || !response.data.item) {
       throw new Error(response.data.message ?? 'Unable to load dashboard overview');

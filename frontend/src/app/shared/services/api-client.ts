@@ -26,6 +26,7 @@ if (!configuredApiBaseUrl && isProductionBuild) {
 }
 
 const API_BASE_URL = configuredApiBaseUrl || (isLocalHost ? 'http://localhost:3000' : fallbackProductionApiBaseUrl);
+const ACTIVE_BRANCH_STORAGE_KEY = 'activeBranchId';
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -57,6 +58,20 @@ function extractUserIdFromJwt(token: string): number | null {
   } catch {
     return null;
   }
+}
+
+function getActiveBranchIdFromStorage(): number | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const raw = localStorage.getItem(ACTIVE_BRANCH_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  const branchId = Number(raw);
+  return Number.isFinite(branchId) && branchId > 0 ? branchId : null;
 }
 
 async function syncEffectivePermissionKeysWithToken(accessToken: string): Promise<void> {
@@ -128,14 +143,30 @@ async function refreshAccessToken(): Promise<string | null> {
 
 apiClient.interceptors.request.use((config) => {
   const token = getAccessToken();
+  const activeBranchId = getActiveBranchIdFromStorage();
 
-  if (token) {
-    config.headers ??= new AxiosHeaders();
+  config.headers ??= new AxiosHeaders();
 
-    if (config.headers instanceof AxiosHeaders) {
+  if (config.headers instanceof AxiosHeaders) {
+    if (token) {
       config.headers.set('Authorization', `Bearer ${token}`);
+    }
+
+    if (activeBranchId) {
+      config.headers.set('x-active-branch-id', String(activeBranchId));
     } else {
-      (config.headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
+      config.headers.delete('x-active-branch-id');
+    }
+  } else {
+    const headers = config.headers as Record<string, string>;
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    if (activeBranchId) {
+      headers['x-active-branch-id'] = String(activeBranchId);
+    } else {
+      delete headers['x-active-branch-id'];
     }
   }
 

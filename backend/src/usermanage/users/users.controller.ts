@@ -27,9 +27,25 @@ export class UsersController {
     return this.usersService.findPermissionKeys();
   }
 
+  @Post('permission-keys')
+  createPermissionKey(
+    @Body()
+    body: { key?: string; label?: string; module?: string; scope?: 'feature' | 'menu' | 'tab' | 'action' },
+  ) {
+    return this.usersService.createPermissionKey(body);
+  }
+
   @Get('roles/:roleId/permissions')
   findRolePermissions(@Param('roleId') roleId: string) {
     return this.usersService.findRolePermissions(+roleId);
+  }
+
+  @Put('roles/:roleId/permissions')
+  setRolePermissions(
+    @Param('roleId') roleId: string,
+    @Body() body: { permissionKeys?: string[] },
+  ) {
+    return this.usersService.setRolePermissions(+roleId, body.permissionKeys ?? []);
   }
 
   @Post()

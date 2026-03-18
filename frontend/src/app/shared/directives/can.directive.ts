@@ -6,6 +6,7 @@ type CanConfig =
   | {
       menu?: MenuKey;
       permission?: PermissionKey;
+      permissionKey?: string;
     };
 
 @Directive({
@@ -48,10 +49,25 @@ export class CanDirective implements OnChanges {
     }
 
     if (typeof this.config === 'string') {
-      return this.rbacService.hasPermission(this.config);
+      const normalized = String(this.config ?? '').trim();
+      if (
+        normalized === 'canCreate' ||
+        normalized === 'canRead' ||
+        normalized === 'canUpdate' ||
+        normalized === 'canDelete' ||
+        normalized === 'canDoAll'
+      ) {
+        return this.rbacService.hasPermission(normalized as PermissionKey);
+      }
+
+      return this.rbacService.hasEffectivePermissionKey(normalized);
     }
 
-    const { menu, permission } = this.config;
+    const { menu, permission, permissionKey } = this.config;
+
+    if (permissionKey) {
+      return this.rbacService.hasEffectivePermissionKey(permissionKey);
+    }
 
     if (menu && permission) {
       return this.rbacService.canAccess(menu, permission);

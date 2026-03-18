@@ -17,6 +17,9 @@ export interface UserApiItem {
   rolemenus?: string | null;
   rolePermission?: string | null;
   rolepermission?: string | null;
+  branchId?: number | null;
+  branchid?: number | null;
+  branch_id?: number | null;
   status?: number | string | null;
   isDeleted?: boolean | string | number | null;
   is_deleted?: boolean | string | number | null;
@@ -42,6 +45,13 @@ export interface PermissionKeyApiItem {
   label: string;
   module: string;
   scope: 'feature' | 'menu' | 'tab' | 'action' | string;
+}
+
+export interface CreatePermissionKeyPayload {
+  key: string;
+  label: string;
+  module: string;
+  scope: 'feature' | 'menu' | 'tab' | 'action';
 }
 
 export interface RolePermissionApiItem {
@@ -76,6 +86,7 @@ export interface CreateUserPayload {
   contact?: string;
   status?: number;
   roleId?: number;
+  branchId?: number;
 }
 
 interface ApiListResponse<TItem> {
@@ -117,8 +128,21 @@ export class UserManagementService {
     return response.data;
   }
 
+  async createPermissionKey(payload: CreatePermissionKeyPayload): Promise<ApiListResponse<PermissionKeyApiItem>> {
+    const response = await apiClient.post<ApiListResponse<PermissionKeyApiItem>>('/users/permission-keys', payload);
+    return response.data;
+  }
+
   async getRolePermissions(roleId: number): Promise<ApiListResponse<RolePermissionApiItem>> {
     const response = await apiClient.get<ApiListResponse<RolePermissionApiItem>>(`/users/roles/${roleId}/permissions`);
+    return response.data;
+  }
+
+  async saveRolePermissions(roleId: number, permissionKeys: string[]): Promise<ApiListResponse<RolePermissionApiItem>> {
+    const response = await apiClient.put<ApiListResponse<RolePermissionApiItem>>(
+      `/users/roles/${roleId}/permissions`,
+      { permissionKeys },
+    );
     return response.data;
   }
 

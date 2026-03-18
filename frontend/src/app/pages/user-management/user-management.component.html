@@ -320,7 +320,7 @@
 
         <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
           <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">RBAC Assignment</h4>
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
             <label>
               <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Role *</span>
               <select
@@ -332,6 +332,20 @@
                 <option [ngValue]="''">{{ isLoadingRoles ? 'Loading roles...' : 'Select role' }}</option>
                 @for (role of roleOptions; track role.id) {
                   <option [ngValue]="role.id">{{ role.name }}</option>
+                }
+              </select>
+            </label>
+
+            <label>
+              <span class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Branch</span>
+              <select
+                [(ngModel)]="createForm.branchId"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                [disabled]="isCreatingUser || isLoadingBranches"
+              >
+                <option [ngValue]="''">{{ isLoadingBranches ? 'Loading branches...' : 'Select branch (optional)' }}</option>
+                @for (branch of branchOptions; track branch.id) {
+                  <option [ngValue]="branch.id">{{ branch.branchName }}</option>
                 }
               </select>
             </label>
