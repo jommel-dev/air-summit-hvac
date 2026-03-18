@@ -222,6 +222,13 @@ export class QuotationService {
           total_amount: totalAmount,
           status,
           remarks: String(createQuotationDto.remarks ?? '').trim(),
+          terms_conditions: JSON.stringify({
+            warrantyException: String(createQuotationDto.termsConditions?.warrantyException ?? '').trim(),
+            validity: String(createQuotationDto.termsConditions?.validity ?? '').trim(),
+            note: String(createQuotationDto.termsConditions?.note ?? '').trim(),
+            penaltyFee: String(createQuotationDto.termsConditions?.penaltyFee ?? '').trim(),
+            warranty: String(createQuotationDto.termsConditions?.warranty ?? '').trim(),
+          }),
         };
 
         if (Number.isFinite(userId)) {
@@ -414,6 +421,7 @@ export class QuotationService {
       totalAmount: string | null;
       status: string | null;
       remarks: string | null;
+      termsConditions: unknown;
       convertedSalesId: string | null;
       createdAt: string | null;
     }>(
@@ -431,6 +439,7 @@ export class QuotationService {
          q.total_amount::text AS "totalAmount",
          q.status,
          q.remarks,
+         q.terms_conditions AS "termsConditions",
          q.converted_sales_id::text AS "convertedSalesId",
          q.created_at::text AS "createdAt"
        FROM tblquotation q
@@ -509,6 +518,12 @@ export class QuotationService {
         totalAmount: Number(quotation.totalAmount ?? 0),
         status: String(quotation.status ?? 'draft').trim() || 'draft',
         remarks: String(quotation.remarks ?? '').trim(),
+        termsConditions: (() => {
+          const raw = quotation.termsConditions;
+          if (!raw) return {};
+          if (typeof raw === 'object') return raw;
+          try { return JSON.parse(String(raw)); } catch { return {}; }
+        })(),
         convertedSalesId: this.toOptionalNumber(quotation.convertedSalesId),
         createdAt: quotation.createdAt,
         productItems: itemsResult.rows.map((item) => ({
@@ -572,6 +587,15 @@ export class QuotationService {
         }
         if (updateQuotationDto.remarks !== undefined) {
           patchRecord.remarks = String(updateQuotationDto.remarks ?? '').trim();
+        }
+        if (updateQuotationDto.termsConditions !== undefined) {
+          patchRecord.terms_conditions = JSON.stringify({
+            warrantyException: String(updateQuotationDto.termsConditions?.warrantyException ?? '').trim(),
+            validity: String(updateQuotationDto.termsConditions?.validity ?? '').trim(),
+            note: String(updateQuotationDto.termsConditions?.note ?? '').trim(),
+            penaltyFee: String(updateQuotationDto.termsConditions?.penaltyFee ?? '').trim(),
+            warranty: String(updateQuotationDto.termsConditions?.warranty ?? '').trim(),
+          });
         }
         if (updateQuotationDto.status !== undefined) {
           patchRecord.status = this.normalizeStatus(updateQuotationDto.status);

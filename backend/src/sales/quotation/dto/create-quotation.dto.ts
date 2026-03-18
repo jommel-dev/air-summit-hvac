@@ -7,6 +7,14 @@ export class CreateQuotationCustomerDto {
   tin_number?: string;
 }
 
+export class QuotationTermsConditionsDto {
+  warrantyException?: string;
+  validity?: string;
+  note?: string;
+  penaltyFee?: string;
+  warranty?: string;
+}
+
 export class CreateQuotationUnitTypeQtyDto {
   unitType?: string;
   qty?: number;
@@ -34,4 +42,5 @@ export class CreateQuotationDto {
   totalAmount?: number;
   remarks?: string;
   status?: string;
+  termsConditions?: QuotationTermsConditionsDto;
 }
