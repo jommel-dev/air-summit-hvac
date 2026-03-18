@@ -10,6 +10,7 @@ import {
   QuotationListItem,
   QuotationPayload,
   QuotationService,
+  QuotationTermsConditions,
 } from '../../shared/services/quotation.service';
 import { RbacService } from '../../shared/services/rbac.service';
 import axios from 'axios';
@@ -116,6 +117,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
     totalAmount: 0,
     remarks: '',
     status: 'draft',
+    termsConditions: this.createDefaultTermsConditions(),
   };
 
   private getDefaultQuoteDate(): string {
@@ -144,6 +146,29 @@ export class QuotationComponent implements OnInit, OnDestroy {
       excessQty: 0,
       freeQty: 10,
       unit: 'FT',
+    };
+  }
+
+  private createDefaultTermsConditions(): QuotationTermsConditions {
+    return {
+      warrantyException:
+        '(1) Actual cancellation of the service request / repair on the committed schedule due to unavailable working permit in the site or an incorrect service request\n' +
+        '(2) The unit diagnose as NO Detect Found(NDP) (e.g. power supply issue, loose cable, for general cleaning only)\n' +
+        '(3) The damage was caused by mishandling (e.g) improper installation/ physical or impact damage\n' +
+        '(4) The unit was serviced, altered and/ or tampered by non-accredited installers or service centers that led to malfunction or failure of the operation',
+      validity:
+        'Quotation only valid 14 days upon issued\n' +
+        'Free delivery within Pampanga, please contact us regarding your location, and we will be happy to assist you with queries',
+      note:
+        '(1) An authorized dealer shall have Accreditation Certificate from AIRSUMMIT AIRCON AND REFRIGERATIONS SERVICES to maintain equipments Full Warranty\n' +
+        '(2) Any damage units while at the custody of the client will not be shouldered by AIRSUMMIT AIRCON AND REFRIGERATIONS SERVICES\n' +
+        '(3) This quotation serves as the sales contract when duly signed by the customer.',
+      penaltyFee:
+        '20% cancellation fee of the total amount of the conforme contract will be applied.\n' +
+        'ADDITIONAL 4% PENALTY FOR LATE PAYMENT',
+      warranty:
+        'One(1) Year Warranty on Parts / One (1) Service except cleaning\n' +
+        'Five(5) Years Warranty Compressor under normal usage',
     };
   }
 
@@ -277,6 +302,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       totalAmount: 0,
       remarks: '',
       status: 'draft',
+      termsConditions: this.createDefaultTermsConditions(),
     };
 
     this.uiMessage = '';
@@ -395,6 +421,13 @@ export class QuotationComponent implements OnInit, OnDestroy {
       totalAmount: Number(detail.totalAmount ?? 0),
       remarks: detail.remarks || '',
       status: detail.status || 'draft',
+      termsConditions: {
+        warrantyException: String(detail.termsConditions?.warrantyException ?? '') || this.createDefaultTermsConditions().warrantyException!,
+        validity: String(detail.termsConditions?.validity ?? '') || this.createDefaultTermsConditions().validity!,
+        note: String(detail.termsConditions?.note ?? '') || this.createDefaultTermsConditions().note!,
+        penaltyFee: String(detail.termsConditions?.penaltyFee ?? '') || this.createDefaultTermsConditions().penaltyFee!,
+        warranty: String(detail.termsConditions?.warranty ?? '') || this.createDefaultTermsConditions().warranty!,
+      },
     };
 
     this.recalculateTotalAmount();
@@ -601,6 +634,13 @@ export class QuotationComponent implements OnInit, OnDestroy {
       totalAmount: this.form.totalAmount,
       remarks: this.form.remarks,
       status: this.form.status,
+      termsConditions: {
+        warrantyException: this.form.termsConditions.warrantyException,
+        validity: this.form.termsConditions.validity,
+        note: this.form.termsConditions.note,
+        penaltyFee: this.form.termsConditions.penaltyFee,
+        warranty: this.form.termsConditions.warranty,
+      },
       productItems: this.form.productItems.map((item) => ({
         productId: item.productId ? Number(item.productId) : undefined,
         capacityId: item.capacityId ? Number(item.capacityId) : undefined,
@@ -839,6 +879,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       totalAmount: detail.totalAmount,
       logoSrc,
       tableRowsHtml,
+      termsConditions: detail.termsConditions,
     });
 
     this.quotationPreviewPdfData = {
@@ -981,6 +1022,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       totalAmount: this.form.totalAmount,
       logoSrc,
       tableRowsHtml,
+      termsConditions: this.form.termsConditions,
     });
 
     this.quotationPreviewPdfData = {
@@ -1028,7 +1070,19 @@ export class QuotationComponent implements OnInit, OnDestroy {
     totalAmount: number;
     logoSrc: string | null;
     tableRowsHtml: string;
+    termsConditions?: QuotationTermsConditions;
   }): string {
+    const tc = payload.termsConditions ?? {};
+    const defaults = this.createDefaultTermsConditions();
+    const warranty = String(tc.warranty || defaults.warranty || '');
+    const validity = String(tc.validity || defaults.validity || '');
+    const note = String(tc.note || defaults.note || '');
+    const penaltyFee = String(tc.penaltyFee || defaults.penaltyFee || '');
+    const warrantyException = String(tc.warrantyException || defaults.warrantyException || '');
+
+    const toHtmlLines = (text: string) =>
+      text.split('\n').map((line) => this.escapeHtml(line)).join('<br/>');
+
     return `
       <html>
         <head>
@@ -1113,9 +1167,9 @@ export class QuotationComponent implements OnInit, OnDestroy {
           <div class="mid">
             <div class="payment">
               <div class="block-title">PAYMENT DETAILS</div>
-              <div class="payment-row"><span class="label">Payment Terms</span><span>Cash on Delivery</span></div>
-              <div class="payment-row"><span class="label">Payment Instruction</span><span>For payment check please make the check payable to AIRSUMMIT AIRCON AND REFRIGERATION SERVICES</span></div>
-              <div class="payment-row"><span class="label">Bank Account</span><span>BDO Bank Account No. 0119-6006-1435</span></div>
+              <div class="payment-row"><span class="label">Payment Terms</span><span>50% Downpayment Upon Approval<br/>50% Upon Completion of Work</span></div>
+              <div class="payment-row"><span class="label">Payment Instruction</span><span>For payment check please make the check payable to ROGER VAN V. SARAZA</span></div>
+              <div class="payment-row"><span class="label">Bank Account</span><span>BDO Bank Account No. <strong>0119-6006-1435</strong><br/>Account Name: <strong>ROGER VAN V. SARAZA</strong></span></div>
             </div>
 
             <div class="totals">
@@ -1127,11 +1181,12 @@ export class QuotationComponent implements OnInit, OnDestroy {
           </div>
 
           <div class="terms">
-            <div class="block-title">TERMS & CONDITIONS</div>
-            <div class="terms-line"><span class="label">Warranty</span><span>One (1) Year Warranty on Parts / One (1) Service except cleaning</span></div>
-            <div class="terms-line"><span class="label">Validity</span><span>Quotation only valid 14 days upon issued</span></div>
-            <div class="terms-line"><span class="label">Note</span><span>This quotation serves as the sales contract when duly signed by the customer.</span></div>
-            <div class="terms-line"><span class="label">Penalty Fee</span><span>20% cancellation fee of total amount of the conformance contract will be applied.</span></div>
+            <div class="block-title">TERMS &amp; CONDITIONS</div>
+            <div class="terms-line"><span class="label">Warranty</span><span>${toHtmlLines(warranty)}</span></div>
+            <div class="terms-line"><span class="label">Warranty Exception</span><span>${toHtmlLines(warrantyException)}</span></div>
+            <div class="terms-line"><span class="label">Validity</span><span>${toHtmlLines(validity)}</span></div>
+            <div class="terms-line"><span class="label">Note</span><span>${toHtmlLines(note)}</span></div>
+            <div class="terms-line"><span class="label" style="color:#c00;font-weight:700;">Penalty Fee</span><span style="color:#c00;">${toHtmlLines(penaltyFee)}</span></div>
           </div>
 
           <div class="signatures">

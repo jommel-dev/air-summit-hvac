@@ -2,6 +2,14 @@ import { Injectable } from '@angular/core';
 import { apiClient } from './api-client';
 import { ProductOption, SalesCustomerOption } from './sales-order.service';
 
+export interface QuotationTermsConditions {
+  warrantyException?: string;
+  validity?: string;
+  note?: string;
+  penaltyFee?: string;
+  warranty?: string;
+}
+
 export interface QuotationProductItemPayload {
   productId?: number | string;
   capacityId?: number | string;
@@ -29,6 +37,7 @@ export interface QuotationPayload {
   totalAmount?: number;
   remarks?: string;
   status?: string;
+  termsConditions?: QuotationTermsConditions;
 }
 
 export interface QuotationListItem {
@@ -50,6 +59,7 @@ export interface QuotationDetailItem extends QuotationListItem {
   customerContactNumber: string;
   customerEmail: string;
   customerTinNumber: string;
+  termsConditions?: QuotationTermsConditions;
   productItems: Array<{
     id: number;
     productId: string | null;

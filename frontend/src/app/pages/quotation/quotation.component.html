@@ -474,6 +474,87 @@
             Total Amount: {{ formatAmount(form.totalAmount) }}
           </div>
         </section>
+
+        <!-- Terms & Conditions (editable) -->
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Terms &amp; Conditions</h4>
+          <div class="space-y-4">
+
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Warranty</label>
+              <textarea
+                [(ngModel)]="form.termsConditions.warranty"
+                name="tcWarranty"
+                rows="2"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+              ></textarea>
+            </div>
+
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Warranty Exception</label>
+              <textarea
+                [(ngModel)]="form.termsConditions.warrantyException"
+                name="tcWarrantyException"
+                rows="5"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+              ></textarea>
+            </div>
+
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Validity</label>
+              <textarea
+                [(ngModel)]="form.termsConditions.validity"
+                name="tcValidity"
+                rows="2"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+              ></textarea>
+            </div>
+
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Note</label>
+              <textarea
+                [(ngModel)]="form.termsConditions.note"
+                name="tcNote"
+                rows="3"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+              ></textarea>
+            </div>
+
+            <div>
+              <label class="mb-1 block text-xs font-medium text-error-600 dark:text-error-400">Penalty Fee</label>
+              <textarea
+                [(ngModel)]="form.termsConditions.penaltyFee"
+                name="tcPenaltyFee"
+                rows="2"
+                class="w-full rounded-lg border border-error-300 bg-white px-3 py-2 text-sm text-error-700 dark:border-error-700 dark:bg-gray-900 dark:text-error-400"
+              ></textarea>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- Payment Details (read-only / static) -->
+        <section class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-800 dark:bg-gray-800/40">
+          <div class="mb-3 flex items-center gap-2">
+            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Payment Details</h4>
+            <span class="rounded-full border border-gray-300 px-2 py-0.5 text-[10px] font-medium text-gray-500 dark:border-gray-600 dark:text-gray-400">read-only</span>
+          </div>
+          <div class="space-y-2 text-sm text-gray-700 dark:text-gray-300">
+            <div class="flex gap-3">
+              <span class="w-36 shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400">Payment Terms</span>
+              <span>50% Downpayment Upon Approval<br/>50% Upon Completion of Work</span>
+            </div>
+            <div class="flex gap-3">
+              <span class="w-36 shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400">Payment Instruction</span>
+              <span>For payment check please make the check payable to ROGER VAN V. SARAZA</span>
+            </div>
+            <div class="flex gap-3">
+              <span class="w-36 shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400">Bank Account</span>
+              <span>BDO Bank Account No. <strong>0119-6006-1435</strong><br/>Account Name: <strong>ROGER VAN V. SARAZA</strong></span>
+            </div>
+          </div>
+        </section>
+
       </div>
 
       <div class="flex items-center justify-end gap-2 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
