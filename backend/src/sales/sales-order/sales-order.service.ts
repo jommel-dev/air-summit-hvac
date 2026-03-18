@@ -464,7 +464,8 @@ export class SalesOrderService {
     if (Number.isFinite(branchId) && branchId > 0) {
       params.push(String(branchId));
       const branchIndex = params.length;
-      whereParts.push(`base.branch_id = $${branchIndex}`);
+      // Include NULL branch_id (legacy records without branch assignment)
+      whereParts.push(`(base.branch_id = $${branchIndex} OR base.branch_id IS NULL)`);
     }
 
     if (search) {
