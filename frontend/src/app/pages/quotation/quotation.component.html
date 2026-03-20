@@ -71,6 +71,7 @@
             <tr class="border-b border-gray-200 dark:border-gray-800">
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Quote No</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Date</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Expires</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Customer</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
@@ -83,6 +84,7 @@
               <tr class="border-b border-gray-100 dark:border-gray-800/70">
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.quoteNo }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDateOnly(item.quoteDate) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDateOnly(item.expiresAt || item.expiredAt) }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.customerName || '-' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatAmount(item.totalAmount) }}</td>
                 <td class="px-4 py-3">
@@ -90,7 +92,8 @@
                     'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-500': item.status.toLowerCase() === 'draft',
                     'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400': item.status.toLowerCase() === 'finalized',
                     'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-500': item.status.toLowerCase() === 'converted',
-                    'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': !['draft','finalized','converted'].includes(item.status.toLowerCase())
+                    'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400': item.status.toLowerCase() === 'expired' || item.isDeleted,
+                    'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': !['draft','finalized','converted','expired'].includes(item.status.toLowerCase())
                   }">
                     {{ item.status }}
                   </span>
@@ -98,7 +101,7 @@
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.convertedSalesId || '-' }}</td>
                 <td class="px-4 py-3 text-right">
                   <div class="inline-flex items-center gap-2">
-                    @if (canEditQuotation()) {
+                    @if (canEditQuotation() && !isExpired(item)) {
                       <button
                         type="button"
                         (click)="openEditDrawer(item)"
@@ -114,7 +117,7 @@
                     >
                       Preview Print
                     </button>
-                    @if (canFinalizeQuotation() && !isFinalized(item) && !isConverted(item)) {
+                    @if (canFinalizeQuotation() && !isFinalized(item) && !isConverted(item) && !isExpired(item)) {
                       <button
                         type="button"
                         (click)="finalizeQuotation(item)"
@@ -124,7 +127,7 @@
                         {{ finalizingIds.has(item.id) ? 'Finalizing...' : 'Finalize' }}
                       </button>
                     }
-                    @if (canConvertQuotation() && isFinalized(item) && !isConverted(item)) {
+                    @if (canConvertQuotation() && isFinalized(item) && !isConverted(item) && !isExpired(item)) {
                       <button
                         type="button"
                         (click)="convertToSalesOrder(item)"
@@ -134,12 +137,22 @@
                         {{ convertingIds.has(item.id) ? 'Converting...' : 'Convert to SO' }}
                       </button>
                     }
+                    @if (activeTab === 'expired' && canPermanentlyDeleteExpiredQuotation()) {
+                      <button
+                        type="button"
+                        (click)="permanentlyDeleteExpiredQuotation(item)"
+                        [disabled]="deletingIds.has(item.id)"
+                        class="rounded-lg border border-error-300 px-3 py-1.5 text-xs font-medium text-error-700 transition hover:bg-error-50 disabled:opacity-60 dark:border-error-700 dark:text-error-400 dark:hover:bg-error-500/10"
+                      >
+                        {{ deletingIds.has(item.id) ? 'Deleting...' : 'Delete Permanently' }}
+                      </button>
+                    }
                   </div>
                 </td>
               </tr>
             } @empty {
               <tr>
-                <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                <td colspan="8" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
                   No quotations found.
                 </td>
               </tr>
@@ -202,6 +215,11 @@
             <div>
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Quotation Date</label>
               <input type="date" [(ngModel)]="form.quoteDate" name="quoteDate" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Validity (Days)</label>
+              <input type="number" min="1" [(ngModel)]="form.validityDays" (ngModelChange)="onValidityDaysChanged($event)" name="validityDays" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              <p class="mt-1 text-[11px] text-gray-500 dark:text-gray-400">Expires on {{ getFormExpiryDate() }}</p>
             </div>
             <div class="md:col-span-2">
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Remarks</label>
@@ -389,13 +407,13 @@
 
                 <div class="mt-4 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
                   <div class="mb-2 flex items-center justify-between">
-                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300">Installation Details</p>
+                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300">Material Miscellaneous</p>
                     <button
                       type="button"
                       (click)="addInstallationDetail(itemIndex)"
                       class="rounded-md border border-brand-300 px-2 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-500/10"
                     >
-                      Add Installation Detail
+                      Add Miscellaneous
                     </button>
                   </div>
 

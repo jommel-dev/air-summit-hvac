@@ -86,6 +86,166 @@ export class SalesOrderService {
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  private normalizeText(value: unknown): string {
+    return String(value ?? '').trim();
+  }
+
+  private async updateCustomerTypeIfNeeded(
+    executor: { query: PoolClient['query'] },
+    customerId: string,
+    customerTypeColumn: string | undefined,
+    customerType: string,
+  ): Promise<void> {
+    if (!customerId || !customerTypeColumn || !customerType) {
+      return;
+    }
+
+    await executor.query(
+      `UPDATE tblcustomer SET "${customerTypeColumn}" = $1 WHERE id::text = $2`,
+      [customerType, customerId],
+    );
+  }
+
+  private async upsertCustomerFromPayload(
+    executor: { query: PoolClient['query'] },
+    payload: Pick<CreateSalesOrderDto, 'customer_id' | 'customer'>,
+  ): Promise<string> {
+    let customerId = this.normalizeText(payload.customer_id);
+
+    const customerColumns = await this.getTableColumns(executor, 'tblcustomer');
+    const customerIdColumn = this.pickColumn(customerColumns, ['id']);
+    const customerNameColumn = this.pickColumn(customerColumns, ['name', 'customer_name']);
+    const customerTypeColumn = this.pickColumn(customerColumns, ['customer_type', 'customerType']);
+    const customerAddressColumn = this.pickColumn(customerColumns, ['address']);
+    const customerContactPersonColumn = this.pickColumn(customerColumns, ['contact_person', 'contactPerson']);
+    const customerContactNumberColumn = this.pickColumn(customerColumns, ['contact_number', 'contactNumber']);
+    const customerEmailColumn = this.pickColumn(customerColumns, ['email']);
+    const customerTinColumn = this.pickColumn(customerColumns, ['tin_number', 'tinNumber']);
+    const requestedCustomerType = this.normalizeText(payload.customer?.customer_type);
+
+    if (customerId) {
+      const existingCustomer = await executor.query<{ id: string }>(
+        `SELECT id FROM tblcustomer WHERE id::text = $1 LIMIT 1`,
+        [customerId],
+      );
+
+      if (existingCustomer.rowCount > 0) {
+        await this.updateCustomerTypeIfNeeded(
+          executor,
+          customerId,
+          customerTypeColumn,
+          requestedCustomerType,
+        );
+        return customerId;
+      }
+
+      customerId = '';
+    }
+
+    const customerName = this.normalizeText(payload.customer?.name);
+    if (!customerName) {
+      throw new Error('customer_id or customer.name is required');
+    }
+    if (!customerNameColumn) {
+      throw new Error('tblcustomer name column is missing');
+    }
+
+    const customerAddress = this.normalizeText(payload.customer?.address);
+    const customerContactPerson = this.normalizeText(payload.customer?.contact_person);
+    const customerContactNumber = this.normalizeText(payload.customer?.contact_number);
+    const customerEmail = this.normalizeText(payload.customer?.email);
+    const customerTin = this.normalizeText(payload.customer?.tin_number);
+
+    const duplicateParams: string[] = [customerName];
+    const duplicateWhere = [
+      `LOWER(TRIM(COALESCE("${customerNameColumn}"::text, ''))) = LOWER(TRIM($1))`,
+    ];
+
+    if (customerAddressColumn && customerAddress) {
+      duplicateParams.push(customerAddress);
+      duplicateWhere.push(
+        `LOWER(TRIM(COALESCE("${customerAddressColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+      );
+    }
+    if (customerContactPersonColumn && customerContactPerson) {
+      duplicateParams.push(customerContactPerson);
+      duplicateWhere.push(
+        `LOWER(TRIM(COALESCE("${customerContactPersonColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+      );
+    }
+    if (customerContactNumberColumn && customerContactNumber) {
+      duplicateParams.push(customerContactNumber);
+      duplicateWhere.push(
+        `LOWER(TRIM(COALESCE("${customerContactNumberColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+      );
+    }
+    if (customerEmailColumn && customerEmail) {
+      duplicateParams.push(customerEmail);
+      duplicateWhere.push(
+        `LOWER(TRIM(COALESCE("${customerEmailColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+      );
+    }
+    if (customerTinColumn && customerTin) {
+      duplicateParams.push(customerTin);
+      duplicateWhere.push(
+        `LOWER(TRIM(COALESCE("${customerTinColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+      );
+    }
+
+    const duplicateCustomer = await executor.query<{ id: string }>(
+      `SELECT id::text AS id
+       FROM tblcustomer
+       WHERE ${duplicateWhere.join(' AND ')}
+       ORDER BY id ASC
+       LIMIT 1`,
+      duplicateParams,
+    );
+
+    if (duplicateCustomer.rowCount > 0) {
+      customerId = this.normalizeText(duplicateCustomer.rows[0]?.id);
+      await this.updateCustomerTypeIfNeeded(
+        executor,
+        customerId,
+        customerTypeColumn,
+        requestedCustomerType,
+      );
+      return customerId;
+    }
+
+    const customerRecord: Record<string, unknown> = {
+      [customerNameColumn]: customerName,
+    };
+
+    if (customerIdColumn) {
+      customerRecord[customerIdColumn] = randomUUID();
+    }
+    if (customerAddressColumn && customerAddress) {
+      customerRecord[customerAddressColumn] = customerAddress;
+    }
+    if (customerContactPersonColumn && customerContactPerson) {
+      customerRecord[customerContactPersonColumn] = customerContactPerson;
+    }
+    if (customerContactNumberColumn && customerContactNumber) {
+      customerRecord[customerContactNumberColumn] = customerContactNumber;
+    }
+    if (customerEmailColumn && customerEmail) {
+      customerRecord[customerEmailColumn] = customerEmail;
+    }
+    if (customerTinColumn && customerTin) {
+      customerRecord[customerTinColumn] = customerTin;
+    }
+    if (customerTypeColumn && requestedCustomerType) {
+      customerRecord[customerTypeColumn] = requestedCustomerType;
+    }
+
+    const insertedCustomer = await this.runInsert(executor, 'tblcustomer', customerRecord);
+    if (insertedCustomer.rowCount === 0) {
+      throw new Error('Failed to create customer');
+    }
+
+    return this.normalizeText(insertedCustomer.rows[0]?.id);
+  }
+
   private toIsoDateOrNull(value: unknown): string | null {
     if (!value) {
       return null;
@@ -277,6 +437,151 @@ export class SalesOrderService {
     }
 
     return method;
+  }
+
+  private parseDateOnly(value: unknown): Date | null {
+    const raw = String(value ?? '').trim();
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = new Date(`${raw}T00:00:00Z`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  private formatDateOnlyForSql(value: Date): string {
+    return value.toISOString().slice(0, 10);
+  }
+
+  private addDays(date: Date, days: number): Date {
+    const copy = new Date(date.getTime());
+    copy.setUTCDate(copy.getUTCDate() + days);
+    return copy;
+  }
+
+  private async buildStatementOfAccountSnapshot(
+    customerId: string,
+    dto: CreateStatementOfAccountDto,
+  ): Promise<{
+    effectivePeriodFrom: string;
+    effectivePeriodTo: string;
+    openingBalance: number;
+    totalCharges: number;
+    totalPayments: number;
+    closingBalance: number;
+  }> {
+    const normalizedCustomerId = String(customerId ?? '').trim();
+    if (!normalizedCustomerId) {
+      throw new Error('Invalid customer id');
+    }
+
+    const requestedPeriodFrom = this.parseDateOnly(dto.periodFrom);
+    const requestedPeriodTo = this.parseDateOnly(dto.periodTo);
+    if (!requestedPeriodFrom || !requestedPeriodTo) {
+      throw new Error('Statement period is required');
+    }
+    if (requestedPeriodFrom.getTime() > requestedPeriodTo.getTime()) {
+      throw new Error('Period From cannot be later than Period To');
+    }
+
+    const lastStatementResult = await this.databaseService.query<{
+      closing_balance: string | null;
+      period_to: string | null;
+    }>(
+      `SELECT closing_balance::text AS closing_balance,
+              period_to::text AS period_to
+         FROM tblstatement_of_account
+        WHERE customer_id::text = $1
+        ORDER BY period_to DESC, generated_at DESC
+        LIMIT 1`,
+      [normalizedCustomerId],
+    );
+
+    const openingBalance = this.toOptionalNumber(lastStatementResult.rows[0]?.closing_balance) ?? 0;
+    const lastPeriodTo = this.parseDateOnly(lastStatementResult.rows[0]?.period_to);
+    const minimumPeriodFrom = lastPeriodTo ? this.addDays(lastPeriodTo, 1) : requestedPeriodFrom;
+    const effectiveFromDate =
+      requestedPeriodFrom.getTime() < minimumPeriodFrom.getTime() ? minimumPeriodFrom : requestedPeriodFrom;
+
+    if (effectiveFromDate.getTime() > requestedPeriodTo.getTime()) {
+      return {
+        effectivePeriodFrom: this.formatDateOnlyForSql(effectiveFromDate),
+        effectivePeriodTo: this.formatDateOnlyForSql(requestedPeriodTo),
+        openingBalance,
+        totalCharges: 0,
+        totalPayments: 0,
+        closingBalance: openingBalance,
+      };
+    }
+
+    const effectivePeriodFrom = this.formatDateOnlyForSql(effectiveFromDate);
+    const effectivePeriodTo = this.formatDateOnlyForSql(requestedPeriodTo);
+
+    const chargeResult = await this.databaseService.query<{ total_charges: string | null }>(
+      `SELECT COALESCE(SUM(COALESCE(so.total_amount, 0)::numeric), 0)::text AS total_charges
+         FROM tblsales_order so
+        WHERE so.customer_id::text = $1
+          AND COALESCE(so.created_at, NOW())::date BETWEEN $2::date AND $3::date`,
+      [normalizedCustomerId, effectivePeriodFrom, effectivePeriodTo],
+    );
+
+    const paymentsResult = await this.databaseService.query<{ total_payments: string | null }>(
+      `SELECT COALESCE(SUM(payment_amount), 0)::text AS total_payments
+         FROM tblcustomer_payments
+        WHERE customer_id::text = $1
+          AND payment_date BETWEEN $2::date AND $3::date`,
+      [normalizedCustomerId, effectivePeriodFrom, effectivePeriodTo],
+    );
+
+    const totalCharges = this.toOptionalNumber(chargeResult.rows[0]?.total_charges) ?? 0;
+    const totalPayments = this.toOptionalNumber(paymentsResult.rows[0]?.total_payments) ?? 0;
+    const closingBalance = openingBalance + totalCharges - totalPayments;
+
+    return {
+      effectivePeriodFrom,
+      effectivePeriodTo,
+      openingBalance,
+      totalCharges,
+      totalPayments,
+      closingBalance,
+    };
+  }
+
+  private async insertStatementOfAccountRecord(
+    customerId: string,
+    dto: CreateStatementOfAccountDto,
+    userId?: number,
+  ) {
+    const snapshot = await this.buildStatementOfAccountSnapshot(customerId, dto);
+
+    const soaColumns = await this.getTableColumns(this.databaseService, 'tblstatement_of_account');
+    const customerIdColumn = this.pickColumn(soaColumns, ['customer_id', 'customerId']);
+    const periodFromColumn = this.pickColumn(soaColumns, ['period_from', 'periodFrom']);
+    const periodToColumn = this.pickColumn(soaColumns, ['period_to', 'periodTo']);
+    const openingBalanceColumn = this.pickColumn(soaColumns, ['opening_balance', 'openingBalance']);
+    const totalChargesColumn = this.pickColumn(soaColumns, ['total_charges', 'totalCharges']);
+    const totalPaymentsColumn = this.pickColumn(soaColumns, ['total_payments', 'totalPayments']);
+    const closingBalanceColumn = this.pickColumn(soaColumns, ['closing_balance', 'closingBalance']);
+    const statusColumn = this.pickColumn(soaColumns, ['soa_status', 'soaStatus']);
+    const generatedByColumn = this.pickColumn(soaColumns, ['generated_by', 'generatedBy']);
+    const dueDateColumn = this.pickColumn(soaColumns, ['due_date', 'dueDate']);
+    const notesColumn = this.pickColumn(soaColumns, ['notes']);
+
+    const record: Record<string, unknown> = {};
+    if (customerIdColumn) record[customerIdColumn] = customerId;
+    if (periodFromColumn) record[periodFromColumn] = this.toIsoDateOrNull(snapshot.effectivePeriodFrom);
+    if (periodToColumn) record[periodToColumn] = this.toIsoDateOrNull(snapshot.effectivePeriodTo);
+    if (openingBalanceColumn) record[openingBalanceColumn] = snapshot.openingBalance;
+    if (totalChargesColumn) record[totalChargesColumn] = snapshot.totalCharges;
+    if (totalPaymentsColumn) record[totalPaymentsColumn] = snapshot.totalPayments;
+    if (closingBalanceColumn) record[closingBalanceColumn] = snapshot.closingBalance;
+    if (statusColumn) record[statusColumn] = 'draft';
+    if (generatedByColumn && userId !== undefined) record[generatedByColumn] = userId;
+    if (dueDateColumn) record[dueDateColumn] = this.toIsoDateOrNull(dto.dueDate);
+    if (notesColumn && dto.notes !== undefined) record[notesColumn] = String(dto.notes ?? '').trim();
+
+    const inserted = await this.runInsert(this.databaseService, 'tblstatement_of_account', record);
+    return { inserted, snapshot };
   }
 
   private normalizePage(value: unknown): number {
@@ -714,93 +1019,7 @@ export class SalesOrderService {
 
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
-        let customerId = String(payload.customer_id ?? '').trim();
-        const customerColumns = await this.getTableColumns(client, 'tblcustomer');
-        const customerIdColumn = this.pickColumn(customerColumns, ['id']);
-        const customerNameColumn = this.pickColumn(customerColumns, ['name']);
-        const customerTypeColumn = this.pickColumn(customerColumns, ['customer_type', 'customerType']);
-        const customerAddressColumn = this.pickColumn(customerColumns, ['address']);
-        const customerContactPersonColumn = this.pickColumn(customerColumns, [
-          'contact_person',
-          'contactPerson',
-        ]);
-        const customerContactNumberColumn = this.pickColumn(customerColumns, [
-          'contact_number',
-          'contactNumber',
-        ]);
-        const customerEmailColumn = this.pickColumn(customerColumns, ['email']);
-        const customerTinColumn = this.pickColumn(customerColumns, ['tin_number', 'tinNumber']);
-
-        const requestedCustomerType = String(payload.customer?.customer_type ?? '').trim();
-
-        if (customerId) {
-          const existingCustomer = await client.query<{ id: string }>(
-            `SELECT id FROM tblcustomer WHERE id::text = $1 LIMIT 1`,
-            [customerId],
-          );
-
-          if (existingCustomer.rowCount === 0) {
-            customerId = '';
-          } else if (customerTypeColumn && requestedCustomerType) {
-            // Ensure existing customers are updated if sales type implies a sub-dealer
-            await client.query(
-              `UPDATE tblcustomer SET ${customerTypeColumn} = $1 WHERE id::text = $2`,
-              [requestedCustomerType, customerId],
-            );
-          }
-        }
-
-        if (!customerId) {
-          const customerName = String(payload.customer?.name ?? '').trim();
-          if (!customerName) {
-            throw new Error('customer_id or customer.name is required');
-          }
-          if (!customerNameColumn) {
-            throw new Error('tblcustomer name column is missing');
-          }
-
-          const customerRecord: Record<string, unknown> = {
-            [customerNameColumn]: customerName,
-          };
-
-          if (customerIdColumn) {
-            customerRecord[customerIdColumn] = randomUUID();
-          }
-
-          const customerAddress = String(payload.customer?.address ?? '').trim();
-          const customerContactPerson = String(payload.customer?.contact_person ?? '').trim();
-          const customerContactNumber = String(payload.customer?.contact_number ?? '').trim();
-          const customerEmail = String(payload.customer?.email ?? '').trim();
-          const customerTin = String(payload.customer?.tin_number ?? '').trim();
-        const customerType = String(payload.customer?.customer_type ?? '').trim();
-        const customerTypeColumn = this.pickColumn(customerColumns, ['customer_type', 'customerType']);
-
-          if (customerAddressColumn && customerAddress) {
-            customerRecord[customerAddressColumn] = customerAddress;
-          }
-          if (customerContactPersonColumn && customerContactPerson) {
-            customerRecord[customerContactPersonColumn] = customerContactPerson;
-          }
-          if (customerContactNumberColumn && customerContactNumber) {
-            customerRecord[customerContactNumberColumn] = customerContactNumber;
-          }
-          if (customerEmailColumn && customerEmail) {
-            customerRecord[customerEmailColumn] = customerEmail;
-          }
-          if (customerTinColumn && customerTin) {
-            customerRecord[customerTinColumn] = customerTin;
-          }
-          if (customerTypeColumn && customerType) {
-            customerRecord[customerTypeColumn] = customerType;
-          }
-
-          const insertedCustomer = await this.runInsert(client, 'tblcustomer', customerRecord);
-          if (insertedCustomer.rowCount === 0) {
-            throw new Error('Failed to create customer');
-          }
-
-          customerId = String(insertedCustomer.rows[0].id);
-        }
+        const customerId = await this.upsertCustomerFromPayload(client, payload);
 
         let computedProductTotal = 0;
         for (const item of productItems) {
@@ -1170,8 +1389,10 @@ export class SalesOrderService {
               if (laborCostColumn && item.laborCost !== undefined) {
                 record[laborCostColumn] = this.toOptionalNumber(item.laborCost) ?? 0;
               }
-              if (serviceStatusColumn && item.serviceStatus !== undefined) {
-                record[serviceStatusColumn] = String(item.serviceStatus ?? '').trim();
+              if (serviceStatusColumn) {
+                const status = String(item.serviceStatus ?? '').trim().toLowerCase();
+                const validStatuses = ['scheduled', 'in_progress', 'completed', 'cancelled'];
+                record[serviceStatusColumn] = validStatuses.includes(status) ? status : 'scheduled';
               }
               if (serviceNotesColumn && item.serviceNotes !== undefined) {
                 record[serviceNotesColumn] = String(item.serviceNotes ?? '').trim();
@@ -1400,11 +1621,15 @@ export class SalesOrderService {
             if (concernDescriptionColumn && details.concernDescription !== undefined) {
               record[concernDescriptionColumn] = String(details.concernDescription ?? '').trim();
             }
-            if (concernStatusColumn && details.concernStatus !== undefined) {
-              record[concernStatusColumn] = String(details.concernStatus ?? '').trim();
+            if (concernStatusColumn) {
+              const concernStatus = String(details.concernStatus ?? '').trim().toLowerCase();
+              const validConcernStatuses = ['open', 'in_progress', 'resolved', 'closed'];
+              record[concernStatusColumn] = validConcernStatuses.includes(concernStatus) ? concernStatus : 'open';
             }
-            if (priorityColumn && details.priority !== undefined) {
-              record[priorityColumn] = String(details.priority ?? '').trim();
+            if (priorityColumn) {
+              const priority = String(details.priority ?? '').trim().toLowerCase();
+              const validPriorities = ['low', 'medium', 'high', 'urgent'];
+              record[priorityColumn] = validPriorities.includes(priority) ? priority : 'medium';
             }
             if (assignedToColumn && details.assignedTo !== undefined) {
               record[assignedToColumn] = this.toOptionalNumber(details.assignedTo);
@@ -2136,67 +2361,14 @@ export class SalesOrderService {
     }
 
     try {
-      const lastStatementResult = await this.databaseService.query<{ closing_balance: string | null }>(
-        `SELECT closing_balance::text AS closing_balance
-         FROM tblstatement_of_account
-         WHERE customer_id::text = $1
-         ORDER BY generated_at DESC
-         LIMIT 1`,
-        [id],
-      );
-
-      const openingBalance = this.toOptionalNumber(lastStatementResult.rows[0]?.closing_balance) ?? 0;
-
-      const chargeResult = await this.databaseService.query<{ total_charges: string | null }>(
-        `SELECT COALESCE(SUM(COALESCE(so.total_amount, 0)::numeric), 0)::text AS total_charges
-         FROM tblsales_order so
-         WHERE so.customer_id::text = $1
-           AND COALESCE(so.created_at, NOW())::date BETWEEN $2::date AND $3::date`,
-        [id, dto.periodFrom, dto.periodTo],
-      );
-
-      const paymentsResult = await this.databaseService.query<{ total_payments: string | null }>(
-        `SELECT COALESCE(SUM(payment_amount), 0)::text AS total_payments
-         FROM tblcustomer_payments
-         WHERE customer_id::text = $1
-           AND payment_date BETWEEN $2::date AND $3::date`,
-        [id, dto.periodFrom, dto.periodTo],
-      );
-
-      const totalCharges = this.toOptionalNumber(chargeResult.rows[0]?.total_charges) ?? 0;
-      const totalPayments = this.toOptionalNumber(paymentsResult.rows[0]?.total_payments) ?? 0;
-      const closingBalance = openingBalance + totalCharges - totalPayments;
-
-      const soaColumns = await this.getTableColumns(this.databaseService, 'tblstatement_of_account');
-      const customerIdColumn = this.pickColumn(soaColumns, ['customer_id', 'customerId']);
-      const periodFromColumn = this.pickColumn(soaColumns, ['period_from', 'periodFrom']);
-      const periodToColumn = this.pickColumn(soaColumns, ['period_to', 'periodTo']);
-      const openingBalanceColumn = this.pickColumn(soaColumns, ['opening_balance', 'openingBalance']);
-      const totalChargesColumn = this.pickColumn(soaColumns, ['total_charges', 'totalCharges']);
-      const totalPaymentsColumn = this.pickColumn(soaColumns, ['total_payments', 'totalPayments']);
-      const closingBalanceColumn = this.pickColumn(soaColumns, ['closing_balance', 'closingBalance']);
-      const statusColumn = this.pickColumn(soaColumns, ['soa_status', 'soaStatus']);
-      const generatedByColumn = this.pickColumn(soaColumns, ['generated_by', 'generatedBy']);
-      const dueDateColumn = this.pickColumn(soaColumns, ['due_date', 'dueDate']);
-      const notesColumn = this.pickColumn(soaColumns, ['notes']);
-
-      const record: Record<string, unknown> = {};
-      if (customerIdColumn) record[customerIdColumn] = id;
-      if (periodFromColumn) record[periodFromColumn] = this.toIsoDateOrNull(dto.periodFrom);
-      if (periodToColumn) record[periodToColumn] = this.toIsoDateOrNull(dto.periodTo);
-      if (openingBalanceColumn) record[openingBalanceColumn] = openingBalance;
-      if (totalChargesColumn) record[totalChargesColumn] = totalCharges;
-      if (totalPaymentsColumn) record[totalPaymentsColumn] = totalPayments;
-      if (closingBalanceColumn) record[closingBalanceColumn] = closingBalance;
-      if (statusColumn) record[statusColumn] = 'draft';
-      if (generatedByColumn && userId !== undefined) record[generatedByColumn] = userId;
-      if (dueDateColumn) record[dueDateColumn] = this.toIsoDateOrNull(dto.dueDate);
-      if (notesColumn && dto.notes !== undefined) record[notesColumn] = String(dto.notes ?? '').trim();
-
-      const inserted = await this.runInsert(this.databaseService, 'tblstatement_of_account', record);
+      const { inserted, snapshot } = await this.insertStatementOfAccountRecord(id, dto, userId);
       return {
         success: true,
-        data: { statementOfAccountId: Number(inserted.rows[0]?.id ?? 0) },
+        data: {
+          statementOfAccountId: Number(inserted.rows[0]?.id ?? 0),
+          periodFrom: snapshot.effectivePeriodFrom,
+          periodTo: snapshot.effectivePeriodTo,
+        },
       };
     } catch (error) {
       return {
@@ -2455,67 +2627,14 @@ export class SalesOrderService {
         return { success: false, message: 'Sales order does not have an associated customer' };
       }
 
-      const lastStatementResult = await this.databaseService.query<{ closing_balance: string | null }>(
-        `SELECT closing_balance::text AS closing_balance
-         FROM tblstatement_of_account
-         WHERE customer_id::text = $1
-         ORDER BY generated_at DESC
-         LIMIT 1`,
-        [customerId],
-      );
-
-      const openingBalance = this.toOptionalNumber(lastStatementResult.rows[0]?.closing_balance) ?? 0;
-
-      const chargeResult = await this.databaseService.query<{ total_charges: string | null }>(
-        `SELECT COALESCE(SUM(COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric), 0)::text AS total_charges
-         FROM tblsales_order so
-         WHERE COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') = $1
-           AND COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt', NOW())::date BETWEEN $2::date AND $3::date`,
-        [customerId, dto.periodFrom, dto.periodTo],
-      );
-
-      const paymentsResult = await this.databaseService.query<{ total_payments: string | null }>(
-        `SELECT COALESCE(SUM(payment_amount), 0)::text AS total_payments
-         FROM tblcustomer_payments
-         WHERE customer_id::text = $1
-           AND payment_date BETWEEN $2::date AND $3::date`,
-        [customerId, dto.periodFrom, dto.periodTo],
-      );
-
-      const totalCharges = this.toOptionalNumber(chargeResult.rows[0]?.total_charges) ?? 0;
-      const totalPayments = this.toOptionalNumber(paymentsResult.rows[0]?.total_payments) ?? 0;
-      const closingBalance = openingBalance + totalCharges - totalPayments;
-
-      const soaColumns = await this.getTableColumns(this.databaseService, 'tblstatement_of_account');
-      const customerIdColumn = this.pickColumn(soaColumns, ['customer_id', 'customerId']);
-      const periodFromColumn = this.pickColumn(soaColumns, ['period_from', 'periodFrom']);
-      const periodToColumn = this.pickColumn(soaColumns, ['period_to', 'periodTo']);
-      const openingBalanceColumn = this.pickColumn(soaColumns, ['opening_balance', 'openingBalance']);
-      const totalChargesColumn = this.pickColumn(soaColumns, ['total_charges', 'totalCharges']);
-      const totalPaymentsColumn = this.pickColumn(soaColumns, ['total_payments', 'totalPayments']);
-      const closingBalanceColumn = this.pickColumn(soaColumns, ['closing_balance', 'closingBalance']);
-      const statusColumn = this.pickColumn(soaColumns, ['soa_status', 'soaStatus']);
-      const generatedByColumn = this.pickColumn(soaColumns, ['generated_by', 'generatedBy']);
-      const dueDateColumn = this.pickColumn(soaColumns, ['due_date', 'dueDate']);
-      const notesColumn = this.pickColumn(soaColumns, ['notes']);
-
-      const record: Record<string, unknown> = {};
-      if (customerIdColumn) record[customerIdColumn] = customerId;
-      if (periodFromColumn) record[periodFromColumn] = this.toIsoDateOrNull(dto.periodFrom);
-      if (periodToColumn) record[periodToColumn] = this.toIsoDateOrNull(dto.periodTo);
-      if (openingBalanceColumn) record[openingBalanceColumn] = openingBalance;
-      if (totalChargesColumn) record[totalChargesColumn] = totalCharges;
-      if (totalPaymentsColumn) record[totalPaymentsColumn] = totalPayments;
-      if (closingBalanceColumn) record[closingBalanceColumn] = closingBalance;
-      if (statusColumn) record[statusColumn] = 'draft';
-      if (generatedByColumn && userId !== undefined) record[generatedByColumn] = userId;
-      if (dueDateColumn) record[dueDateColumn] = this.toIsoDateOrNull(dto.dueDate);
-      if (notesColumn && dto.notes !== undefined) record[notesColumn] = String(dto.notes ?? '').trim();
-
-      const inserted = await this.runInsert(this.databaseService, 'tblstatement_of_account', record);
+      const { inserted, snapshot } = await this.insertStatementOfAccountRecord(customerId, dto, userId);
       return {
         success: true,
-        data: { statementOfAccountId: Number(inserted.rows[0]?.id ?? 0) },
+        data: {
+          statementOfAccountId: Number(inserted.rows[0]?.id ?? 0),
+          periodFrom: snapshot.effectivePeriodFrom,
+          periodTo: snapshot.effectivePeriodTo,
+        },
       };
     } catch (error) {
       return {
@@ -2962,11 +3081,8 @@ export class SalesOrderService {
         }
 
         const existingSales = existingSalesResult.rows[0];
-        let customerId = String(payload.customer_id ?? existingSales.customer_id ?? '').trim();
-
         const customerColumns = await this.getTableColumns(client, 'tblcustomer');
-        const customerIdColumn = this.pickColumn(customerColumns, ['id']);
-        const customerNameColumn = this.pickColumn(customerColumns, ['name']);
+        const customerNameColumn = this.pickColumn(customerColumns, ['name', 'customer_name']);
         const customerAddressColumn = this.pickColumn(customerColumns, ['address']);
         const customerContactPersonColumn = this.pickColumn(customerColumns, [
           'contact_person',
@@ -2979,61 +3095,21 @@ export class SalesOrderService {
         const customerEmailColumn = this.pickColumn(customerColumns, ['email']);
         const customerTinColumn = this.pickColumn(customerColumns, ['tin_number', 'tinNumber']);
 
-        if (customerId) {
-          const existingCustomer = await client.query<{ id: string }>(
-            `SELECT id FROM tblcustomer WHERE id::text = $1 LIMIT 1`,
-            [customerId],
-          );
-
-          if (existingCustomer.rowCount === 0) {
-            customerId = '';
-          }
-        }
-
-        if (!customerId && payload.customer) {
-          const customerName = String(payload.customer.name ?? '').trim();
-          if (!customerName || !customerNameColumn) {
-            throw new Error('customer_id or customer.name is required');
-          }
-
-          const customerRecord: Record<string, unknown> = {
-            [customerNameColumn]: customerName,
-          };
-
-          if (customerIdColumn) {
-            customerRecord[customerIdColumn] = randomUUID();
-          }
-
-          const customerAddress = String(payload.customer.address ?? '').trim();
-          const customerContactPerson = String(payload.customer.contact_person ?? '').trim();
-          const customerContactNumber = String(payload.customer.contact_number ?? '').trim();
-          const customerEmail = String(payload.customer.email ?? '').trim();
-          const customerTin = String(payload.customer.tin_number ?? '').trim();
-
-          if (customerAddressColumn && customerAddress) customerRecord[customerAddressColumn] = customerAddress;
-          if (customerContactPersonColumn && customerContactPerson) {
-            customerRecord[customerContactPersonColumn] = customerContactPerson;
-          }
-          if (customerContactNumberColumn && customerContactNumber) {
-            customerRecord[customerContactNumberColumn] = customerContactNumber;
-          }
-          if (customerEmailColumn && customerEmail) customerRecord[customerEmailColumn] = customerEmail;
-          if (customerTinColumn && customerTin) customerRecord[customerTinColumn] = customerTin;
-
-          const insertedCustomer = await this.runInsert(client, 'tblcustomer', customerRecord);
-          customerId = String(insertedCustomer.rows[0].id);
-        }
+        const customerId = await this.upsertCustomerFromPayload(client, {
+          customer_id: payload.customer_id ?? existingSales.customer_id ?? null,
+          customer: payload.customer,
+        });
 
         if (customerId && payload.customer) {
           const updates: string[] = [];
           const params: unknown[] = [];
 
-          const customerName = String(payload.customer.name ?? '').trim();
-          const customerAddress = String(payload.customer.address ?? '').trim();
-          const customerContactPerson = String(payload.customer.contact_person ?? '').trim();
-          const customerContactNumber = String(payload.customer.contact_number ?? '').trim();
-          const customerEmail = String(payload.customer.email ?? '').trim();
-          const customerTin = String(payload.customer.tin_number ?? '').trim();
+          const customerName = this.normalizeText(payload.customer.name);
+          const customerAddress = this.normalizeText(payload.customer.address);
+          const customerContactPerson = this.normalizeText(payload.customer.contact_person);
+          const customerContactNumber = this.normalizeText(payload.customer.contact_number);
+          const customerEmail = this.normalizeText(payload.customer.email);
+          const customerTin = this.normalizeText(payload.customer.tin_number);
 
           if (customerNameColumn && customerName) {
             params.push(customerName);

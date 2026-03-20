@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import { ModalComponent } from '../../shared/components/ui/modal/modal.component';
 import { CanDirective } from '../../shared/directives/can.directive';
@@ -295,12 +296,151 @@ export class CustomersComponent implements OnInit {
     this.uiError = '';
 
     try {
-      await this.salesOrderService.createCustomerStatementOfAccount(this.selectedCustomer.id, payload);
+      const response = await this.salesOrderService.createCustomerStatementOfAccount(this.selectedCustomer.id, payload);
+      if (!response.success) {
+        this.uiError = response.message || 'Failed to generate statement of account';
+        return;
+      }
+
       await this.loadCustomerDetails(this.selectedCustomer.id);
+
+      const createdStatementId = Number(response.data?.statementOfAccountId ?? 0);
+      const createdStatement = this.statements.find((statement) => statement.id === createdStatementId);
+      if (createdStatement) {
+        await this.downloadStatementOfAccountPdf(createdStatement);
+      }
     } catch (error: unknown) {
       this.uiError = (error as Error)?.message || 'Failed to generate statement of account';
     } finally {
       this.isGeneratingSoa = false;
     }
+  }
+
+  async downloadStatementOfAccountPdf(statement: SalesStatementOfAccountItem): Promise<void> {
+    if (!this.selectedCustomer) {
+      return;
+    }
+
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([612, 792]);
+    const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+    const formatAmount = (value: number) =>
+      new Intl.NumberFormat('en-PH', {
+        style: 'currency',
+        currency: 'PHP',
+        minimumFractionDigits: 2,
+      }).format(Number(value ?? 0));
+    const formatDate = (value: string | null | undefined) => {
+      const raw = String(value ?? '').trim();
+      if (!raw) {
+        return '-';
+      }
+
+      const parsed = new Date(raw);
+      if (Number.isNaN(parsed.getTime())) {
+        return raw;
+      }
+
+      return parsed.toLocaleDateString('en-PH', {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+      });
+    };
+    const drawText = (
+      text: string,
+      x: number,
+      y: number,
+      options?: { size?: number; font?: typeof regularFont; color?: [number, number, number] },
+    ) => {
+      const color = options?.color ?? [0, 0, 0];
+      page.drawText(text, {
+        x,
+        y,
+        size: options?.size ?? 11,
+        font: options?.font ?? regularFont,
+        color: rgb(color[0], color[1], color[2]),
+      });
+    };
+
+    page.drawRectangle({ x: 40, y: 728, width: 532, height: 32, color: rgb(0.06, 0.61, 0.87) });
+    drawText('STATEMENT OF ACCOUNT', 52, 739, { size: 16, font: boldFont, color: [1, 1, 1] });
+
+    drawText(`SOA No: ${statement.soaNumber || '-'}`, 40, 695, { font: boldFont });
+    drawText(`Generated: ${formatDate(statement.generatedAt)}`, 360, 695, { font: boldFont });
+
+    drawText('Customer Information', 40, 664, { size: 12, font: boldFont, color: [0.06, 0.61, 0.87] });
+    drawText(`Customer: ${this.selectedCustomer.name || '-'}`, 40, 644);
+    drawText(`Address: ${this.selectedCustomer.address || '-'}`, 40, 626);
+    drawText(`Contact Person: ${this.selectedCustomer.contact_person || '-'}`, 40, 608);
+    drawText(`Contact Number: ${this.selectedCustomer.contact_number || '-'}`, 40, 590);
+    drawText(`Email: ${this.selectedCustomer.email || '-'}`, 40, 572);
+
+    drawText('Statement Period', 40, 536, { size: 12, font: boldFont, color: [0.06, 0.61, 0.87] });
+    drawText(`From: ${formatDate(statement.periodFrom)}`, 40, 516);
+    drawText(`To: ${formatDate(statement.periodTo)}`, 200, 516);
+    drawText(`Due Date: ${formatDate(statement.dueDate)}`, 360, 516);
+
+    page.drawRectangle({ x: 40, y: 456, width: 532, height: 24, color: rgb(0.94, 0.97, 0.99) });
+    drawText('Opening Balance', 52, 463, { font: boldFont });
+    drawText('Charges', 210, 463, { font: boldFont });
+    drawText('Payments', 342, 463, { font: boldFont });
+    drawText('Closing Balance', 466, 463, { font: boldFont });
+
+    page.drawRectangle({ x: 40, y: 420, width: 532, height: 36, borderWidth: 1, borderColor: rgb(0.85, 0.88, 0.9) });
+    drawText(formatAmount(statement.openingBalance), 52, 434);
+    drawText(formatAmount(statement.totalCharges), 210, 434);
+    drawText(formatAmount(statement.totalPayments), 342, 434);
+    drawText(formatAmount(statement.closingBalance), 466, 434, { font: boldFont });
+
+    drawText(`Status: ${String(statement.status || 'draft').toUpperCase()}`, 40, 384, { font: boldFont });
+    drawText('Notes', 40, 350, { size: 12, font: boldFont, color: [0.06, 0.61, 0.87] });
+    page.drawRectangle({ x: 40, y: 242, width: 532, height: 96, borderWidth: 1, borderColor: rgb(0.85, 0.88, 0.9) });
+
+    const notes = String(statement.notes || '').trim() || 'No notes provided.';
+    const noteLines = this.wrapPdfText(notes, 86);
+    noteLines.slice(0, 5).forEach((line, index) => {
+      drawText(line, 52, 318 - index * 16);
+    });
+
+    drawText('This document was generated electronically from HVAC Warehouse and Sales Management System.', 40, 210, { size: 9, color: [0.35, 0.35, 0.35] });
+
+    const pdfBytes = await pdfDoc.save();
+    const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
+    new Uint8Array(pdfBuffer).set(pdfBytes);
+    const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${statement.soaNumber || 'statement-of-account'}.pdf`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private wrapPdfText(text: string, maxCharsPerLine: number): string[] {
+    const words = String(text ?? '').split(/\s+/).filter((word) => word.length > 0);
+    const lines: string[] = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      const nextLine = currentLine ? `${currentLine} ${word}` : word;
+      if (nextLine.length <= maxCharsPerLine) {
+        currentLine = nextLine;
+        continue;
+      }
+
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+      currentLine = word;
+    }
+
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+
+    return lines.length > 0 ? lines : [''];
   }
 }

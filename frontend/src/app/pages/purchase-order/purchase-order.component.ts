@@ -349,6 +349,12 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.createSuccess = '';
 
     try {
+      const validationError = this.validatePurchaseForm();
+      if (validationError) {
+        this.createError = validationError;
+        return;
+      }
+
       if (this.drawerMode === 'edit') {
         const flushed = await this.flushAllQueuedSerialScans();
         if (!flushed) {
@@ -362,7 +368,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         this.drawerMode === 'edit' && this.editingPurchaseId
           ? await this.purchaseOrderService.updatePurchase(this.editingPurchaseId, payload)
           : await this.purchaseOrderService.createPurchase(payload);
-
+      console.log('submitCreatePurchase response', response);
       if (!response.success) {
         this.createError =
           response.message ??
@@ -387,6 +393,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to create purchase request';
       } else {
+        console.error('submitCreatePurchase error', error);
         this.createError = 'Failed to create purchase request';
       }
     } finally {
@@ -1966,7 +1973,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   private buildPurchasePayload(): CreatePurchaseRequestPayload {
-    const vendorId = this.createForm.vendorId.trim();
+    const vendorId = this.resolveExistingVendorId();
     const vendorName = this.createForm.vendorName.trim();
     const useExistingVendor = this.vendorMode === 'existing';
     const vendorPayload = vendorName
@@ -1983,16 +1990,16 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       vendor: vendorPayload,
       paymentDetails: this.createForm.paymentDetails.map((payment) => ({
         amount: Number(payment.amount) || 0,
-        method: payment.method.trim() || undefined,
-        terms: payment.terms.trim() || undefined,
+        method: String(payment.method ?? '').trim() || undefined,
+        terms: String(payment.terms ?? '').trim() || undefined,
         termsDueDate: payment.termsDueDate || null,
         status: this.normalizePayloadPaymentStatus(payment.status),
         paymentDate: payment.paymentDate || null,
-        bankName: payment.bankName.trim() || undefined,
-        referenceNo: payment.referenceNo.trim() || undefined,
-        checkNo: payment.checkNo.trim() || undefined,
+        bankName: String(payment.bankName ?? '').trim() || undefined,
+        referenceNo: String(payment.referenceNo ?? '').trim() || undefined,
+        checkNo: String(payment.checkNo ?? '').trim() || undefined,
         chequeDate: payment.chequeDate || null,
-        issuedBy: payment.issuedBy.trim() || undefined,
+        issuedBy: String(payment.issuedBy ?? '').trim() || undefined,
         downPayment: Number(payment.downPayment) || 0,
       })),
       productItems: this.createForm.productItems.map((item) => ({
@@ -2017,6 +2024,76 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       })),
       totalAmount: Number(this.createForm.totalAmount) || 0,
     };
+  }
+
+  private validatePurchaseForm(): string | null {
+    const useExistingVendor = this.vendorMode === 'existing';
+    const vendorName = this.createForm.vendorName.trim();
+    const resolvedExistingVendorId = this.resolveExistingVendorId();
+
+    if (useExistingVendor) {
+      if (!resolvedExistingVendorId) {
+        return 'Select an existing vendor from the dropdown, or switch to New Vendor.';
+      }
+
+      this.createForm.vendorId = resolvedExistingVendorId;
+    } else if (!vendorName) {
+      return 'Vendor name is required.';
+    }
+
+    if (this.createForm.productItems.length === 0) {
+      return 'At least one product item is required.';
+    }
+
+    for (const [index, item] of this.createForm.productItems.entries()) {
+      if (!String(item.productId ?? '').trim()) {
+        return `Product is required for item ${index + 1}.`;
+      }
+
+      if (!String(item.capacityId ?? '').trim()) {
+        return `Capacity is required for item ${index + 1}.`;
+      }
+
+      if (!Number.isFinite(Number(item.unitPrice)) || Number(item.unitPrice) < 0) {
+        return `Unit price must be valid for item ${index + 1}.`;
+      }
+
+      if (!Number.isFinite(Number(item.totalSetQty)) || Number(item.totalSetQty) <= 0) {
+        return `Quantity must be greater than 0 for item ${index + 1}.`;
+      }
+    }
+
+    return null;
+  }
+
+  private resolveExistingVendorId(): string {
+    const existingVendorId = String(this.createForm.vendorId ?? '').trim();
+    if (existingVendorId) {
+      return existingVendorId;
+    }
+
+    const normalizedVendorName = String(this.createForm.vendorName ?? this.vendorSearch ?? '')
+      .trim()
+      .toLowerCase();
+    if (!normalizedVendorName) {
+      return '';
+    }
+
+    const exactMatch = this.vendorOptions.find(
+      (item) => String(item.name ?? '').trim().toLowerCase() === normalizedVendorName,
+    );
+
+    if (!exactMatch) {
+      return '';
+    }
+
+    this.vendorSearch = exactMatch.name;
+    this.createForm.vendorName = exactMatch.name ?? '';
+    this.createForm.vendorAddress = exactMatch.address ?? '';
+    this.createForm.vendorContactPerson = exactMatch.contact_person ?? '';
+    this.createForm.vendorContactNumber = exactMatch.contact_number ?? '';
+
+    return exactMatch.id;
   }
 
   private async loadReferenceData(): Promise<void> {

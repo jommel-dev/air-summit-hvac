@@ -15,7 +15,7 @@ import {
 import { RbacService } from '../../shared/services/rbac.service';
 import axios from 'axios';
 
-type QuotationTab = 'all' | 'draft' | 'finalized' | 'converted';
+type QuotationTab = 'all' | 'draft' | 'finalized' | 'converted' | 'expired';
 
 interface InstallationDetailFormItem {
   description: string;
@@ -44,7 +44,17 @@ interface QuotationPreviewPdfRow {
   capacity: string;
   qty: number;
   discPrice: number;
+  miscTotal: number;
   lineTotal: number;
+}
+
+interface QuotationPreviewMiscRow {
+  groupName: string;
+  model: string;
+  description: string;
+  unitPrice: number;
+  excessQty: number;
+  amount: number;
 }
 
 interface QuotationPreviewPdfData {
@@ -56,6 +66,7 @@ interface QuotationPreviewPdfData {
   customerAddress: string;
   totalAmount: number;
   rows: QuotationPreviewPdfRow[];
+  miscRows: QuotationPreviewMiscRow[];
 }
 
 @Component({
@@ -95,6 +106,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
   isSubmitting = false;
   finalizingIds = new Set<number>();
   convertingIds = new Set<number>();
+  deletingIds = new Set<number>();
   isQuotationPreviewOpen = false;
   quotationPreviewUrl: SafeResourceUrl | null = null;
   quotationPreviewFilename = 'Quotation-Preview.pdf';
@@ -104,6 +116,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
 
   form = {
     quoteDate: this.getDefaultQuoteDate(),
+    validityDays: 14,
     customer_id: '',
     customer: {
       name: '',
@@ -188,6 +201,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       { key: 'draft', label: 'Draft' },
       { key: 'finalized', label: 'Finalized' },
       { key: 'converted', label: 'Converted' },
+      { key: 'expired', label: 'Expired' },
     ];
   }
 
@@ -205,6 +219,11 @@ export class QuotationComponent implements OnInit, OnDestroy {
 
   canConvertQuotation(): boolean {
     return this.rbacService.canAccess('quotation', 'canUpdate');
+  }
+
+  canPermanentlyDeleteExpiredQuotation(): boolean {
+    const roleName = String(this.rbacService.getPayload()?.roleName ?? '').trim().toLowerCase();
+    return roleName.includes('admin') || roleName.includes('super');
   }
 
   async setTab(tab: QuotationTab): Promise<void> {
@@ -289,6 +308,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
     this.customerSearch = '';
     this.form = {
       quoteDate: this.getDefaultQuoteDate(),
+      validityDays: 14,
       customer_id: '',
       customer: {
         name: '',
@@ -392,6 +412,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
 
     this.form = {
       quoteDate: this.toDateInputValue(detail.quoteDate) || this.getDefaultQuoteDate(),
+      validityDays: Number(detail.validityDays ?? 14) > 0 ? Number(detail.validityDays ?? 14) : 14,
       customer_id: String(detail.customerId ?? ''),
       customer: {
         name: detail.customerName,
@@ -544,6 +565,21 @@ export class QuotationComponent implements OnInit, OnDestroy {
     this.recalculateTotalAmount();
   }
 
+  onValidityDaysChanged(value: unknown): void {
+    const parsed = Number(value);
+    this.form.validityDays = Number.isFinite(parsed) && parsed > 0 ? Math.min(3650, Math.floor(parsed)) : 14;
+  }
+
+  getFormExpiryDate(): string {
+    const base = new Date(this.form.quoteDate || this.getDefaultQuoteDate());
+    if (Number.isNaN(base.getTime())) {
+      return '-';
+    }
+
+    base.setDate(base.getDate() + Number(this.form.validityDays ?? 14));
+    return this.formatDateOnly(base.toISOString());
+  }
+
   setGrouping(index: number, grouping: string): void {
     const item = this.form.productItems[index];
     if (!item) {
@@ -584,13 +620,21 @@ export class QuotationComponent implements OnInit, OnDestroy {
     }, 0);
   }
 
+  getMiscTotal(item: QuotationProductFormItem): number {
+    return this.getInstallationTotal(item);
+  }
+
   getLineTotal(item: QuotationProductFormItem): number {
     const unitPrice = Number(item.unitPrice ?? 0);
     const sellPrice = Number(item.sellPrice ?? 0);
     const discountPrice = Number(item.discountPrice ?? 0);
     const qty = Number(item.totalSetQty ?? 0);
     const price = discountPrice > 0 ? discountPrice : sellPrice > 0 ? sellPrice : unitPrice;
-    return price * qty + this.getInstallationTotal(item);
+    return price * qty + this.getMiscTotal(item);
+  }
+
+  private calculatePreviewLineTotal(price: number, qty: number, miscTotal: number): number {
+    return Number(price ?? 0) * Number(qty ?? 0) + Number(miscTotal ?? 0);
   }
 
   recalculateTotalAmount(): void {
@@ -622,6 +666,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
 
     const payload: QuotationPayload = {
       quoteDate: this.form.quoteDate,
+      validityDays: Number(this.form.validityDays ?? 14),
       customer_id: this.form.customer_id || null,
       customer: {
         name: String(this.form.customer.name ?? '').trim(),
@@ -752,6 +797,64 @@ export class QuotationComponent implements OnInit, OnDestroy {
     }
   }
 
+  async permanentlyDeleteExpiredQuotation(item: QuotationListItem): Promise<void> {
+    if (this.deletingIds.has(item.id)) {
+      return;
+    }
+
+    if (!this.isExpired(item)) {
+      this.uiError = 'Only expired quotations can be permanently deleted';
+      return;
+    }
+
+    if (!this.canPermanentlyDeleteExpiredQuotation()) {
+      this.uiError = 'Only admin or super admin can permanently delete expired quotations';
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Permanently delete expired quotation ${item.quoteNo || item.id}? This cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const password = window.prompt('Enter your admin password to permanently delete this expired quotation:');
+    if (password === null) {
+      return;
+    }
+
+    if (!String(password).trim()) {
+      this.uiError = 'Admin password is required';
+      return;
+    }
+
+    this.deletingIds.add(item.id);
+    this.uiError = '';
+    this.uiMessage = '';
+
+    try {
+      const response = await this.quotationService.permanentlyDeleteExpiredQuotation(item.id, String(password).trim());
+      if (!response.success) {
+        this.uiError = response.message ?? 'Unable to permanently delete expired quotation';
+        return;
+      }
+
+      this.uiMessage = response.message ?? 'Expired quotation permanently deleted';
+      await this.loadQuotations();
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.uiError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Unable to permanently delete expired quotation';
+      } else {
+        this.uiError = 'Unable to permanently delete expired quotation';
+      }
+    } finally {
+      this.deletingIds.delete(item.id);
+    }
+  }
+
   async previewQuotation(item: QuotationListItem): Promise<void> {
     const detail = await this.quotationService.getQuotationById(item.id);
     if (!detail) {
@@ -767,9 +870,11 @@ export class QuotationComponent implements OnInit, OnDestroy {
       phvHz: string;
       qty: number;
       discPrice: number;
+      miscTotal: number;
       lineTotal: number;
     }>>();
     const pdfRows: QuotationPreviewPdfRow[] = [];
+    const miscRows: QuotationPreviewMiscRow[] = [];
 
     for (const productItem of detail.productItems) {
       const meta = this.parseItemMeta(productItem.remarks || '');
@@ -798,6 +903,13 @@ export class QuotationComponent implements OnInit, OnDestroy {
         meta.itemRemarks ? this.escapeHtml(meta.itemRemarks) : '',
         installLines,
       ].filter((part) => String(part).trim().length > 0);
+      const miscTotal = (meta.installationDetails ?? []).reduce((sum, install) => {
+        const unitPrice = Number(install.unitPrice ?? 0);
+        const excessQty = Number(install.excessQty ?? 0);
+        return sum + unitPrice * Math.max(0, excessQty);
+      }, 0);
+      const quantity = Number(productItem.totalSetQty ?? 0);
+      const lineTotal = this.calculatePreviewLineTotal(priceToUse, quantity, miscTotal);
 
       if (!groupedItems.has(groupName)) {
         groupedItems.set(groupName, []);
@@ -809,9 +921,10 @@ export class QuotationComponent implements OnInit, OnDestroy {
         frequency: 'N/A',
         capacity: this.escapeHtml(productItem.capacityName || '-'),
         phvHz: '1/230/60',
-        qty: Number(productItem.totalSetQty ?? 0),
+        qty: quantity,
         discPrice: priceToUse,
-        lineTotal: Number(productItem.lineTotal ?? 0),
+        miscTotal,
+        lineTotal,
       });
 
       pdfRows.push({
@@ -834,10 +947,29 @@ export class QuotationComponent implements OnInit, OnDestroy {
           .filter((part) => part.trim().length > 0)
           .join(' | '),
         capacity: String(productItem.capacityName || '-'),
-        qty: Number(productItem.totalSetQty ?? 0),
+        qty: quantity,
         discPrice: priceToUse,
-        lineTotal: Number(productItem.lineTotal ?? 0),
+        miscTotal,
+        lineTotal,
       });
+
+      for (const install of meta.installationDetails ?? []) {
+        const unitPrice = Number(install.unitPrice ?? 0);
+        const excessQty = Number(install.excessQty ?? 0);
+        const amount = unitPrice * Math.max(0, excessQty);
+        if (amount <= 0) {
+          continue;
+        }
+
+        miscRows.push({
+          groupName,
+          model: String(productItem.productName || '-'),
+          description: String(install.description || '').trim() || 'Miscellaneous',
+          unitPrice,
+          excessQty,
+          amount,
+        });
+      }
     }
 
     const tableRowsHtml = [...groupedItems.entries()]
@@ -868,6 +1000,22 @@ export class QuotationComponent implements OnInit, OnDestroy {
       .join('');
 
     const logoSrc = await this.loadLogoPreviewSrc();
+    const miscTableRowsHtml = miscRows.length > 0
+      ? miscRows
+          .map((row) => `
+            <tr>
+              <td>${this.escapeHtml(row.groupName)}</td>
+              <td>${this.escapeHtml(row.model)}</td>
+              <td>${this.escapeHtml(row.description)}</td>
+              <td class="right">${this.formatAmount(row.unitPrice)}</td>
+              <td class="right">${row.excessQty}</td>
+              <td class="right">${this.formatAmount(row.amount)}</td>
+            </tr>
+          `)
+          .join('')
+      : '<tr><td colspan="6" class="center">No miscellaneous costs</td></tr>';
+
+    const totalAmount = pdfRows.reduce((sum, row) => sum + Number(row.lineTotal ?? 0), 0);
 
     const html = this.buildQuotationPreviewHtml({
       quoteNo: String(detail.quoteNo || '').trim() || 'AUTO GENERATED',
@@ -876,9 +1024,10 @@ export class QuotationComponent implements OnInit, OnDestroy {
       customerContactPerson: detail.customerContactPerson,
       customerContactNumber: detail.customerContactNumber,
       customerAddress: detail.customerAddress,
-      totalAmount: detail.totalAmount,
+      totalAmount,
       logoSrc,
       tableRowsHtml,
+      miscTableRowsHtml,
       termsConditions: detail.termsConditions,
     });
 
@@ -889,8 +1038,9 @@ export class QuotationComponent implements OnInit, OnDestroy {
       customerContactPerson: detail.customerContactPerson,
       customerContactNumber: detail.customerContactNumber,
       customerAddress: detail.customerAddress,
-      totalAmount: Number(detail.totalAmount ?? 0),
+      totalAmount,
       rows: pdfRows,
+      miscRows,
     };
 
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
@@ -909,9 +1059,11 @@ export class QuotationComponent implements OnInit, OnDestroy {
       phvHz: string;
       qty: number;
       discPrice: number;
+      miscTotal: number;
       lineTotal: number;
     }>>();
     const pdfRows: QuotationPreviewPdfRow[] = [];
+    const miscRows: QuotationPreviewMiscRow[] = [];
 
     for (const row of this.form.productItems) {
       const groupName = String(row.grouping || '').trim() || 'UNSPECIFIED AREA';
@@ -941,6 +1093,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
         String(row.remarks || '').trim() ? this.escapeHtml(String(row.remarks || '').trim()) : '',
         installLines,
       ].filter((part) => String(part).trim().length > 0);
+      const miscTotal = this.getMiscTotal(row);
 
       if (!groupedItems.has(groupName)) {
         groupedItems.set(groupName, []);
@@ -954,6 +1107,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
         phvHz: '1/230/60',
         qty: Number(row.totalSetQty ?? 0),
         discPrice: priceToUse,
+        miscTotal,
         lineTotal: this.getLineTotal(row),
       });
 
@@ -979,8 +1133,27 @@ export class QuotationComponent implements OnInit, OnDestroy {
         capacity: capacityName,
         qty: Number(row.totalSetQty ?? 0),
         discPrice: priceToUse,
+        miscTotal,
         lineTotal: this.getLineTotal(row),
       });
+
+      for (const install of row.installationDetails ?? []) {
+        const unitPrice = Number(install.unitPrice ?? 0);
+        const excessQty = Number(install.excessQty ?? 0);
+        const amount = unitPrice * Math.max(0, excessQty);
+        if (amount <= 0) {
+          continue;
+        }
+
+        miscRows.push({
+          groupName,
+          model: productName,
+          description: String(install.description || '').trim() || 'Miscellaneous',
+          unitPrice,
+          excessQty,
+          amount,
+        });
+      }
     }
 
     const tableRowsHtml = [...groupedItems.entries()]
@@ -1011,6 +1184,20 @@ export class QuotationComponent implements OnInit, OnDestroy {
       .join('');
 
     const logoSrc = await this.loadLogoPreviewSrc();
+    const miscTableRowsHtml = miscRows.length > 0
+      ? miscRows
+          .map((row) => `
+            <tr>
+              <td>${this.escapeHtml(row.groupName)}</td>
+              <td>${this.escapeHtml(row.model)}</td>
+              <td>${this.escapeHtml(row.description)}</td>
+              <td class="right">${this.formatAmount(row.unitPrice)}</td>
+              <td class="right">${row.excessQty}</td>
+              <td class="right">${this.formatAmount(row.amount)}</td>
+            </tr>
+          `)
+          .join('')
+      : '<tr><td colspan="6" class="center">No miscellaneous costs</td></tr>';
 
     const html = this.buildQuotationPreviewHtml({
       quoteNo: 'AUTO GENERATED',
@@ -1022,6 +1209,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       totalAmount: this.form.totalAmount,
       logoSrc,
       tableRowsHtml,
+      miscTableRowsHtml,
       termsConditions: this.form.termsConditions,
     });
 
@@ -1034,6 +1222,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       customerAddress: this.form.customer.address,
       totalAmount: Number(this.form.totalAmount ?? 0),
       rows: pdfRows,
+      miscRows,
     };
 
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
@@ -1070,6 +1259,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
     totalAmount: number;
     logoSrc: string | null;
     tableRowsHtml: string;
+    miscTableRowsHtml: string;
     termsConditions?: QuotationTermsConditions;
   }): string {
     const tc = payload.termsConditions ?? {};
@@ -1089,6 +1279,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
           <title>Quotation ${this.escapeHtml(payload.quoteNo)}</title>
           <style>
             body { font-family: Arial, sans-serif; margin: 20px; color: #111; font-size: 12px; }
+            html, body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
             .top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
             .logo { width: 150px; }
             .contacts { color: #1f3f9a; font-size: 12px; line-height: 1.3; font-weight: 600; text-align: left; }
@@ -1096,18 +1287,18 @@ export class QuotationComponent implements OnInit, OnDestroy {
             .customer-lines { width: 60%; line-height: 1.45; }
             .customer-lines .label { display: inline-block; width: 110px; }
             .contract-box { width: 34%; }
-            .contract-title { background: #d9d9d9; padding: 4px 8px; font-weight: 700; margin-bottom: 8px; }
+            .contract-title { background-color: #0f9cdf !important; color: #ffffff !important; padding: 4px 8px; font-weight: 700; margin-bottom: 8px; }
             .contract-meta { font-size: 12px; line-height: 1.4; }
             table { border-collapse: collapse; width: 100%; margin-top: 6px; }
             th, td { border: 1px solid #888; padding: 5px 6px; font-size: 11px; vertical-align: top; }
-            th { background: #d9d9d9; text-align: left; }
+            th { background-color: #0f9cdf !important; color: #ffffff !important; text-align: left; }
             .center { text-align: center; }
             .right { text-align: right; }
             .section-row { background: #efefef; font-weight: 700; text-transform: uppercase; }
             .mid { display: flex; gap: 16px; margin-top: 10px; }
             .payment { flex: 1; }
             .totals { width: 240px; }
-            .block-title { background: #d9d9d9; padding: 4px 8px; font-weight: 700; margin-bottom: 6px; }
+            .block-title { background-color: #0f9cdf !important; color: #ffffff !important; padding: 4px 8px; font-weight: 700; margin-bottom: 6px; }
             .payment-row { display: flex; gap: 10px; line-height: 1.45; margin-bottom: 2px; }
             .payment-row .label { width: 110px; color: #333; }
             .totals-row { display: flex; justify-content: space-between; border-bottom: 1px solid #aaa; padding: 2px 0; font-weight: 700; }
@@ -1117,6 +1308,15 @@ export class QuotationComponent implements OnInit, OnDestroy {
             .signatures { margin-top: 70px; display: flex; justify-content: space-between; }
             .sig { width: 250px; font-size: 12px; }
             .sig-line { border-top: 1px solid #333; margin-top: 22px; padding-top: 4px; }
+            @media print {
+              html, body, table, thead, tbody, tr, th, td, .contract-title, .block-title {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+              }
+              th { background-color: #0f9cdf !important; color: #ffffff !important; }
+              .contract-title, .block-title { background-color: #0f9cdf !important; color: #ffffff !important; }
+            }
           </style>
         </head>
         <body>
@@ -1155,7 +1355,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
                 <th style="width: 8%;">Capacity</th>
                 <th style="width: 9%;">Ph/V/Hz</th>
                 <th style="width: 6%;">Qty</th>
-                <th style="width: 9%;">DISC PRICE</th>
+                <th style="width: 8%;">DISC PRICE</th>
                 <th style="width: 9%;">TOTAL (PHP)</th>
               </tr>
             </thead>
@@ -1163,6 +1363,25 @@ export class QuotationComponent implements OnInit, OnDestroy {
               ${payload.tableRowsHtml || '<tr><td colspan="8" class="center">No quotation items</td></tr>'}
             </tbody>
           </table>
+
+          <div class="terms" style="margin-top: 8px;">
+            <div class="block-title">MATERIAL MISCELLANEOUS</div>
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 16%;">Section</th>
+                  <th style="width: 20%;">Model</th>
+                  <th style="width: 34%;">Description</th>
+                  <th style="width: 10%;">Unit Price</th>
+                  <th style="width: 8%;">Excess</th>
+                  <th style="width: 12%;">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${payload.miscTableRowsHtml}
+              </tbody>
+            </table>
+          </div>
 
           <div class="mid">
             <div class="payment">
@@ -1535,5 +1754,9 @@ export class QuotationComponent implements OnInit, OnDestroy {
 
   isConverted(item: QuotationListItem): boolean {
     return String(item.status ?? '').trim().toLowerCase() === 'converted';
+  }
+
+  isExpired(item: QuotationListItem): boolean {
+    return Boolean(item.isDeleted) || String(item.status ?? '').trim().toLowerCase() === 'expired';
   }
 }

@@ -14,6 +14,7 @@ import { SerialNumberService } from './serial-number.service';
 import { CreateSerialNumberDto } from './dto/create-serial-number.dto';
 import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { ScanSalesOrderDto } from './dto/scan-sales-order.dto';
+import { ScanSalesOrderBatchDto } from './dto/scan-sales-order-batch.dto';
 import { ScanPurchaseOrderDto } from './dto/scan-purchase-order.dto';
 import { ScanPurchaseOrderBatchDto } from './dto/scan-purchase-order-batch.dto';
 import { RemovePurchaseOrderSerialDto } from './dto/remove-purchase-order-serial.dto';
@@ -49,6 +50,17 @@ export class SerialNumberController {
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
 
     return this.serialNumberService.scanSalesOrder(dto, normalizedUserId);
+  }
+
+  @Post('scan-sales-order/batch')
+  scanSalesOrderBatch(
+    @Body() dto: ScanSalesOrderBatchDto,
+    @Req() request: { user?: { sub?: unknown } },
+  ) {
+    const userId = Number(request.user?.sub);
+    const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
+
+    return this.serialNumberService.scanSalesOrderBatch(dto, normalizedUserId);
   }
 
   @Post('scan-purchase-order')

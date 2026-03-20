@@ -12,6 +12,7 @@ import {
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { CreateQuotationDto } from './dto/create-quotation.dto';
 import { ListQuotationQueryDto } from './dto/list-quotation-query.dto';
+import { PermanentDeleteQuotationDto } from './dto/permanent-delete-quotation.dto';
 import { UpdateQuotationDto } from './dto/update-quotation.dto';
 import { QuotationService } from './quotation.service';
 
@@ -102,6 +103,23 @@ export class QuotationController {
       +id,
       Number.isFinite(userId) ? userId : undefined,
       Number.isFinite(branchId) ? branchId : undefined,
+    );
+  }
+
+  @Post(':id/permanent-delete')
+  permanentDelete(
+    @Param('id') id: string,
+    @Body() body: PermanentDeleteQuotationDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    const roleName = String(request.user?.roleName ?? request.user?.role_name ?? '');
+
+    return this.quotationService.permanentDelete(
+      +id,
+      String(body.password ?? ''),
+      Number.isFinite(userId) ? userId : undefined,
+      roleName,
     );
   }
 }

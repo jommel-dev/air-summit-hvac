@@ -24,6 +24,7 @@ export interface QuotationProductItemPayload {
 export interface QuotationPayload {
   quoteNo?: string;
   quoteDate?: string;
+  validityDays?: number;
   customer_id?: string | null;
   customer?: {
     name: string;
@@ -47,9 +48,14 @@ export interface QuotationListItem {
   customerId: string | null;
   customerName: string;
   totalAmount: number;
+  validityDays?: number;
   status: string;
   remarks?: string;
   convertedSalesId?: number | null;
+  expiresAt?: string | null;
+  expiredAt?: string | null;
+  isDeleted?: boolean;
+  deletedAt?: string | null;
   createdAt?: string | null;
 }
 
@@ -59,7 +65,12 @@ export interface QuotationDetailItem extends QuotationListItem {
   customerContactNumber: string;
   customerEmail: string;
   customerTinNumber: string;
+  validityDays?: number;
   termsConditions?: QuotationTermsConditions;
+  expiresAt?: string | null;
+  expiredAt?: string | null;
+  isDeleted?: boolean;
+  deletedAt?: string | null;
   productItems: Array<{
     id: number;
     productId: string | null;
@@ -147,6 +158,11 @@ export class QuotationService {
 
   async convertToSalesOrder(id: number): Promise<QuotationMutationResponse> {
     const response = await apiClient.post<QuotationMutationResponse>(`/quotation/${id}/convert-to-sales-order`, {});
+    return response.data;
+  }
+
+  async permanentlyDeleteExpiredQuotation(id: number, password: string): Promise<QuotationMutationResponse> {
+    const response = await apiClient.post<QuotationMutationResponse>(`/quotation/${id}/permanent-delete`, { password });
     return response.data;
   }
 

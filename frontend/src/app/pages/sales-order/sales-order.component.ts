@@ -111,6 +111,18 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       'transfer',
     ] as const;
 
+    readonly serviceNameOptions = [
+      'CLEANING',
+      'DISMANTLE',
+      'RELOCATION',
+      'CHARING FREON',
+      'SURVEY',
+      'CHIPPING',
+      'PUMP DOWN',
+      'INSTALL ONLY',
+      'CHECKUP',
+    ] as const;
+
     readonly paymentMethodOptions: SalesPaymentFormItem['method'][] = [
       'Cash',
       'Bank Transfer',
@@ -1593,10 +1605,6 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
     if (salesType === 'concern') {
       const cd = this.form.concernDetails ?? {};
-      if (!String(cd.concernType ?? '').trim() && !String(cd.concernSubject ?? '').trim()) {
-        this.uiError = 'Please provide concern type or subject.';
-        return;
-      }
       if (!String(cd.concernDescription ?? '').trim()) {
         this.uiError = 'Please provide a concern description.';
         return;
@@ -1745,12 +1753,12 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       if (!hasConcernInfo) return undefined;
 
       return {
-        concernType: cd.concernType || undefined,
-        concernSubject: cd.concernSubject || undefined,
-        concernDescription: cd.concernDescription || undefined,
-        concernStatus: cd.concernStatus || undefined,
-        priority: cd.priority || undefined,
-        resolutionNotes: cd.resolutionNotes || undefined,
+        concernType: String(cd.concernType ?? '').trim() || undefined,
+        concernSubject: String(cd.concernSubject ?? '').trim() || undefined,
+        concernDescription: String(cd.concernDescription ?? '').trim() || undefined,
+        concernStatus: String(cd.concernStatus ?? '').trim() || undefined,
+        priority: String(cd.priority ?? '').trim() || undefined,
+        resolutionNotes: String(cd.resolutionNotes ?? '').trim() || undefined,
         resolvedAt: cd.resolvedAt || undefined,
       };
     })();
@@ -1814,7 +1822,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
             Number(item.qty) > 0,
         )
         .map((item: any) => ({
-          serviceName: item.serviceName || undefined,
+          serviceName: String(item.serviceName ?? '').trim() || undefined,
           serviceCost: Number(item.unitPrice) || 0,
           serviceDurationHours: Number(item.qty) || 0,
           serviceNotes: '',
