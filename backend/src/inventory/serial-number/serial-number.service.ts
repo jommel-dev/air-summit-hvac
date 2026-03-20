@@ -3,6 +3,9 @@ import { CreateSerialNumberDto } from './dto/create-serial-number.dto';
 import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { ScanSalesOrderDto } from './dto/scan-sales-order.dto';
+import {
+  ScanSalesOrderBatchDto,
+} from './dto/scan-sales-order-batch.dto';
 import { ScanPurchaseOrderDto } from './dto/scan-purchase-order.dto';
 import {
   ScanPurchaseOrderBatchDto,
@@ -1072,6 +1075,72 @@ export class SerialNumberService {
         status: 'reserved',
         branchId: branchId !== null ? String(branchId) : serial.branchId,
       },
+    };
+  }
+
+  async scanSalesOrderBatch(dto: ScanSalesOrderBatchDto, userId?: number) {
+    const items = Array.isArray(dto.items) ? dto.items : [];
+    if (items.length === 0) {
+      return {
+        success: false,
+        message: 'At least one serial scan item is required',
+        items: [],
+      };
+    }
+
+    const results: Array<{
+      serialNumber: string;
+      success: boolean;
+      message?: string;
+      item?: {
+        serialNumber?: string | null;
+      };
+    }> = [];
+
+    for (const entry of items) {
+      const payload = {
+        serialNumber: entry.serialNumber,
+        salesId: entry.salesId,
+        ...(entry.branchId === null || entry.branchId === undefined
+          ? {}
+          : { branchId: entry.branchId }),
+        ...(entry.expectedProductId === null || entry.expectedProductId === undefined
+          ? {}
+          : { expectedProductId: entry.expectedProductId }),
+        ...(entry.expectedCapacityId === null || entry.expectedCapacityId === undefined
+          ? {}
+          : { expectedCapacityId: entry.expectedCapacityId }),
+        ...(entry.expectedUnitType === null || entry.expectedUnitType === undefined
+          ? {}
+          : { expectedUnitType: entry.expectedUnitType }),
+      };
+
+      const result = await this.scanSalesOrder(payload, userId);
+      results.push({
+        serialNumber: this.normalizeSerialNumber(entry.serialNumber),
+        success: Boolean(result.success),
+        message: result.message,
+        item: {
+          serialNumber: result.item?.serialNumber ?? null,
+        },
+      });
+    }
+
+    const successCount = results.filter((entry) => entry.success).length;
+    const failureCount = results.length - successCount;
+
+    return {
+      success: failureCount === 0,
+      message:
+        failureCount === 0
+          ? `Successfully scanned ${successCount} serial number${successCount === 1 ? '' : 's'}`
+          : `Scanned ${successCount} serial number${successCount === 1 ? '' : 's'} with ${failureCount} failure${failureCount === 1 ? '' : 's'}`,
+      summary: {
+        total: results.length,
+        successCount,
+        failureCount,
+      },
+      items: results,
     };
   }
 

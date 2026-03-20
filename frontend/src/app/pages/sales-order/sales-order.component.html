@@ -787,11 +787,11 @@
             <div class="grid gap-3 md:grid-cols-2">
               <div>
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Concern Type</label>
-                <input type="text" [(ngModel)]="form.concernDetails.concernType" name="concernType" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                <input type="text" [(ngModel)]="form.concernDetails.concernType" name="concernType" placeholder="Optional concern type" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
               </div>
               <div>
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Subject</label>
-                <input type="text" [(ngModel)]="form.concernDetails.concernSubject" name="concernSubject" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                <input type="text" [(ngModel)]="form.concernDetails.concernSubject" name="concernSubject" placeholder="Optional concern subject" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
               </div>
               <div class="md:col-span-2">
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Description</label>
@@ -892,13 +892,17 @@
                 <div class="grid gap-3 md:grid-cols-2">
                   <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Service Name</label>
-                    <input
-                      type="text"
+                    <select
                       [(ngModel)]="activeItem.serviceName"
                       (ngModelChange)="recalculateTotalAmount()"
                       name="serviceName_{{activeServiceTabIndex}}"
                       class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    />
+                    >
+                      <option value="">Select service</option>
+                      @for (serviceName of serviceNameOptions; track serviceName) {
+                        <option [value]="serviceName">{{ serviceName }}</option>
+                      }
+                    </select>
                   </div>
                   <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Unit Price</label>

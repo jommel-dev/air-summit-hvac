@@ -36,7 +36,7 @@
 
   <aside class="fixed right-0 top-0 z-[100001] h-full w-full max-w-2xl transform border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
     [ngClass]="isFormDrawerOpen ? 'translate-x-0' : 'translate-x-full'">
-    <form class="relative flex h-full flex-col" (ngSubmit)="submitCreatePurchase()">
+    <form class="relative flex h-full flex-col" (ngSubmit)="submitCreatePurchase()" novalidate>
       @if (isFormDrawerBusy) {
         <div class="absolute inset-0 z-50 flex items-center justify-center bg-white/80 backdrop-blur-sm dark:bg-gray-950/80">
           <div class="mx-6 w-full max-w-sm rounded-2xl border border-gray-200 bg-white px-6 py-8 text-center shadow-xl dark:border-gray-800 dark:bg-gray-900">
@@ -86,7 +86,7 @@
                   class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
                 />
 
-                <input type="hidden" [(ngModel)]="createForm.vendorId" name="vendorId" required />
+                <input type="hidden" [(ngModel)]="createForm.vendorId" name="vendorId" />
 
                 @if (isVendorDropdownOpen && !isMasterDataDrawerMode()) {
                   <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">

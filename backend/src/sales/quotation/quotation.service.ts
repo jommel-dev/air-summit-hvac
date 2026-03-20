@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { CreateQuotationDto } from './dto/create-quotation.dto';
 import { ListQuotationQueryDto } from './dto/list-quotation-query.dto';
 import { UpdateQuotationDto } from './dto/update-quotation.dto';
@@ -88,17 +88,57 @@ export class QuotationService {
     return parsed.toISOString();
   }
 
-  private normalizeStatus(status: unknown): 'draft' | 'finalized' | 'converted' | 'cancelled' {
+  private normalizeStatus(status: unknown): 'draft' | 'finalized' | 'converted' | 'cancelled' | 'expired' {
     const normalized = String(status ?? 'draft')
       .trim()
       .toLowerCase()
       .replace(/[\s_]+/g, '-');
 
-    if (['finalized', 'converted', 'cancelled'].includes(normalized)) {
-      return normalized as 'finalized' | 'converted' | 'cancelled';
+    if (['finalized', 'converted', 'cancelled', 'expired'].includes(normalized)) {
+      return normalized as 'finalized' | 'converted' | 'cancelled' | 'expired';
     }
 
     return 'draft';
+  }
+
+  private getDatabaseExecutor(): TableQueryExecutor {
+    return {
+      query: this.databaseService.query.bind(this.databaseService) as PoolClient['query'],
+    };
+  }
+
+  private normalizeValidityDays(value: unknown): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      return 14;
+    }
+
+    return Math.min(3650, Math.max(1, Math.floor(parsed)));
+  }
+
+  private computeExpiresAt(quoteDate: string, validityDays: number): string {
+    const parsed = new Date(String(quoteDate));
+    if (Number.isNaN(parsed.getTime())) {
+      return new Date().toISOString();
+    }
+
+    parsed.setUTCDate(parsed.getUTCDate() + this.normalizeValidityDays(validityDays));
+    return parsed.toISOString();
+  }
+
+  private async softDeleteExpiredDraftQuotations(executor: TableQueryExecutor): Promise<void> {
+    await executor.query(
+      `UPDATE tblquotation
+       SET status = 'expired',
+           is_deleted = true,
+           expired_at = COALESCE(expired_at, NOW()),
+           deleted_at = COALESCE(deleted_at, NOW()),
+           updated_at = NOW()
+       WHERE COALESCE(is_deleted, false) = false
+         AND LOWER(COALESCE(status, 'draft')) = 'draft'
+         AND expires_at IS NOT NULL
+         AND expires_at <= NOW()`
+    );
   }
 
   private calculateItemLineTotal(item: {
@@ -106,13 +146,42 @@ export class QuotationService {
     sellPrice?: unknown;
     discountPrice?: unknown;
     totalSetQty?: unknown;
+    remarks?: unknown;
   }): number {
     const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
     const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
     const discountPrice = this.toOptionalNumber(item.discountPrice) ?? 0;
     const totalSetQty = this.toOptionalNumber(item.totalSetQty) ?? 0;
     const priceToUse = discountPrice > 0 ? discountPrice : sellPrice > 0 ? sellPrice : unitPrice;
-    return priceToUse * totalSetQty;
+    return priceToUse * totalSetQty + this.extractMiscTotalFromRemarks(item.remarks);
+  }
+
+  private extractMiscTotalFromRemarks(remarks: unknown): number {
+    const raw = String(remarks ?? '').trim();
+    if (!raw.startsWith('__QMETA__')) {
+      return 0;
+    }
+
+    try {
+      const parsed = JSON.parse(raw.replace('__QMETA__', '').trim()) as {
+        installationDetails?: Array<{
+          unitPrice?: unknown;
+          excessQty?: unknown;
+        }>;
+      };
+
+      if (!Array.isArray(parsed.installationDetails)) {
+        return 0;
+      }
+
+      return parsed.installationDetails.reduce((sum, detail) => {
+        const detailUnitPrice = this.toOptionalNumber(detail?.unitPrice) ?? 0;
+        const detailExcessQty = this.toOptionalNumber(detail?.excessQty) ?? 0;
+        return sum + detailUnitPrice * Math.max(0, detailExcessQty);
+      }, 0);
+    } catch {
+      return 0;
+    }
   }
 
   private async upsertCustomerFromPayload(
@@ -137,7 +206,7 @@ export class QuotationService {
 
     const customerColumns = await this.getTableColumns(executor, 'tblcustomer');
     const customerIdColumn = this.pickColumn(customerColumns, ['id']);
-    const customerNameColumn = this.pickColumn(customerColumns, ['name']);
+  const customerNameColumn = this.pickColumn(customerColumns, ['name', 'customer_name']);
     const customerAddressColumn = this.pickColumn(customerColumns, ['address']);
     const customerContactPersonColumn = this.pickColumn(customerColumns, ['contact_person', 'contactPerson']);
     const customerContactNumberColumn = this.pickColumn(customerColumns, ['contact_number', 'contactNumber']);
@@ -148,6 +217,61 @@ export class QuotationService {
       throw new Error('tblcustomer name column is missing');
     }
 
+    const address = String(payload.customer?.address ?? '').trim();
+    const contactPerson = String(payload.customer?.contact_person ?? '').trim();
+    const contactNumber = String(payload.customer?.contact_number ?? '').trim();
+    const email = String(payload.customer?.email ?? '').trim();
+    const tinNumber = String(payload.customer?.tin_number ?? '').trim();
+
+    const duplicateParams: string[] = [customerName];
+    const duplicateWhere = [
+      `LOWER(TRIM(COALESCE("${customerNameColumn}"::text, ''))) = LOWER(TRIM($1))`,
+    ];
+
+    if (customerAddressColumn && address) {
+      duplicateParams.push(address);
+      duplicateWhere.push(
+        `LOWER(TRIM(COALESCE("${customerAddressColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+      );
+    }
+    if (customerContactPersonColumn && contactPerson) {
+      duplicateParams.push(contactPerson);
+      duplicateWhere.push(
+        `LOWER(TRIM(COALESCE("${customerContactPersonColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+      );
+    }
+    if (customerContactNumberColumn && contactNumber) {
+      duplicateParams.push(contactNumber);
+      duplicateWhere.push(
+        `LOWER(TRIM(COALESCE("${customerContactNumberColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+      );
+    }
+    if (customerEmailColumn && email) {
+      duplicateParams.push(email);
+      duplicateWhere.push(
+        `LOWER(TRIM(COALESCE("${customerEmailColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+      );
+    }
+    if (customerTinColumn && tinNumber) {
+      duplicateParams.push(tinNumber);
+      duplicateWhere.push(
+        `LOWER(TRIM(COALESCE("${customerTinColumn}"::text, ''))) = LOWER(TRIM($${duplicateParams.length}))`,
+      );
+    }
+
+    const duplicateCustomer = await executor.query<{ id: string }>(
+      `SELECT id::text AS id
+       FROM tblcustomer
+       WHERE ${duplicateWhere.join(' AND ')}
+       ORDER BY id ASC
+       LIMIT 1`,
+      duplicateParams,
+    );
+
+    if (duplicateCustomer.rowCount > 0) {
+      return String(duplicateCustomer.rows[0].id);
+    }
+
     const customerRecord: Record<string, unknown> = {
       [customerNameColumn]: customerName,
     };
@@ -155,12 +279,6 @@ export class QuotationService {
     if (customerIdColumn) {
       customerRecord[customerIdColumn] = randomUUID();
     }
-
-    const address = String(payload.customer?.address ?? '').trim();
-    const contactPerson = String(payload.customer?.contact_person ?? '').trim();
-    const contactNumber = String(payload.customer?.contact_number ?? '').trim();
-    const email = String(payload.customer?.email ?? '').trim();
-    const tinNumber = String(payload.customer?.tin_number ?? '').trim();
 
     if (customerAddressColumn && address) customerRecord[customerAddressColumn] = address;
     if (customerContactPersonColumn && contactPerson) customerRecord[customerContactPersonColumn] = contactPerson;
@@ -208,6 +326,8 @@ export class QuotationService {
           computedTotal > 0 ? computedTotal : this.toOptionalNumber(createQuotationDto.totalAmount) ?? 0;
 
         const quoteDate = this.toIsoDateOrNull(createQuotationDto.quoteDate) ?? new Date().toISOString();
+        const validityDays = this.normalizeValidityDays(createQuotationDto.validityDays);
+        const expiresAt = this.computeExpiresAt(quoteDate, validityDays);
         const status = this.normalizeStatus(createQuotationDto.status);
 
         const quotationRecord: Record<string, unknown> = {
@@ -220,6 +340,8 @@ export class QuotationService {
           customer_email: String(createQuotationDto.customer?.email ?? '').trim(),
           customer_tin_number: String(createQuotationDto.customer?.tin_number ?? '').trim(),
           total_amount: totalAmount,
+          validity_days: validityDays,
+          expires_at: expiresAt,
           status,
           remarks: String(createQuotationDto.remarks ?? '').trim(),
           terms_conditions: JSON.stringify({
@@ -298,6 +420,8 @@ export class QuotationService {
   }
 
   async findAll(query: ListQuotationQueryDto) {
+    await this.softDeleteExpiredDraftQuotations(this.getDatabaseExecutor());
+
     const page = this.normalizePage(query.page);
     const limit = this.normalizeLimit(query.limit);
     const offset = (page - 1) * limit;
@@ -319,9 +443,16 @@ export class QuotationService {
     }
 
     if (status && status !== 'all') {
-      params.push(status);
-      const idx = params.length;
-      whereParts.push(`LOWER(COALESCE(q.status, '')) = $${idx}`);
+      if (status === 'expired') {
+        whereParts.push(`(COALESCE(q.is_deleted, false) = true OR LOWER(COALESCE(q.status, '')) = 'expired')`);
+      } else {
+        params.push(status);
+        const idx = params.length;
+        whereParts.push(`LOWER(COALESCE(q.status, '')) = $${idx}`);
+        whereParts.push(`COALESCE(q.is_deleted, false) = false`);
+      }
+    } else {
+      whereParts.push(`COALESCE(q.is_deleted, false) = false`);
     }
 
     if (Number.isFinite(branchId) && branchId > 0) {
@@ -355,9 +486,14 @@ export class QuotationService {
       customerId: string | null;
       customerName: string | null;
       totalAmount: string | null;
+      validityDays: string | null;
       status: string | null;
       remarks: string | null;
       convertedSalesId: string | null;
+      expiresAt: string | null;
+      expiredAt: string | null;
+      isDeleted: boolean | null;
+      deletedAt: string | null;
       createdAt: string | null;
     }>(
       `SELECT
@@ -367,9 +503,14 @@ export class QuotationService {
          q.customer_id::text AS "customerId",
          q.customer_name AS "customerName",
          q.total_amount::text AS "totalAmount",
+         q.validity_days::text AS "validityDays",
          q.status,
          q.remarks,
          q.converted_sales_id::text AS "convertedSalesId",
+         q.expires_at::text AS "expiresAt",
+         q.expired_at::text AS "expiredAt",
+         q.is_deleted AS "isDeleted",
+         q.deleted_at::text AS "deletedAt",
          q.created_at::text AS "createdAt"
        FROM tblquotation q
        ${whereSql}
@@ -388,9 +529,14 @@ export class QuotationService {
         customerId: row.customerId,
         customerName: String(row.customerName ?? '').trim(),
         totalAmount: Number(row.totalAmount ?? 0),
+        validityDays: this.normalizeValidityDays(row.validityDays),
         status: String(row.status ?? 'draft').trim() || 'draft',
         remarks: String(row.remarks ?? '').trim(),
         convertedSalesId: this.toOptionalNumber(row.convertedSalesId),
+        expiresAt: row.expiresAt,
+        expiredAt: row.expiredAt,
+        isDeleted: Boolean(row.isDeleted),
+        deletedAt: row.deletedAt,
         createdAt: row.createdAt,
       })),
       meta: {
@@ -407,6 +553,8 @@ export class QuotationService {
       return { success: false, message: 'Invalid quotation id' };
     }
 
+    await this.softDeleteExpiredDraftQuotations(this.getDatabaseExecutor());
+
     const quotationResult = await this.databaseService.query<{
       id: number;
       quoteNo: string | null;
@@ -419,10 +567,15 @@ export class QuotationService {
       customerEmail: string | null;
       customerTinNumber: string | null;
       totalAmount: string | null;
+      validityDays: string | null;
       status: string | null;
       remarks: string | null;
       termsConditions: unknown;
       convertedSalesId: string | null;
+      expiresAt: string | null;
+      expiredAt: string | null;
+      isDeleted: boolean | null;
+      deletedAt: string | null;
       createdAt: string | null;
     }>(
       `SELECT
@@ -437,10 +590,15 @@ export class QuotationService {
          q.customer_email AS "customerEmail",
          q.customer_tin_number AS "customerTinNumber",
          q.total_amount::text AS "totalAmount",
+         q.validity_days::text AS "validityDays",
          q.status,
          q.remarks,
          q.terms_conditions AS "termsConditions",
          q.converted_sales_id::text AS "convertedSalesId",
+         q.expires_at::text AS "expiresAt",
+         q.expired_at::text AS "expiredAt",
+         q.is_deleted AS "isDeleted",
+         q.deleted_at::text AS "deletedAt",
          q.created_at::text AS "createdAt"
        FROM tblquotation q
        WHERE q.id = $1
@@ -516,6 +674,7 @@ export class QuotationService {
         customerEmail: String(quotation.customerEmail ?? '').trim(),
         customerTinNumber: String(quotation.customerTinNumber ?? '').trim(),
         totalAmount: Number(quotation.totalAmount ?? 0),
+        validityDays: this.normalizeValidityDays(quotation.validityDays),
         status: String(quotation.status ?? 'draft').trim() || 'draft',
         remarks: String(quotation.remarks ?? '').trim(),
         termsConditions: (() => {
@@ -525,6 +684,10 @@ export class QuotationService {
           try { return JSON.parse(String(raw)); } catch { return {}; }
         })(),
         convertedSalesId: this.toOptionalNumber(quotation.convertedSalesId),
+        expiresAt: quotation.expiresAt,
+        expiredAt: quotation.expiredAt,
+        isDeleted: Boolean(quotation.isDeleted),
+        deletedAt: quotation.deletedAt,
         createdAt: quotation.createdAt,
         productItems: itemsResult.rows.map((item) => ({
           id: item.id,
@@ -566,8 +729,24 @@ export class QuotationService {
 
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
-        const existingResult = await client.query<{ id: number; status: string | null }>(
-          `SELECT id, status FROM tblquotation WHERE id = $1 LIMIT 1`,
+        await this.softDeleteExpiredDraftQuotations(client);
+
+        const existingResult = await client.query<{
+          id: number;
+          status: string | null;
+          quoteDate: string | null;
+          validityDays: string | null;
+          isDeleted: boolean | null;
+        }>(
+          `SELECT
+             id,
+             status,
+             quote_date::text AS "quoteDate",
+             validity_days::text AS "validityDays",
+             is_deleted AS "isDeleted"
+           FROM tblquotation
+           WHERE id = $1
+           LIMIT 1`,
           [id],
         );
 
@@ -579,11 +758,25 @@ export class QuotationService {
         if (currentStatus === 'converted') {
           throw new Error('Converted quotation can no longer be edited');
         }
+        if (currentStatus === 'expired' || Boolean(existingResult.rows[0].isDeleted)) {
+          throw new Error('Expired quotation can no longer be edited');
+        }
 
         const patchRecord: Record<string, unknown> = {};
+        const nextQuoteDate =
+          this.toIsoDateOrNull(updateQuotationDto.quoteDate) ??
+          existingResult.rows[0].quoteDate ??
+          new Date().toISOString();
+        const nextValidityDays =
+          updateQuotationDto.validityDays !== undefined
+            ? this.normalizeValidityDays(updateQuotationDto.validityDays)
+            : this.normalizeValidityDays(existingResult.rows[0].validityDays);
 
         if (updateQuotationDto.quoteDate !== undefined) {
-          patchRecord.quote_date = this.toIsoDateOrNull(updateQuotationDto.quoteDate) ?? new Date().toISOString();
+          patchRecord.quote_date = nextQuoteDate;
+        }
+        if (updateQuotationDto.validityDays !== undefined) {
+          patchRecord.validity_days = nextValidityDays;
         }
         if (updateQuotationDto.remarks !== undefined) {
           patchRecord.remarks = String(updateQuotationDto.remarks ?? '').trim();
@@ -624,6 +817,7 @@ export class QuotationService {
           totalAmount = productItems.reduce((sum, item) => sum + this.calculateItemLineTotal(item), 0);
         }
         patchRecord.total_amount = totalAmount;
+        patchRecord.expires_at = this.computeExpiresAt(nextQuoteDate, nextValidityDays);
 
         if (Object.keys(patchRecord).length > 0) {
           const entries = Object.entries(patchRecord);
@@ -689,10 +883,14 @@ export class QuotationService {
       return { success: false, message: 'Invalid quotation id' };
     }
 
+    await this.softDeleteExpiredDraftQuotations(this.getDatabaseExecutor());
+
     const result = await this.databaseService.query(
       `UPDATE tblquotation
        SET status = 'finalized', updated_at = NOW()
        WHERE id = $1
+         AND COALESCE(is_deleted, false) = false
+         AND (expires_at IS NULL OR expires_at > NOW())
          AND LOWER(COALESCE(status, 'draft')) IN ('draft', 'finalized')
        RETURNING id, quote_no, status`,
       [id],
@@ -720,6 +918,8 @@ export class QuotationService {
 
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
+        await this.softDeleteExpiredDraftQuotations(client);
+
         const quotationResult = await client.query<{
           id: number;
           quote_no: string | null;
@@ -735,6 +935,7 @@ export class QuotationService {
           status: string | null;
           remarks: string | null;
           converted_sales_id: string | null;
+          is_deleted: boolean | null;
         }>(
           `SELECT *
            FROM tblquotation
@@ -749,6 +950,10 @@ export class QuotationService {
 
         const quotation = quotationResult.rows[0];
         const status = this.normalizeStatus(quotation.status);
+
+        if (status === 'expired' || Boolean(quotation.is_deleted)) {
+          throw new Error('Expired quotation can no longer be converted to Sales Order');
+        }
 
         if (status === 'converted' && this.toOptionalNumber(quotation.converted_sales_id)) {
           return {
@@ -799,7 +1004,6 @@ export class QuotationService {
         const customerId = await this.upsertCustomerFromPayload(client, customerPayload);
 
         const salesColumns = await this.getTableColumns(client, 'tblsales_order');
-        const soNumberColumn = this.pickColumn(salesColumns, ['so_number', 'soNumber']);
         const salesCustomerIdColumn = this.pickColumn(salesColumns, ['customer_id', 'customerId']);
         const totalAmountColumn = this.pickColumn(salesColumns, ['total_amount', 'totalAmount']);
         const scheduleDateColumn = this.pickColumn(salesColumns, ['scheduleDate', 'schedule_date']);
@@ -819,10 +1023,6 @@ export class QuotationService {
           [statusColumn]: 'pending',
         };
 
-        if (soNumberColumn) {
-          const sourceQuoteNo = String(quotation.quote_no ?? '').trim();
-          salesRecord[soNumberColumn] = sourceQuoteNo ? `SO-${sourceQuoteNo}` : `SO-QT-${id}`;
-        }
         if (scheduleDateColumn) {
           salesRecord[scheduleDateColumn] = this.toIsoDateOrNull(quotation.quote_date) ?? new Date().toISOString();
         }
@@ -912,5 +1112,74 @@ export class QuotationService {
         message: error instanceof Error ? error.message : 'Failed to convert quotation to Sales Order',
       };
     }
+  }
+
+  async permanentDelete(id: number, password: string, userId?: number, roleName?: string) {
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: 'Invalid quotation id' };
+    }
+
+    const effectiveUserId = Number(userId);
+    if (!Number.isFinite(effectiveUserId) || effectiveUserId <= 0) {
+      return { success: false, message: 'Invalid current user' };
+    }
+
+    const normalizedPassword = String(password ?? '').trim();
+    if (!normalizedPassword) {
+      return { success: false, message: 'Admin password is required' };
+    }
+
+    const normalizedRoleName = String(roleName ?? '').trim().toLowerCase();
+    if (!normalizedRoleName.includes('admin') && !normalizedRoleName.includes('super')) {
+      return {
+        success: false,
+        message: 'Only admin or super admin can permanently delete expired quotations',
+      };
+    }
+
+    const passwordSha1 = createHash('sha1').update(normalizedPassword).digest('hex');
+
+    const adminCheck = await this.databaseService.query<{ id: number }>(
+      `SELECT u.id
+       FROM tblusers u
+       LEFT JOIN tblrbac r
+         ON r.id::text = COALESCE(
+           to_jsonb(u)->>'roleId',
+           to_jsonb(u)->>'roleid',
+           to_jsonb(u)->>'role_id'
+         )
+       WHERE u.id = $1
+         AND u.password = $2
+         AND (
+           LOWER(COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename', '')) LIKE '%admin%'
+           OR LOWER(COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename', '')) LIKE '%super%'
+         )
+       LIMIT 1`,
+      [effectiveUserId, passwordSha1],
+    );
+
+    if (adminCheck.rowCount === 0) {
+      return { success: false, message: 'Invalid admin password' };
+    }
+
+    const deleteResult = await this.databaseService.query<{ id: number }>(
+      `DELETE FROM tblquotation
+       WHERE id = $1
+         AND (COALESCE(is_deleted, false) = true OR LOWER(COALESCE(status, '')) = 'expired')
+       RETURNING id`,
+      [id],
+    );
+
+    if (deleteResult.rowCount === 0) {
+      return { success: false, message: 'Expired quotation not found or already deleted' };
+    }
+
+    return {
+      success: true,
+      message: 'Expired quotation permanently deleted',
+      data: {
+        quotationId: Number(deleteResult.rows[0].id),
+      },
+    };
   }
 }

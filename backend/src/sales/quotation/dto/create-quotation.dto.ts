@@ -36,6 +36,7 @@ export class CreateQuotationProductItemDto {
 export class CreateQuotationDto {
   quoteNo?: string;
   quoteDate?: string;
+  validityDays?: number;
   customer_id?: string | null;
   customer?: CreateQuotationCustomerDto;
   productItems!: CreateQuotationProductItemDto[];

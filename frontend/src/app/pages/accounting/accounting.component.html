@@ -1,0 +1,215 @@
+<div>
+  <app-page-breadcrumb pageTitle="Accounting" />
+
+  <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-white/[0.02]">
+    <h3 class="text-2xl font-semibold text-gray-800 dark:text-white/90">Accounting Reports</h3>
+    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Folder Tree View for product/capacity-based financial reporting.</p>
+  </div>
+
+  @if (isLoading) {
+    <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading accounting folders...</div>
+  } @else if (errorMessage) {
+    <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+      {{ errorMessage }}
+    </div>
+  } @else {
+    <div class="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+      <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+        <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Folder Tree</h4>
+
+        <div class="mb-3">
+          <input
+            type="text"
+            [(ngModel)]="treeSearch"
+            placeholder="Search brand, product, capacity..."
+            class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+          />
+        </div>
+
+        <div class="space-y-2">
+          @for (folder of filteredBrandFolders; track folder.name) {
+            <div class="rounded-lg border border-gray-200 p-2 dark:border-gray-700">
+              <button
+                type="button"
+                (click)="toggleBrand(folder.name); selectBrand(folder.name)"
+                class="flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-sm font-medium transition hover:bg-gray-50 dark:hover:bg-gray-800"
+              >
+                <span class="text-gray-700 dark:text-gray-300">📁 {{ folder.name }}</span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ isBrandExpanded(folder.name) ? '▾' : '▸' }}</span>
+              </button>
+
+              @if (isBrandExpanded(folder.name)) {
+                <div class="ml-4 mt-1 space-y-1 border-l border-gray-200 pl-3 dark:border-gray-700">
+                  @for (product of folder.products; track product.id) {
+                    <div>
+                      <button
+                        type="button"
+                        (click)="toggleProduct(folder.name, product.id); selectProduct(folder.name, product.id)"
+                        class="flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-sm transition hover:bg-gray-50 dark:hover:bg-gray-800"
+                      >
+                        <span class="text-gray-700 dark:text-gray-300">📦 {{ product.name }}</span>
+                        <span class="text-xs text-gray-500 dark:text-gray-400">{{ isProductExpanded(folder.name, product.id) ? '▾' : '▸' }}</span>
+                      </button>
+
+                      @if (isProductExpanded(folder.name, product.id)) {
+                        <div class="ml-4 mt-1 space-y-1 border-l border-gray-200 pl-3 dark:border-gray-700">
+                          @for (capacity of product.capacities; track capacity.id) {
+                            <button
+                              type="button"
+                              (click)="selectCapacity(folder.name, product.id, capacity.id)"
+                              class="block w-full rounded-md px-2 py-1 text-left text-sm text-gray-600 transition hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800"
+                            >
+                              📄 {{ capacity.name }}
+                            </button>
+                          } @empty {
+                            <p class="px-2 py-1 text-xs text-gray-500 dark:text-gray-400">No capacities</p>
+                          }
+                        </div>
+                      }
+                    </div>
+                  } @empty {
+                    <p class="px-2 py-1 text-xs text-gray-500 dark:text-gray-400">No products</p>
+                  }
+                </div>
+              }
+            </div>
+          } @empty {
+            <p class="text-sm text-gray-500 dark:text-gray-400">No brands found.</p>
+          }
+        </div>
+      </section>
+
+      <section class="rounded-xl border border-gray-200 p-5 dark:border-gray-800">
+        <h4 class="text-base font-semibold text-gray-800 dark:text-white/90">{{ selectedNodeTitle }}</h4>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Initial accounting report generation by selected product capacity.</p>
+
+        @if (!selectedCapacity) {
+          <div class="mt-4 rounded-lg border border-dashed border-gray-300 p-4 dark:border-gray-700">
+            <p class="text-sm text-gray-600 dark:text-gray-300">Select a capacity from the folder tree to generate accounting reports.</p>
+          </div>
+        }
+
+        @if (selectedCapacity) {
+          <div class="mt-4 space-y-3">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">In-Stock Serials</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ capacityStockSummary?.counts?.inStock ?? 0 }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Reserved Serials</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ capacityStockSummary?.counts?.reserved ?? 0 }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Installed Serials</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ capacityStockSummary?.counts?.installed ?? 0 }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Margin</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ landCostingTotals.marginAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+              <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Date From</label>
+                    <input
+                      type="date"
+                      [(ngModel)]="landCostingDateFrom"
+                      class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700"
+                    />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Date To</label>
+                    <input
+                      type="date"
+                      [(ngModel)]="landCostingDateTo"
+                      class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700"
+                    />
+                  </div>
+                </div>
+
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    (click)="reloadReport()"
+                    [disabled]="isLoadingLandCostingReport"
+                    class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                  >
+                    {{ isLoadingLandCostingReport ? 'Loading...' : 'Generate Report' }}
+                  </button>
+                  <button
+                    type="button"
+                    (click)="exportReportAsExcel()"
+                    class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    Export Excel
+                  </button>
+                  <button
+                    type="button"
+                    (click)="exportReportAsPdf()"
+                    class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    Export PDF
+                  </button>
+                </div>
+              </div>
+
+              @if (capacityStockError) {
+                <p class="mt-3 text-sm text-error-600 dark:text-error-400">{{ capacityStockError }}</p>
+              }
+              @if (landCostingError) {
+                <p class="mt-3 text-sm text-error-600 dark:text-error-400">{{ landCostingError }}</p>
+              }
+            </div>
+
+            <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm">
+                  <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                    <tr>
+                      <th class="px-3 py-2">Product</th>
+                      <th class="px-3 py-2">Capacity</th>
+                      <th class="px-3 py-2">Vendor</th>
+                      <th class="px-3 py-2 text-right">Rows</th>
+                      <th class="px-3 py-2 text-right">Landed Cost</th>
+                      <th class="px-3 py-2 text-right">SRP</th>
+                      <th class="px-3 py-2 text-right">Margin</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (group of landCostingGroups; track group.productName + '_' + group.capacityName + '_' + group.poNumber) {
+                      <tr class="border-t border-gray-200 dark:border-gray-700">
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ group.productName || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ group.capacityName || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ group.vendorName || '-' }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ group.rows.length }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">
+                          {{ group.rows.reduce((sum, row) => sum + row.landedCost, 0) | currency:'PHP':'symbol':'1.2-2' }}
+                        </td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">
+                          {{ group.rows.reduce((sum, row) => sum + row.srp, 0) | currency:'PHP':'symbol':'1.2-2' }}
+                        </td>
+                        <td class="px-3 py-2 text-right font-medium text-gray-800 dark:text-white/90">
+                          {{ group.rows.reduce((sum, row) => sum + row.marginAmount, 0) | currency:'PHP':'symbol':'1.2-2' }}
+                        </td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="7" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                          No accounting report rows yet. Choose a capacity then click Generate Report.
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        }
+      </section>
+    </div>
+  }
+</div>

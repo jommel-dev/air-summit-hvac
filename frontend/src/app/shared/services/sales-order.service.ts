@@ -348,6 +348,24 @@ interface ScanSalesSerialResponse {
   };
 }
 
+interface ScanSalesSerialBatchResponse {
+  success: boolean;
+  message?: string;
+  summary?: {
+    total: number;
+    successCount: number;
+    failureCount: number;
+  };
+  items?: Array<{
+    serialNumber: string;
+    success: boolean;
+    message?: string;
+    item?: {
+      serialNumber?: string | null;
+    };
+  }>;
+}
+
 @Injectable({ providedIn: 'root' })
 export class SalesOrderService {
   private mapBranchOption(item: BranchOption | Record<string, unknown> | null | undefined): BranchOption {
@@ -575,8 +593,8 @@ export class SalesOrderService {
   async createCustomerStatementOfAccount(
     id: string,
     payload: { periodFrom: string; periodTo: string; dueDate?: string; notes?: string },
-  ): Promise<{ success: boolean; message?: string; data?: { statementOfAccountId?: number } }> {
-    const response = await apiClient.post<{ success: boolean; message?: string; data?: { statementOfAccountId?: number } }>(
+  ): Promise<{ success: boolean; message?: string; data?: { statementOfAccountId?: number; periodFrom?: string; periodTo?: string } }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; data?: { statementOfAccountId?: number; periodFrom?: string; periodTo?: string } }>(
       `/sales-order/customers/${id}/statement-of-account`,
       payload,
     );
@@ -629,8 +647,8 @@ export class SalesOrderService {
   async createStatementOfAccount(
     salesOrderId: number,
     payload: { periodFrom: string; periodTo: string; dueDate?: string; notes?: string },
-  ): Promise<{ success: boolean; message?: string; data?: { statementOfAccountId?: number } }> {
-    const response = await apiClient.post<{ success: boolean; message?: string; data?: { statementOfAccountId?: number } }>(
+  ): Promise<{ success: boolean; message?: string; data?: { statementOfAccountId?: number; periodFrom?: string; periodTo?: string } }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; data?: { statementOfAccountId?: number; periodFrom?: string; periodTo?: string } }>(
       `/sales-order/${salesOrderId}/statement-of-account`,
       payload,
     );
@@ -652,6 +670,23 @@ export class SalesOrderService {
   }): Promise<ScanSalesSerialResponse> {
     const response = await apiClient.post<ScanSalesSerialResponse>(
       '/serial-number/scan-sales-order',
+      payload,
+    );
+
+    return response.data;
+  }
+
+  async scanSalesSerialBatch(payload: {
+    items: Array<{
+      serialNumber: string;
+      salesId: number;
+      expectedProductId?: number;
+      expectedCapacityId?: number;
+      expectedUnitType?: string;
+    }>;
+  }): Promise<ScanSalesSerialBatchResponse> {
+    const response = await apiClient.post<ScanSalesSerialBatchResponse>(
+      '/serial-number/scan-sales-order/batch',
       payload,
     );
 

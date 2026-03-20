@@ -14,6 +14,7 @@ import { QuotationComponent } from './pages/quotation/quotation.component';
 import { MaterialInventoryComponent } from './pages/material-inventory/material-inventory.component';
 import { SalesOrderMaterialsComponent } from './pages/sales-order-materials/sales-order-materials.component';
 import { SettingsComponent } from './pages/settings/settings.component';
+import { AccountingComponent } from './pages/accounting/accounting.component';
 
 export const routes: Routes = [
   {
@@ -91,6 +92,16 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         title: 'Air Summit Aircon Services | Material Inventory',
+      },
+      {
+        path: 'accounting',
+        component: AccountingComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'inventory',
+          permission: 'canRead',
+        },
+        title: 'Air Summit Aircon Services | Accounting',
       },
       {
         path: 'sales-order-materials',
