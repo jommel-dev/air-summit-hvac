@@ -26,5 +26,9 @@
 - [ ] First Duplicate the page of Inventory because i want it to styled with Folder Tree View of any kind of reports 
 - [ ] Create initial Report generation and verify and check the implemented Backend and UI if there is any
 - [ ] The file tree mus have these items not the products: Cheque Voucher, General Journal Register, Disbursement Register, Sales Register, 2307 Tax Report, Weekly Sales, Daily Unit Realeased, Low Stocks Report and can we do like each item can be rbac configurable
-- [ ] Cheque Voucher: this kind of report where you can create vouchers that contains Payee, Voucher Date, TIN Number, Address, Zip code, multiple cheque deposits, Particulars, multiple invoices with details, Account titles Details
-- [ ] General Journal Register: this contains Description 
+- [ ] Cheque Voucher: this kind of report where you can create vouchers that contains CV No., Payee, Voucher Date, TIN Number, Address, Zip code, multiple cheque deposits, Particulars, multiple invoices with details, Account titles Details
+- [ ] General Journal Register: this contains Description,Journal No., Journal Date, Sundries (selection of List of Accounts and contains with Account Number, Description, isDebit, isCredit)
+- [ ] Disbursement Register: this was contains the report coming from the Cheque voucher i will give you the format once we are in this 
+- [ ] Sales Register: this report was contains of Sales Order which is remitted and completed
+- [ ] 2307 Tax Report: this report was all of Cheque Voucher contains Account title of Expanded withholding tax
+- [ ] the rest of the report is normal report generated and printable

@@ -3,166 +3,318 @@
 
   <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-white/[0.02]">
     <h3 class="text-2xl font-semibold text-gray-800 dark:text-white/90">Accounting Reports</h3>
-    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Folder Tree View for product/capacity-based financial reporting.</p>
+    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+      Folder tree view for Task 5 reports with per-report RBAC filtering and live data where current APIs already exist.
+    </p>
   </div>
 
-  @if (isLoading) {
-    <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading accounting folders...</div>
-  } @else if (errorMessage) {
-    <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
-      {{ errorMessage }}
-    </div>
-  } @else {
-    <div class="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
-      <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
-        <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Folder Tree</h4>
+  <div class="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
+    <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+      <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Report Tree</h4>
 
-        <div class="mb-3">
-          <input
-            type="text"
-            [(ngModel)]="treeSearch"
-            placeholder="Search brand, product, capacity..."
-            class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
-          />
-        </div>
+      <div class="mb-3">
+        <input
+          type="text"
+          [(ngModel)]="treeSearch"
+          placeholder="Search report folders or reports..."
+          class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+        />
+      </div>
 
-        <div class="space-y-2">
-          @for (folder of filteredBrandFolders; track folder.name) {
-            <div class="rounded-lg border border-gray-200 p-2 dark:border-gray-700">
+      <div class="space-y-2">
+        @for (folder of visibleReportFolders; track folder.key) {
+          <div class="rounded-lg border border-gray-200 p-2 dark:border-gray-700">
+            <button
+              type="button"
+              (click)="toggleFolder(folder.key)"
+              class="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm font-medium transition hover:bg-gray-50 dark:hover:bg-gray-800"
+            >
+              <span class="text-gray-700 dark:text-gray-300">{{ folder.name }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ isFolderExpanded(folder.key) ? 'Hide' : 'Show' }}</span>
+            </button>
+
+            @if (isFolderExpanded(folder.key)) {
+              <div class="ml-3 mt-2 space-y-2 border-l border-gray-200 pl-3 dark:border-gray-700">
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ folder.description }}</p>
+
+                @for (report of folder.reports; track report.key) {
+                  <button
+                    type="button"
+                    (click)="selectReport(report.key)"
+                    class="block w-full rounded-lg border px-3 py-2 text-left transition"
+                    [class.border-brand-300]="isSelectedReport(report.key)"
+                    [class.bg-brand-50]="isSelectedReport(report.key)"
+                    [class.text-brand-800]="isSelectedReport(report.key)"
+                    [class.border-gray-200]="!isSelectedReport(report.key)"
+                    [class.text-gray-700]="!isSelectedReport(report.key)"
+                    [class.hover:bg-gray-50]="!isSelectedReport(report.key)"
+                    [class.dark:border-gray-700]="!isSelectedReport(report.key)"
+                    [class.dark:text-gray-300]="!isSelectedReport(report.key)"
+                    [class.dark:hover:bg-gray-800]="!isSelectedReport(report.key)"
+                  >
+                    <div class="flex items-start justify-between gap-3">
+                      <div>
+                        <p class="text-sm font-medium">{{ report.name }}</p>
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ report.description }}</p>
+                      </div>
+                      <span
+                        class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                        [class.bg-success-50]="report.readiness === 'live'"
+                        [class.text-success-700]="report.readiness === 'live'"
+                        [class.bg-warning-50]="report.readiness === 'draft'"
+                        [class.text-warning-700]="report.readiness === 'draft'"
+                      >
+                        {{ report.readiness }}
+                      </span>
+                    </div>
+                  </button>
+                }
+              </div>
+            }
+          </div>
+        } @empty {
+          <p class="rounded-lg border border-dashed border-gray-300 px-3 py-4 text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+            No accounting reports are available for your current permissions.
+          </p>
+        }
+      </div>
+    </section>
+
+    <section class="rounded-xl border border-gray-200 p-5 dark:border-gray-800">
+      @if (selectedReport; as report) {
+        <div class="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <div class="flex items-center gap-2">
+              <h4 class="text-base font-semibold text-gray-800 dark:text-white/90">{{ report.name }}</h4>
+              <span
+                class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                [class.bg-success-50]="report.readiness === 'live'"
+                [class.text-success-700]="report.readiness === 'live'"
+                [class.bg-warning-50]="report.readiness === 'draft'"
+                [class.text-warning-700]="report.readiness === 'draft'"
+              >
+                {{ report.readiness }}
+              </span>
+            </div>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ report.description }}</p>
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            @if (reportUsesDateRange(report.key)) {
+              <input
+                type="date"
+                [(ngModel)]="reportDateFrom"
+                class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700"
+              />
+              <input
+                type="date"
+                [(ngModel)]="reportDateTo"
+                class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700"
+              />
+            }
+
+            @if (isLiveReport(report.key)) {
               <button
                 type="button"
-                (click)="toggleBrand(folder.name); selectBrand(folder.name)"
-                class="flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-sm font-medium transition hover:bg-gray-50 dark:hover:bg-gray-800"
+                (click)="reloadSelectedReport()"
+                [disabled]="isLoadingReport"
+                class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
               >
-                <span class="text-gray-700 dark:text-gray-300">📁 {{ folder.name }}</span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">{{ isBrandExpanded(folder.name) ? '▾' : '▸' }}</span>
+                {{ isLoadingReport ? 'Loading...' : 'Generate Report' }}
               </button>
+            }
 
-              @if (isBrandExpanded(folder.name)) {
-                <div class="ml-4 mt-1 space-y-1 border-l border-gray-200 pl-3 dark:border-gray-700">
-                  @for (product of folder.products; track product.id) {
-                    <div>
-                      <button
-                        type="button"
-                        (click)="toggleProduct(folder.name, product.id); selectProduct(folder.name, product.id)"
-                        class="flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-sm transition hover:bg-gray-50 dark:hover:bg-gray-800"
-                      >
-                        <span class="text-gray-700 dark:text-gray-300">📦 {{ product.name }}</span>
-                        <span class="text-xs text-gray-500 dark:text-gray-400">{{ isProductExpanded(folder.name, product.id) ? '▾' : '▸' }}</span>
-                      </button>
-
-                      @if (isProductExpanded(folder.name, product.id)) {
-                        <div class="ml-4 mt-1 space-y-1 border-l border-gray-200 pl-3 dark:border-gray-700">
-                          @for (capacity of product.capacities; track capacity.id) {
-                            <button
-                              type="button"
-                              (click)="selectCapacity(folder.name, product.id, capacity.id)"
-                              class="block w-full rounded-md px-2 py-1 text-left text-sm text-gray-600 transition hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800"
-                            >
-                              📄 {{ capacity.name }}
-                            </button>
-                          } @empty {
-                            <p class="px-2 py-1 text-xs text-gray-500 dark:text-gray-400">No capacities</p>
-                          }
-                        </div>
-                      }
-                    </div>
-                  } @empty {
-                    <p class="px-2 py-1 text-xs text-gray-500 dark:text-gray-400">No products</p>
-                  }
-                </div>
-              }
-            </div>
-          } @empty {
-            <p class="text-sm text-gray-500 dark:text-gray-400">No brands found.</p>
-          }
+            <button
+              type="button"
+              (click)="exportSelectedReportAsExcel()"
+              [disabled]="!canExportSelectedReport()"
+              class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Export Excel
+            </button>
+            <button
+              type="button"
+              (click)="printSelectedReport()"
+              class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Print
+            </button>
+          </div>
         </div>
-      </section>
 
-      <section class="rounded-xl border border-gray-200 p-5 dark:border-gray-800">
-        <h4 class="text-base font-semibold text-gray-800 dark:text-white/90">{{ selectedNodeTitle }}</h4>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Initial accounting report generation by selected product capacity.</p>
-
-        @if (!selectedCapacity) {
-          <div class="mt-4 rounded-lg border border-dashed border-gray-300 p-4 dark:border-gray-700">
-            <p class="text-sm text-gray-600 dark:text-gray-300">Select a capacity from the folder tree to generate accounting reports.</p>
+        @if (report.readiness === 'draft') {
+          <div class="mt-4 rounded-lg border border-warning-200 bg-warning-50 px-4 py-3 text-sm text-warning-800 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-300">
+            This workflow is structured in the UI, but dedicated accounting backend storage and posting logic are still pending.
           </div>
         }
 
-        @if (selectedCapacity) {
-          <div class="mt-4 space-y-3">
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">In-Stock Serials</p>
-                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ capacityStockSummary?.counts?.inStock ?? 0 }}</p>
+        @if (reportError) {
+          <div class="mt-4 rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+            {{ reportError }}
+          </div>
+        }
+
+        @if (report.key === 'cheque-voucher') {
+          <div class="mt-5 space-y-4">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">CV No.</label>
+                <input [(ngModel)]="chequeVoucherForm.cvNo" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
               </div>
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Reserved Serials</p>
-                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ capacityStockSummary?.counts?.reserved ?? 0 }}</p>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payee</label>
+                <input [(ngModel)]="chequeVoucherForm.payee" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
               </div>
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Installed Serials</p>
-                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ capacityStockSummary?.counts?.installed ?? 0 }}</p>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Voucher Date</label>
+                <input type="date" [(ngModel)]="chequeVoucherForm.voucherDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
               </div>
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Margin</p>
-                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ landCostingTotals.marginAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">TIN Number</label>
+                <input [(ngModel)]="chequeVoucherForm.tinNumber" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+                <input [(ngModel)]="chequeVoucherForm.address" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Zip Code</label>
+                <input [(ngModel)]="chequeVoucherForm.zipCode" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
               </div>
             </div>
 
-            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-              <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Date From</label>
-                    <input
-                      type="date"
-                      [(ngModel)]="landCostingDateFrom"
-                      class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Date To</label>
-                    <input
-                      type="date"
-                      [(ngModel)]="landCostingDateTo"
-                      class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700"
-                    />
-                  </div>
-                </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Particulars</label>
+              <textarea [(ngModel)]="chequeVoucherForm.particulars" rows="3" class="w-full rounded-lg border border-gray-300 bg-transparent px-3 py-2 text-sm dark:border-gray-700"></textarea>
+            </div>
 
-                <div class="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    (click)="reloadReport()"
-                    [disabled]="isLoadingLandCostingReport"
-                    class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
-                  >
-                    {{ isLoadingLandCostingReport ? 'Loading...' : 'Generate Report' }}
-                  </button>
-                  <button
-                    type="button"
-                    (click)="exportReportAsExcel()"
-                    class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-                  >
-                    Export Excel
-                  </button>
-                  <button
-                    type="button"
-                    (click)="exportReportAsPdf()"
-                    class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-                  >
-                    Export PDF
-                  </button>
-                </div>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Deposits</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherDepositTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
               </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Invoices</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherInvoiceTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Debits</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherDebitTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Credits</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherCreditTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+              </div>
+            </div>
 
-              @if (capacityStockError) {
-                <p class="mt-3 text-sm text-error-600 dark:text-error-400">{{ capacityStockError }}</p>
-              }
-              @if (landCostingError) {
-                <p class="mt-3 text-sm text-error-600 dark:text-error-400">{{ landCostingError }}</p>
-              }
+            <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+              <div class="mb-3 flex items-center justify-between">
+                <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Cheque Deposits</h5>
+                <button type="button" (click)="addChequeDeposit()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Deposit</button>
+              </div>
+              <div class="space-y-3">
+                @for (deposit of chequeVoucherForm.deposits; track $index) {
+                  <div class="grid grid-cols-1 gap-3 md:grid-cols-[1.2fr_1fr_1fr_120px_auto]">
+                    <input [(ngModel)]="deposit.bankName" placeholder="Bank name" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input [(ngModel)]="deposit.chequeNo" placeholder="Cheque no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input type="date" [(ngModel)]="deposit.chequeDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input type="number" [(ngModel)]="deposit.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <button type="button" (click)="removeChequeDeposit($index)" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600">Remove</button>
+                  </div>
+                }
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+              <div class="mb-3 flex items-center justify-between">
+                <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Invoices</h5>
+                <button type="button" (click)="addChequeInvoice()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Invoice</button>
+              </div>
+              <div class="space-y-3">
+                @for (invoice of chequeVoucherForm.invoices; track $index) {
+                  <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_1.5fr_120px_auto]">
+                    <input [(ngModel)]="invoice.invoiceNo" placeholder="Invoice no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input type="date" [(ngModel)]="invoice.invoiceDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input [(ngModel)]="invoice.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input type="number" [(ngModel)]="invoice.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <button type="button" (click)="removeChequeInvoice($index)" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600">Remove</button>
+                  </div>
+                }
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+              <div class="mb-3 flex items-center justify-between">
+                <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Account Titles</h5>
+                <button type="button" (click)="addAccountTitle()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Account Title</button>
+              </div>
+              <div class="space-y-3">
+                @for (accountTitle of chequeVoucherForm.accountTitles; track $index) {
+                  <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.5fr_120px_120px_auto]">
+                    <input [(ngModel)]="accountTitle.accountNumber" placeholder="Account no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input [(ngModel)]="accountTitle.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input type="number" [(ngModel)]="accountTitle.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input type="number" [(ngModel)]="accountTitle.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <button type="button" (click)="removeAccountTitle($index)" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600">Remove</button>
+                  </div>
+                }
+              </div>
+            </div>
+          </div>
+        }
+
+        @if (report.key === 'general-journal-register') {
+          <div class="mt-5 space-y-4">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Journal No.</label>
+                <input [(ngModel)]="generalJournalForm.journalNo" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Journal Date</label>
+                <input type="date" [(ngModel)]="generalJournalForm.journalDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Description</label>
+                <input [(ngModel)]="generalJournalForm.description" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Debits</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ generalJournalDebitTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Credits</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ generalJournalCreditTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+              </div>
+            </div>
+
+            <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+              <div class="mb-3 flex items-center justify-between">
+                <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Sundries</h5>
+                <button type="button" (click)="addJournalSundry()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Sundry</button>
+              </div>
+              <div class="space-y-3">
+                @for (sundry of generalJournalForm.sundries; track $index) {
+                  <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.5fr_120px_120px_auto]">
+                    <input [(ngModel)]="sundry.accountNumber" placeholder="Account no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input [(ngModel)]="sundry.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input type="number" [(ngModel)]="sundry.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <input type="number" [(ngModel)]="sundry.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    <button type="button" (click)="removeJournalSundry($index)" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600">Remove</button>
+                  </div>
+                }
+              </div>
+            </div>
+          </div>
+        }
+
+        @if (report.key === 'disbursement-register') {
+          <div class="mt-5 space-y-4">
+            <div class="rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
+              This preview is currently derived from the Cheque Voucher draft above. Once the backend tables are added, this view can switch to persisted voucher rows.
             </div>
 
             <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
@@ -170,36 +322,30 @@
                 <table class="min-w-full text-left text-sm">
                   <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
                     <tr>
-                      <th class="px-3 py-2">Product</th>
-                      <th class="px-3 py-2">Capacity</th>
-                      <th class="px-3 py-2">Vendor</th>
-                      <th class="px-3 py-2 text-right">Rows</th>
-                      <th class="px-3 py-2 text-right">Landed Cost</th>
-                      <th class="px-3 py-2 text-right">SRP</th>
-                      <th class="px-3 py-2 text-right">Margin</th>
+                      <th class="px-3 py-2">CV No.</th>
+                      <th class="px-3 py-2">Voucher Date</th>
+                      <th class="px-3 py-2">Payee</th>
+                      <th class="px-3 py-2">Invoice No.</th>
+                      <th class="px-3 py-2">Invoice Date</th>
+                      <th class="px-3 py-2">Description</th>
+                      <th class="px-3 py-2 text-right">Amount</th>
                     </tr>
                   </thead>
                   <tbody>
-                    @for (group of landCostingGroups; track group.productName + '_' + group.capacityName + '_' + group.poNumber) {
+                    @for (row of disbursementRegisterRows; track row.cvNo + '_' + row.invoiceNo + '_' + $index) {
                       <tr class="border-t border-gray-200 dark:border-gray-700">
-                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ group.productName || '-' }}</td>
-                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ group.capacityName || '-' }}</td>
-                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ group.vendorName || '-' }}</td>
-                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ group.rows.length }}</td>
-                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">
-                          {{ group.rows.reduce((sum, row) => sum + row.landedCost, 0) | currency:'PHP':'symbol':'1.2-2' }}
-                        </td>
-                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">
-                          {{ group.rows.reduce((sum, row) => sum + row.srp, 0) | currency:'PHP':'symbol':'1.2-2' }}
-                        </td>
-                        <td class="px-3 py-2 text-right font-medium text-gray-800 dark:text-white/90">
-                          {{ group.rows.reduce((sum, row) => sum + row.marginAmount, 0) | currency:'PHP':'symbol':'1.2-2' }}
-                        </td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.cvNo || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ formatDateOnly(row.voucherDate) }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.payee || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.invoiceNo || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ formatDateOnly(row.invoiceDate) }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.description || '-' }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.amount | currency:'PHP':'symbol':'1.2-2' }}</td>
                       </tr>
                     } @empty {
                       <tr>
                         <td colspan="7" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
-                          No accounting report rows yet. Choose a capacity then click Generate Report.
+                          No disbursement rows yet. Fill the Cheque Voucher draft to populate this preview.
                         </td>
                       </tr>
                     }
@@ -209,7 +355,267 @@
             </div>
           </div>
         }
-      </section>
-    </div>
-  }
+
+        @if (report.key === 'sales-register') {
+          <div class="mt-5 space-y-4">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Orders</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ salesRegisterRows.length }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Units Released</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ salesRegisterUnitCount }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Sales Total</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ salesRegisterTotalAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
+              </div>
+            </div>
+
+            <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm">
+                  <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                    <tr>
+                      <th class="px-3 py-2">Release Date</th>
+                      <th class="px-3 py-2">SO Number</th>
+                      <th class="px-3 py-2">Customer</th>
+                      <th class="px-3 py-2">Sales Type</th>
+                      <th class="px-3 py-2">Status</th>
+                      <th class="px-3 py-2 text-right">Units</th>
+                      <th class="px-3 py-2 text-right">Total Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (row of salesRegisterRows; track row.id) {
+                      <tr class="border-t border-gray-200 dark:border-gray-700">
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.releaseDate }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.soNumber || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.customerName || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.salesType || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.status || '-' }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.serialCount }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.totalAmount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="7" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                          No sales register rows found for the selected date range.
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        }
+
+        @if (report.key === 'weekly-sales') {
+          <div class="mt-5 space-y-4">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Weeks</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ weeklySalesRows.length }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Units Released</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ weeklySalesUnitCount }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Sales Total</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ weeklySalesTotalAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
+              </div>
+            </div>
+
+            <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm">
+                  <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                    <tr>
+                      <th class="px-3 py-2">Week</th>
+                      <th class="px-3 py-2">Start</th>
+                      <th class="px-3 py-2">End</th>
+                      <th class="px-3 py-2 text-right">Orders</th>
+                      <th class="px-3 py-2 text-right">Units</th>
+                      <th class="px-3 py-2 text-right">Total Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (row of weeklySalesRows; track row.weekStart) {
+                      <tr class="border-t border-gray-200 dark:border-gray-700">
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.weekLabel }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.weekStart }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.weekEnd }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.orderCount }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.unitCount }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.totalAmount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="6" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                          No weekly sales rows found for the selected date range.
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        }
+
+        @if (report.key === 'daily-unit-released') {
+          <div class="mt-5 space-y-4">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Days</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ dailyUnitReleasedRows.length }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Units Released</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ dailyReleasedUnitCount }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Sales Total</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ dailyReleasedTotalAmount | currency:'PHP':'symbol':'1.2-2' }}</p>
+              </div>
+            </div>
+
+            <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm">
+                  <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                    <tr>
+                      <th class="px-3 py-2">Release Date</th>
+                      <th class="px-3 py-2 text-right">Orders</th>
+                      <th class="px-3 py-2 text-right">Units</th>
+                      <th class="px-3 py-2 text-right">Total Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (row of dailyUnitReleasedRows; track row.releaseDate) {
+                      <tr class="border-t border-gray-200 dark:border-gray-700">
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.releaseDate }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.orderCount }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.unitCount }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.totalAmount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="4" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                          No daily release rows found for the selected date range.
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        }
+
+        @if (report.key === 'low-stocks-report') {
+          <div class="mt-5 space-y-4">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Low Stock Lines</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ lowStockRows.length }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Critical Lines</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ lowStockCriticalCount }}</p>
+              </div>
+            </div>
+
+            <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm">
+                  <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                    <tr>
+                      <th class="px-3 py-2">Code</th>
+                      <th class="px-3 py-2">Material</th>
+                      <th class="px-3 py-2">Brand</th>
+                      <th class="px-3 py-2">Unit</th>
+                      <th class="px-3 py-2 text-right">On Hand</th>
+                      <th class="px-3 py-2 text-right">Reorder Level</th>
+                      <th class="px-3 py-2 text-right">Sell Price</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (row of lowStockRows; track row.id) {
+                      <tr class="border-t border-gray-200 dark:border-gray-700">
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.materialCode || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.materialName || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.brandName || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.unit || '-' }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.onHandStock }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.reorderLevel }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.sellPrice | currency:'PHP':'symbol':'1.2-2' }}</td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="7" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                          No low-stock materials found.
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        }
+
+        @if (report.key === 'tax-2307-report') {
+          <div class="mt-5 space-y-4">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Withholding Lines</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ withholdingTaxRows.length }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Withholding Total</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ withholdingTaxTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+              </div>
+            </div>
+
+            <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm">
+                  <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                    <tr>
+                      <th class="px-3 py-2">Account Number</th>
+                      <th class="px-3 py-2">Description</th>
+                      <th class="px-3 py-2 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (row of withholdingTaxRows; track row.accountNumber + '_' + $index) {
+                      <tr class="border-t border-gray-200 dark:border-gray-700">
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.accountNumber || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.description || '-' }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.amount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="3" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                          No 2307 lines yet. Add an account title containing Expanded Withholding Tax in the Cheque Voucher draft to preview this report.
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        }
+      } @else {
+        <div class="rounded-lg border border-dashed border-gray-300 p-5 text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
+          Select an accounting report from the folder tree.
+        </div>
+      }
+    </section>
+  </div>
 </div>
