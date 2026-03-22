@@ -368,7 +368,7 @@
                           ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
                           : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
                       >
-                        {{ unitType.label }}
+                        {{ unitType.label }} (Scanned: {{ unitType.serials.length }})
                       </button>
                     }
                   </div>
@@ -376,7 +376,9 @@
                   <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
                     @for (unitType of activeItem.unitTypes; track unitType.label) {
                       <div>
-                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">{{ unitType.label }} Qty</label>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+                          {{ unitType.label }} Qty
+                        </label>
                         <input type="number" [(ngModel)]="unitType.value" [readonly]="isMasterDataDrawerMode()" [name]="'unitTypeQty_' + activeProductTabIndex + '_' + unitType.label" (ngModelChange)="onUnitTypeQtyChange(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
                       </div>
                     }
@@ -520,6 +522,25 @@
             class="rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300"
           >
             {{ isExportingSerials ? 'Exporting...' : 'Export Excel' }}
+          </button>
+        }
+
+        @if (canShowApprovalDrawerActions()) {
+          <button
+            type="button"
+            (click)="approvePurchaseOrder()"
+            [disabled]="isProcessingApprovalAction"
+            class="rounded-lg border border-success-300 px-4 py-2 text-sm font-medium text-success-700 disabled:opacity-60 hover:bg-success-50 dark:border-success-500/40 dark:text-success-400 dark:hover:bg-success-500/10"
+          >
+            {{ isProcessingApprovalAction ? 'Processing...' : 'Approve' }}
+          </button>
+          <button
+            type="button"
+            (click)="revertToDeliveries()"
+            [disabled]="isProcessingApprovalAction"
+            class="rounded-lg border border-orange-300 px-4 py-2 text-sm font-medium text-orange-700 disabled:opacity-60 hover:bg-orange-50 dark:border-orange-500/40 dark:text-orange-400 dark:hover:bg-orange-500/10"
+          >
+            {{ isProcessingApprovalAction ? 'Processing...' : 'Revert to Deliveries' }}
           </button>
         }
 

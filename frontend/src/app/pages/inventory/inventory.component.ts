@@ -11,6 +11,7 @@ import {
   ProductOption,
   SalesOrderService,
 } from '../../shared/services/sales-order.service';
+import { RbacService } from '../../shared/services/rbac.service';
 import { apiClient } from '../../shared/services/api-client';
 import axios from 'axios';
 
@@ -102,6 +103,11 @@ interface LandCostingReportGroup {
   templateUrl: './inventory.component.html',
 })
 export class InventoryComponent implements OnInit {
+  private readonly landCostingPermissionPrefix = 'inventory.land-costing.';
+  private readonly landCostingViewPermissionKeys = ['inventory.land-costing.view'];
+  private readonly landCostingMarginPermissionKeys = ['inventory.land-costing.margin.view'];
+  private readonly landCostingExportPermissionKeys = ['inventory.land-costing.export'];
+
   readonly availableCapacityOptions = [
     '0.5 HP',
     '0.6 HP',
@@ -230,7 +236,10 @@ export class InventoryComponent implements OnInit {
     '1.0 HP': this.createEmptyCapacityDraft(),
   };
 
-  constructor(private readonly salesOrderService: SalesOrderService) {}
+  constructor(
+    private readonly salesOrderService: SalesOrderService,
+    private readonly rbacService: RbacService,
+  ) {}
 
   // Material creation modal state
   isMaterialModalOpen = false;
@@ -331,6 +340,11 @@ export class InventoryComponent implements OnInit {
       return;
     }
 
+    if (!this.canViewLandCostingReport()) {
+      this.landCostingError = 'You do not have permission to view the land costing report.';
+      return;
+    }
+
     this.isLandCostingDrawerOpen = true;
   }
 
@@ -356,6 +370,11 @@ export class InventoryComponent implements OnInit {
   }
 
   async exportLandCostingAsExcel(): Promise<void> {
+    if (!this.canExportLandCostingReport()) {
+      this.landCostingError = 'You do not have permission to export land costing reports.';
+      return;
+    }
+
     if (this.landCostingGroups.length === 0) {
       this.landCostingError = 'No land costing rows available to export.';
       return;
@@ -424,6 +443,11 @@ export class InventoryComponent implements OnInit {
   }
 
   async exportLandCostingAsPdf(): Promise<void> {
+    if (!this.canExportLandCostingReport()) {
+      this.landCostingError = 'You do not have permission to export land costing reports.';
+      return;
+    }
+
     if (this.landCostingGroups.length === 0) {
       this.landCostingError = 'No land costing rows available to export.';
       return;
@@ -1038,6 +1062,18 @@ export class InventoryComponent implements OnInit {
 
   get activeTabMarginAmount(): number {
     return this.activeTabTotalSellingAmount - this.activeTabTotalCostAmount;
+  }
+
+  canViewLandCostingReport(): boolean {
+    return this.canAccessInventoryPermission(this.landCostingViewPermissionKeys);
+  }
+
+  canViewLandCostingMargin(): boolean {
+    return this.canAccessInventoryPermission(this.landCostingMarginPermissionKeys);
+  }
+
+  canExportLandCostingReport(): boolean {
+    return this.canAccessInventoryPermission(this.landCostingExportPermissionKeys);
   }
 
 
@@ -2342,6 +2378,38 @@ export class InventoryComponent implements OnInit {
 
   private normalizeSearchText(value: string): string {
     return value.toLowerCase().trim().replace(/\s+/g, ' ');
+  }
+
+  private canAccessInventoryPermission(permissionKeys: string[]): boolean {
+    const acceptedKeys = permissionKeys ?? [];
+    if (acceptedKeys.length === 0) {
+      return true;
+    }
+
+    const isDenied = acceptedKeys.some((permissionKey) => this.rbacService.hasDeniedPermissionKey(permissionKey));
+    if (isDenied) {
+      return false;
+    }
+
+    const hasAnyAllowedRules = this.rbacService.hasAnyEffectivePermissionWithPrefix(this.landCostingPermissionPrefix);
+    const hasAnyDeniedRules = this.rbacService.hasAnyDeniedPermissionWithPrefix(this.landCostingPermissionPrefix);
+
+    if (!hasAnyAllowedRules && !hasAnyDeniedRules) {
+      return this.rbacService.canAccess('inventory', 'canRead');
+    }
+
+    const isExplicitlyAllowed = acceptedKeys.some((permissionKey) =>
+      this.rbacService.hasEffectivePermissionKey(permissionKey),
+    );
+    if (isExplicitlyAllowed) {
+      return true;
+    }
+
+    if (!hasAnyAllowedRules && hasAnyDeniedRules) {
+      return true;
+    }
+
+    return false;
   }
 
   private normalizeUnitTypeValue(value: string): string {

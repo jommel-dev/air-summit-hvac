@@ -20,7 +20,7 @@ export class BranchService {
 
   private get isAdminOrSuperRole(): boolean {
     const roleName = (this.rbacService.getPayload()?.roleName ?? '').toLowerCase();
-    return roleName.includes('admin') || roleName.includes('super');
+    return roleName.includes('admin') || roleName.includes('super') || roleName.includes('owner');
   }
 
   private get hasSwitchPrivilege(): boolean {

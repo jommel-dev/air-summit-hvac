@@ -513,6 +513,20 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.createSuccess = '';
 
     try {
+      // Load full PO details for validation
+      const poDetails = await this.purchaseOrderService.getPurchaseById(item.id);
+      if (!poDetails) {
+        this.createError = 'Failed to load purchase order details for validation';
+        return;
+      }
+
+      // Validate loaded details
+      const validationError = this.validatePODetailsBeforeSendingForApproval(poDetails);
+      if (validationError) {
+        this.createError = validationError;
+        return;
+      }
+
       const response = await this.purchaseOrderService.updatePurchase(item.id, {
         status: 'for_approval',
         productItems: [],
@@ -593,6 +607,159 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     } finally {
       this.isProcessingApprovalAction = false;
     }
+  }
+
+  async revertToDeliveries(): Promise<void> {
+    if (!this.canApprovePurchaseOrder()) {
+      this.createError = 'You do not have permission to approve purchase orders.';
+      return;
+    }
+
+    if (!this.editingPurchaseId || this.isProcessingApprovalAction || !this.canShowApprovalDrawerActions()) {
+      return;
+    }
+
+    this.isProcessingApprovalAction = true;
+    this.createError = '';
+    this.createSuccess = '';
+
+    try {
+      const response = await this.purchaseOrderService.revertPurchaseToDeliveries(this.editingPurchaseId);
+      if (!response.success) {
+        this.createError = response.message ?? 'Failed to revert purchase order to deliveries';
+        return;
+      }
+
+      this.createSuccess = response.message ?? 'Purchase order reverted to deliveries';
+      await this.closeCreateDrawer();
+      await this.loadTabData(this.activeTab);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.createError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to revert purchase order to deliveries';
+      } else {
+        this.createError = 'Failed to revert purchase order to deliveries';
+      }
+    } finally {
+      this.isProcessingApprovalAction = false;
+    }
+  }
+
+  private validateBeforeSendingForApproval(purchaseId: number): string | null {
+    // Check if drawer is open with edit data
+    if (this.isFormDrawerOpen && this.drawerMode === 'edit' && this.editingPurchaseId === purchaseId) {
+      // Validate form data when in edit drawer
+      return this.validateFormBeforeSendingForApproval();
+    }
+
+    // Fallback: Check PO list item
+    const po = this.purchaseOrders.find(p => p.id === purchaseId);
+    if (!po) {
+      return 'Purchase order not found';
+    }
+
+    if (po.serialCount === undefined || po.serialCount <= 0) {
+      return 'At least one product must have scanned serial numbers before sending for approval';
+    }
+
+    return null;
+  }
+
+  private validatePODetailsBeforeSendingForApproval(poDetails: PurchaseOrderDetailItem): string | null {
+    // Check if any product item exists
+    if (!poDetails.productItems || poDetails.productItems.length === 0) {
+      return 'At least one product must be added to the purchase order';
+    }
+
+    // Validate each product item
+    for (let i = 0; i < poDetails.productItems.length; i++) {
+      const product = poDetails.productItems[i];
+
+      // Check if there's at least one unit type with scanned serials
+      const hasScannedSerials = product.serialNumbers && Object.keys(product.serialNumbers).some(
+        key => product.serialNumbers[key] && product.serialNumbers[key].length > 0
+      );
+      if (!hasScannedSerials) {
+        return `Product ${i + 1}: At least one unit type must have scanned serial numbers`;
+      }
+
+      // Validate each unit type: scanned count should match expected quantity
+      if (product.unitTypesQty) {
+        for (const unitType of product.unitTypesQty) {
+          const scannedSerials = product.serialNumbers?.[unitType.label] ?? [];
+          const scannedCount = scannedSerials.length;
+          const expectedQty = unitType.value ?? 0;
+
+          // If quantity is set, scanned count must match exactly
+          if (expectedQty > 0) {
+            if (scannedCount < expectedQty) {
+              return `Product ${i + 1}, ${unitType.label}: ${scannedCount} serial(s) scanned but ${expectedQty} expected (${expectedQty - scannedCount} missing)`;
+            }
+
+            if (scannedCount > expectedQty) {
+              return `Product ${i + 1}, ${unitType.label}: ${scannedCount} serial(s) scanned exceeds expected ${expectedQty}`;
+            }
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private validateFormBeforeSendingForApproval(): string | null {
+    // Check if any product item exists
+    if (!this.createForm.productItems || this.createForm.productItems.length === 0) {
+      return 'At least one product must be added to the purchase order';
+    }
+
+    // Validate each product item
+    for (let i = 0; i < this.createForm.productItems.length; i++) {
+      const product = this.createForm.productItems[i];
+
+      // Check if product is selected
+      if (!product.productId) {
+        return `Product ${i + 1}: Product must be selected`;
+      }
+
+      // Check if capacity is selected
+      if (!product.capacityId) {
+        return `Product ${i + 1}: Capacity must be selected`;
+      }
+
+      // Check if there's at least one unit type with scanned serials
+      const hasScannedSerials = product.unitTypes.some(ut => ut.serials && ut.serials.length > 0);
+      if (!hasScannedSerials) {
+        return `Product ${i + 1}: At least one unit type must have scanned serial numbers`;
+      }
+
+      // Validate each unit type: scanned count should match or exceed quantity
+      for (const unitType of product.unitTypes) {
+        const scannedCount = unitType.serials?.length ?? 0;
+        const expectedQty = unitType.value ?? 0;
+
+        if (expectedQty > 0 && scannedCount < expectedQty) {
+          return `Product ${i + 1}, ${unitType.label}: ${scannedCount} serial(s) scanned but ${expectedQty} expected (${expectedQty - scannedCount} missing)`;
+        }
+
+        if (scannedCount > expectedQty && expectedQty > 0) {
+          return `Product ${i + 1}, ${unitType.label}: ${scannedCount} serial(s) scanned exceeds expected ${expectedQty}`;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  canRevertToDeliveries(): boolean {
+    return (
+      this.activeTab === 'approvals' &&
+      this.drawerMode === 'edit' &&
+      this.editingPurchaseId !== null &&
+      this.isApprovalStageStatus(this.editingPurchaseStatus) &&
+      this.canApprovePurchaseOrder()
+    );
   }
 
   async approvePurchaseOrder(): Promise<void> {
@@ -1268,11 +1435,19 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   onProductChanged(index: number): void {
     const nextItems = [...this.createForm.productItems];
+    const currentItem = nextItems[index];
+    const productUnitTypeLabels = this.getProductUnitTypeLabels(currentItem?.productId ?? '');
+    const nextUnitTypes = productUnitTypeLabels.length > 0
+      ? productUnitTypeLabels.map((label) => this.createUnitTypeEntry(label, 0, []))
+      : [this.createUnitTypeEntry('set', 0, [])];
+
     nextItems[index] = {
       ...nextItems[index],
       capacityId: '',
+      unitTypes: nextUnitTypes,
     };
     this.createForm.productItems = nextItems;
+    this.ensureSelectedUnitType(index);
     this.recalculateTotalAmount();
   }
 
@@ -2245,6 +2420,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private mapDetailProductItem(product: PurchaseOrderDetailProductItem): PurchaseProductFormItem {
     const unitTypesFromPayload = Array.isArray(product.unitTypesQty) ? product.unitTypesQty : [];
     const serialNumbers = this.normalizeSerialNumbersByUnitType(product.serialNumbers);
+    const productUnitTypeLabels = this.getProductUnitTypeLabels(String(product.productId ?? ''));
 
     let normalizedUnitTypes: PurchaseUnitTypeFormItem[] = [];
     if (unitTypesFromPayload.length > 0) {
@@ -2278,6 +2454,25 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       normalizedUnitTypes = [...mergedByLabel.values()];
     } else {
       normalizedUnitTypes = this.buildUnitTypesFromSerialMap(serialNumbers);
+    }
+
+    const hasAnySerials = Object.values(serialNumbers).some((entries) => entries.length > 0);
+    const hasOnlyLegacySplitLabels =
+      normalizedUnitTypes.length > 0 &&
+      normalizedUnitTypes.every((entry) => this.isLegacySplitUnitType(entry.label));
+
+    if (
+      productUnitTypeLabels.length > 0 &&
+      !hasAnySerials &&
+      (normalizedUnitTypes.length === 0 || hasOnlyLegacySplitLabels)
+    ) {
+      normalizedUnitTypes = productUnitTypeLabels.map((label) => {
+        const matchedQty = unitTypesFromPayload.find(
+          (entry) => this.normalizeUnitTypeLabel(entry.label) === label,
+        );
+        const nextQty = Number(matchedQty?.value) || Number(product.totalSetQty) || 0;
+        return this.createUnitTypeEntry(label, nextQty, []);
+      });
     }
 
     const unitTypes = normalizedUnitTypes.length > 0
@@ -2372,6 +2567,22 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       .trim();
 
     return normalized || 'set';
+  }
+
+  private isLegacySplitUnitType(label: unknown): boolean {
+    const normalized = this.normalizeUnitTypeLabel(label);
+    return normalized === 'indoor' || normalized === 'outdoor';
+  }
+
+  private getProductUnitTypeLabels(productId: string): string[] {
+    const product = this.catalogProducts.find((item) => String(item.id) === String(productId));
+    const labels = Array.isArray(product?.unitTypes) ? product.unitTypes : [];
+
+    const normalized = labels
+      .map((entry) => this.normalizeUnitTypeLabel(entry))
+      .filter((entry, index, all) => entry.length > 0 && all.indexOf(entry) === index);
+
+    return normalized;
   }
 
   private ensureSelectedUnitType(productIndex: number): void {
@@ -2514,8 +2725,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       sellPrice: '',
       discountPrice: '',
       unitTypes: [
-        this.createUnitTypeEntry('indoor', 0, []),
-        this.createUnitTypeEntry('outdoor', 0, []),
+        this.createUnitTypeEntry('set', 0, []),
       ],
       totalSetQty: 1,
     };

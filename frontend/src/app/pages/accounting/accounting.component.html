@@ -113,7 +113,7 @@
               />
             }
 
-            @if (isLiveReport(report.key)) {
+            @if (isLiveReport(report.key) && canGenerateSelectedReportAction()) {
               <button
                 type="button"
                 (click)="reloadSelectedReport()"
@@ -127,7 +127,7 @@
             <button
               type="button"
               (click)="exportSelectedReportAsExcel()"
-              [disabled]="!canExportSelectedReport()"
+              [disabled]="!canExportSelectedReportAction()"
               class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
             >
               Export Excel
@@ -135,6 +135,7 @@
             <button
               type="button"
               (click)="printSelectedReport()"
+              [disabled]="!canPrintSelectedReportAction()"
               class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
             >
               Print
@@ -210,7 +211,7 @@
             <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
               <div class="mb-3 flex items-center justify-between">
                 <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Cheque Deposits</h5>
-                <button type="button" (click)="addChequeDeposit()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Deposit</button>
+                <button type="button" (click)="addChequeDeposit()" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Deposit</button>
               </div>
               <div class="space-y-3">
                 @for (deposit of chequeVoucherForm.deposits; track $index) {
@@ -219,7 +220,7 @@
                     <input [(ngModel)]="deposit.chequeNo" placeholder="Cheque no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                     <input type="date" [(ngModel)]="deposit.chequeDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                     <input type="number" [(ngModel)]="deposit.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <button type="button" (click)="removeChequeDeposit($index)" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600">Remove</button>
+                    <button type="button" (click)="removeChequeDeposit($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
                   </div>
                 }
               </div>
@@ -228,7 +229,7 @@
             <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
               <div class="mb-3 flex items-center justify-between">
                 <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Invoices</h5>
-                <button type="button" (click)="addChequeInvoice()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Invoice</button>
+                <button type="button" (click)="addChequeInvoice()" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Invoice</button>
               </div>
               <div class="space-y-3">
                 @for (invoice of chequeVoucherForm.invoices; track $index) {
@@ -237,7 +238,7 @@
                     <input type="date" [(ngModel)]="invoice.invoiceDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                     <input [(ngModel)]="invoice.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                     <input type="number" [(ngModel)]="invoice.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <button type="button" (click)="removeChequeInvoice($index)" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600">Remove</button>
+                    <button type="button" (click)="removeChequeInvoice($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
                   </div>
                 }
               </div>
@@ -246,7 +247,7 @@
             <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
               <div class="mb-3 flex items-center justify-between">
                 <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Account Titles</h5>
-                <button type="button" (click)="addAccountTitle()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Account Title</button>
+                <button type="button" (click)="addAccountTitle()" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Account Title</button>
               </div>
               <div class="space-y-3">
                 @for (accountTitle of chequeVoucherForm.accountTitles; track $index) {
@@ -255,7 +256,7 @@
                     <input [(ngModel)]="accountTitle.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                     <input type="number" [(ngModel)]="accountTitle.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                     <input type="number" [(ngModel)]="accountTitle.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <button type="button" (click)="removeAccountTitle($index)" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600">Remove</button>
+                    <button type="button" (click)="removeAccountTitle($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
                   </div>
                 }
               </div>
@@ -294,7 +295,7 @@
             <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
               <div class="mb-3 flex items-center justify-between">
                 <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Sundries</h5>
-                <button type="button" (click)="addJournalSundry()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Sundry</button>
+                <button type="button" (click)="addJournalSundry()" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Sundry</button>
               </div>
               <div class="space-y-3">
                 @for (sundry of generalJournalForm.sundries; track $index) {
@@ -303,7 +304,7 @@
                     <input [(ngModel)]="sundry.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                     <input type="number" [(ngModel)]="sundry.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                     <input type="number" [(ngModel)]="sundry.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <button type="button" (click)="removeJournalSundry($index)" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600">Remove</button>
+                    <button type="button" (click)="removeJournalSundry($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
                   </div>
                 }
               </div>

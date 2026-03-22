@@ -223,7 +223,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
 
   canPermanentlyDeleteExpiredQuotation(): boolean {
     const roleName = String(this.rbacService.getPayload()?.roleName ?? '').trim().toLowerCase();
-    return roleName.includes('admin') || roleName.includes('super');
+    return roleName.includes('admin') || roleName.includes('super') || roleName.includes('owner');
   }
 
   async setTab(tab: QuotationTab): Promise<void> {
@@ -808,7 +808,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
     }
 
     if (!this.canPermanentlyDeleteExpiredQuotation()) {
-      this.uiError = 'Only admin or super admin can permanently delete expired quotations';
+      this.uiError = 'Only admin, super admin, or business owner can permanently delete expired quotations';
       return;
     }
 

@@ -164,6 +164,18 @@ export class PurchaseController {
     );
   }
 
+  @Patch(':id/revert-deliveries')
+  revertDeliveries(
+    @Param('id') id: string,
+    @Req() request: { user?: { sub?: unknown } },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.purchaseService.revertToDeliveries(
+      +id,
+      Number.isFinite(userId) ? userId : undefined,
+    );
+  }
+
   @Patch(':id/approve')
   approve(
     @Param('id') id: string,
