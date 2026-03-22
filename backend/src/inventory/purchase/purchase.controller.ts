@@ -38,13 +38,22 @@ export class PurchaseController {
   @Post()
   async create(
     @Body() createPurchaseDto: CreatePurchaseDto,
-    @Req() request: { user?: { sub?: unknown } },
+    @Req() request: { user?: Record<string, unknown> },
   ) {
     try {
       const userId = Number(request.user?.sub);
       const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
+      const branchId = Number(
+        request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+      );
+      const normalizedBranchId =
+        Number.isFinite(branchId) && branchId > 0 ? branchId : undefined;
 
-      return await this.purchaseService.create(createPurchaseDto, normalizedUserId);
+      return await this.purchaseService.create(
+        createPurchaseDto,
+        normalizedUserId,
+        normalizedBranchId,
+      );
     } catch (error) {
       return {
         success: false,
