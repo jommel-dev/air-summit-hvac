@@ -19,6 +19,7 @@ import { ScanPurchaseOrderDto } from './dto/scan-purchase-order.dto';
 import { ScanPurchaseOrderBatchDto } from './dto/scan-purchase-order-batch.dto';
 import { RemovePurchaseOrderSerialDto } from './dto/remove-purchase-order-serial.dto';
 import { RemoveSalesOrderSerialDto } from './dto/remove-sales-order-serial.dto';
+import { AdjustPurchaseUnitTypesDto } from './dto/adjust-purchase-unit-types.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
 @Controller('serial-number')
@@ -102,6 +103,11 @@ export class SerialNumberController {
   @Post('normalize-unit-types')
   normalizeStoredUnitTypes() {
     return this.serialNumberService.normalizeStoredUnitTypes();
+  }
+
+  @Post('adjust-purchase-unit-types')
+  adjustPurchaseUnitTypes(@Body() dto: AdjustPurchaseUnitTypesDto) {
+    return this.serialNumberService.adjustPurchaseUnitTypes(dto);
   }
 
   @Post()

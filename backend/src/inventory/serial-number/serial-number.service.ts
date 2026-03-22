@@ -13,6 +13,7 @@ import {
 } from './dto/scan-purchase-order-batch.dto';
 import { RemovePurchaseOrderSerialDto } from './dto/remove-purchase-order-serial.dto';
 import { RemoveSalesOrderSerialDto } from './dto/remove-sales-order-serial.dto';
+import { AdjustPurchaseUnitTypesDto } from './dto/adjust-purchase-unit-types.dto';
 
 type SerialScanRow = {
   id: number;
@@ -63,6 +64,22 @@ type LandCostingRow = {
   status: string | null;
   isDefective: boolean | null;
   isReturned: boolean | null;
+};
+
+type PurchaseTransactionItemUnitTypeRow = {
+  id: number;
+  purchaseId: string | null;
+  productId: string | null;
+  capacityId: string | null;
+  unitTypesQty: unknown;
+};
+
+type PurchaseSerialUnitTypeRow = {
+  id: number;
+  purchaseId: string | null;
+  productId: string | null;
+  capacityId: string | null;
+  unitType: string | null;
 };
 
 @Injectable()
@@ -152,6 +169,352 @@ export class SerialNumberService {
       .trim();
 
     return normalized;
+  }
+
+  private parseConfiguredProductUnitTypes(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      return value
+        .map((entry) => this.normalizeUnitType(entry))
+        .filter((entry, index, list) => entry.length > 0 && list.indexOf(entry) === index);
+    }
+
+    return String(value ?? '')
+      .split(',')
+      .map((entry) => this.normalizeUnitType(entry))
+      .filter((entry, index, list) => entry.length > 0 && list.indexOf(entry) === index);
+  }
+
+  private parseUnitTypesQty(value: unknown): Array<{ label: string; value: number }> {
+    let parsedValue: unknown = value;
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return [];
+      }
+
+      try {
+        parsedValue = JSON.parse(trimmed);
+      } catch {
+        parsedValue = trimmed;
+      }
+    }
+
+    if (!Array.isArray(parsedValue)) {
+      return [];
+    }
+
+    return parsedValue
+      .map((entry) => {
+        if (typeof entry === 'string') {
+          const [labelRaw, qtyRaw] = entry.split(':');
+          return {
+            label: this.normalizeUnitType(labelRaw),
+            value: this.toOptionalNumber(qtyRaw) ?? 0,
+          };
+        }
+
+        if (!entry || typeof entry !== 'object') {
+          return null;
+        }
+
+        const asRecord = entry as Record<string, unknown>;
+        return {
+          label: this.normalizeUnitType(
+            asRecord.label ?? asRecord.unitType ?? asRecord.unit_type,
+          ),
+          value: this.toOptionalNumber(asRecord.value ?? asRecord.qty) ?? 0,
+        };
+      })
+      .filter(
+        (entry): entry is { label: string; value: number } =>
+          entry !== null && entry.label.length > 0,
+      );
+  }
+
+  private remapLegacyUnitTypeLabel(label: unknown, configuredLabels: string[]): string {
+    const normalized = this.normalizeUnitType(label);
+    if (!normalized) {
+      return configuredLabels[0] ?? 'set';
+    }
+
+    if (configuredLabels.length === 0) {
+      return normalized;
+    }
+
+    if (normalized === 'indoor') {
+      return configuredLabels[0] ?? normalized;
+    }
+
+    if (normalized === 'outdoor') {
+      if (configuredLabels.length >= 2) {
+        return configuredLabels[1];
+      }
+
+      return configuredLabels[0] ?? normalized;
+    }
+
+    return normalized;
+  }
+
+  async adjustPurchaseUnitTypes(dto: AdjustPurchaseUnitTypesDto) {
+    const incomingPurchaseIds = [
+      dto.purchaseId,
+      ...(Array.isArray(dto.purchaseIds) ? dto.purchaseIds : []),
+    ];
+
+    const normalizedPurchaseIds = Array.from(
+      new Set(
+        incomingPurchaseIds
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value) && value > 0)
+          .map((value) => Math.floor(value)),
+      ),
+    );
+
+    if (normalizedPurchaseIds.length === 0) {
+      return {
+        success: false,
+        message: 'purchaseId or purchaseIds is required',
+      };
+    }
+
+    const purchaseIdTexts = normalizedPurchaseIds.map((value) => String(value));
+
+    const productUnitTypesResult = await this.databaseService.query<{
+      id: string | null;
+      unitTypes: string | null;
+    }>(
+      `SELECT
+         p.id::text AS id,
+         COALESCE(
+           to_jsonb(p)->>'unitTypes',
+           to_jsonb(p)->>'unit_types',
+           to_jsonb(p)->>'unittypes',
+           ''
+         ) AS "unitTypes"
+       FROM tblproducts p`,
+    );
+
+    const productUnitTypeMap = new Map<string, string[]>();
+    for (const row of productUnitTypesResult.rows) {
+      const productId = String(row.id ?? '').trim();
+      if (!productId) {
+        continue;
+      }
+
+      productUnitTypeMap.set(
+        productId,
+        this.parseConfiguredProductUnitTypes(row.unitTypes),
+      );
+    }
+
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+    const transactionColumns = await this.getTableColumns('tbltransaction_product_items');
+    const transactionUnitTypesQtyColumn = this.pickColumn(transactionColumns, [
+      'unitTypesQty',
+      'unit_types_qty',
+    ]);
+    const transactionUnitTypesQtyMeta = transactionUnitTypesQtyColumn
+      ? await this.databaseService.query<{ data_type: string; udt_name: string }>(
+          `SELECT
+             data_type,
+             udt_name
+           FROM information_schema.columns
+           WHERE table_schema = current_schema()
+             AND table_name = 'tbltransaction_product_items'
+             AND column_name = $1
+           LIMIT 1`,
+          [transactionUnitTypesQtyColumn],
+        )
+      : null;
+    const isTransactionUnitTypesQtyArray = Boolean(
+      transactionUnitTypesQtyMeta?.rows?.[0] &&
+        (
+          transactionUnitTypesQtyMeta.rows[0].data_type === 'ARRAY' ||
+          String(transactionUnitTypesQtyMeta.rows[0].udt_name ?? '').startsWith('_')
+        ),
+    );
+
+    const transactionRowsResult = await this.databaseService.query<PurchaseTransactionItemUnitTypeRow>(
+      `SELECT
+         tpi.id,
+         COALESCE(
+           to_jsonb(tpi)->>'purchaseId',
+           to_jsonb(tpi)->>'purchase_id',
+           to_jsonb(tpi)->>'po_id'
+         ) AS "purchaseId",
+         COALESCE(
+           to_jsonb(tpi)->>'productId',
+           to_jsonb(tpi)->>'product_id'
+         ) AS "productId",
+         COALESCE(
+           to_jsonb(tpi)->>'capacityId',
+           to_jsonb(tpi)->>'capacity_id'
+         ) AS "capacityId",
+         COALESCE(
+           to_jsonb(tpi)->>'unitTypesQty',
+           to_jsonb(tpi)->>'unit_types_qty',
+           '[]'
+         ) AS "unitTypesQty"
+       FROM tbltransaction_product_items tpi
+       WHERE COALESCE(
+         to_jsonb(tpi)->>'purchaseId',
+         to_jsonb(tpi)->>'purchase_id',
+         to_jsonb(tpi)->>'po_id'
+       ) = ANY($1::text[])
+       AND LOWER(COALESCE(
+         to_jsonb(tpi)->>'transType',
+         to_jsonb(tpi)->>'trans_type',
+         'purchase'
+       )) = 'purchase'`,
+      [purchaseIdTexts],
+    );
+
+    const serialRowsResult = await this.databaseService.query<PurchaseSerialUnitTypeRow>(
+      `SELECT
+         sn.id,
+         COALESCE(
+           to_jsonb(sn)->>'purchaseId',
+           to_jsonb(sn)->>'purchase_id',
+           to_jsonb(sn)->>'po_id',
+           to_jsonb(sn)->>'purchaseOrderId',
+           to_jsonb(sn)->>'purchase_order_id'
+         ) AS "purchaseId",
+         COALESCE(
+           to_jsonb(sn)->>'productId',
+           to_jsonb(sn)->>'product_id',
+           to_jsonb(sn)->>'prodId',
+           to_jsonb(sn)->>'prod_id'
+         ) AS "productId",
+         COALESCE(
+           to_jsonb(sn)->>'capacityId',
+           to_jsonb(sn)->>'capacity_id',
+           to_jsonb(sn)->>'capId',
+           to_jsonb(sn)->>'cap_id'
+         ) AS "capacityId",
+         COALESCE(
+           to_jsonb(sn)->>'unitType',
+           to_jsonb(sn)->>'unit_type'
+         ) AS "unitType"
+       FROM tblserial_numbers sn
+       WHERE COALESCE(
+         to_jsonb(sn)->>'purchaseId',
+         to_jsonb(sn)->>'purchase_id',
+         to_jsonb(sn)->>'po_id',
+         to_jsonb(sn)->>'purchaseOrderId',
+         to_jsonb(sn)->>'purchase_order_id'
+       ) = ANY($1::text[])
+       ORDER BY sn.id`,
+      [purchaseIdTexts],
+    );
+
+    let updatedTransactionItems = 0;
+    let updatedSerialRows = 0;
+    let skippedRows = 0;
+
+    if (transactionUnitTypesQtyColumn) {
+      for (const row of transactionRowsResult.rows) {
+        const productId = String(row.productId ?? '').trim();
+        const configuredLabels = productUnitTypeMap.get(productId) ?? [];
+        if (configuredLabels.length === 0) {
+          skippedRows += 1;
+          continue;
+        }
+
+        const parsed = this.parseUnitTypesQty(row.unitTypesQty);
+        if (parsed.length === 0) {
+          skippedRows += 1;
+          continue;
+        }
+
+        const remapped = parsed.map((entry) => ({
+          label: this.remapLegacyUnitTypeLabel(entry.label, configuredLabels),
+          value: this.toOptionalNumber(entry.value) ?? 0,
+        }));
+
+        const hadLegacy = parsed.some((entry) => {
+          const normalized = this.normalizeUnitType(entry.label);
+          return normalized === 'indoor' || normalized === 'outdoor';
+        });
+
+        if (!hadLegacy) {
+          skippedRows += 1;
+          continue;
+        }
+
+        const mergedByLabel = new Map<string, number>();
+        for (const entry of remapped) {
+          const current = mergedByLabel.get(entry.label) ?? 0;
+          mergedByLabel.set(entry.label, current + (this.toOptionalNumber(entry.value) ?? 0));
+        }
+
+        const normalizedForStorage = [...mergedByLabel.entries()].map(([label, value]) => ({
+          label,
+          value,
+        }));
+
+        const storedValue = isTransactionUnitTypesQtyArray
+          ? normalizedForStorage.map((entry) => `${entry.label}:${entry.value}`)
+          : JSON.stringify(normalizedForStorage);
+
+        const updateResult = await this.runUpdateById('tbltransaction_product_items', row.id, {
+          [transactionUnitTypesQtyColumn]: storedValue,
+        });
+
+        if (updateResult.rowCount > 0) {
+          updatedTransactionItems += 1;
+        }
+      }
+    }
+
+    if (serialUnitTypeColumn) {
+      for (const row of serialRowsResult.rows) {
+        const productId = String(row.productId ?? '').trim();
+        const configuredLabels = productUnitTypeMap.get(productId) ?? [];
+        if (configuredLabels.length === 0) {
+          skippedRows += 1;
+          continue;
+        }
+
+        const currentUnitType = this.normalizeUnitType(row.unitType);
+        if (currentUnitType !== 'indoor' && currentUnitType !== 'outdoor') {
+          skippedRows += 1;
+          continue;
+        }
+
+        const nextUnitType = this.remapLegacyUnitTypeLabel(currentUnitType, configuredLabels);
+        if (!nextUnitType || nextUnitType === currentUnitType) {
+          skippedRows += 1;
+          continue;
+        }
+
+        const updateResult = await this.runUpdateById('tblserial_numbers', row.id, {
+          [serialUnitTypeColumn]: nextUnitType,
+        });
+
+        if (updateResult.rowCount > 0) {
+          updatedSerialRows += 1;
+        }
+      }
+    }
+
+    const totalUpdated = updatedTransactionItems + updatedSerialRows;
+
+    return {
+      success: true,
+      message:
+        totalUpdated > 0
+          ? `Adjusted ${totalUpdated} record(s) for ${normalizedPurchaseIds.length} purchase order(s).`
+          : 'No legacy indoor/outdoor unit type records found to adjust.',
+      item: {
+        purchaseIds: normalizedPurchaseIds,
+        updatedTransactionItems,
+        updatedSerialRows,
+        skippedRows,
+      },
+    };
   }
 
   async getCapacityStockSummary(

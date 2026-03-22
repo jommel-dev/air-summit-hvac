@@ -98,7 +98,7 @@ export const routes: Routes = [
         component: AccountingComponent,
         canActivate: [rbacGuard],
         data: {
-          menu: 'inventory',
+          menu: 'accounting',
           permission: 'canRead',
         },
         title: 'Air Summit Aircon Services | Accounting',

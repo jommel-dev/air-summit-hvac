@@ -211,6 +211,8 @@ export interface ProductOption {
   id: number;
   name: string;
   brandName?: string;
+  unit?: string;
+  unitTypes?: string[];
   capacities: ProductCapacityOption[];
 }
 
@@ -252,6 +254,11 @@ export class PurchaseOrderService {
 
   async revertPurchaseToInProgress(id: number): Promise<PurchaseActionResponse> {
     const response = await apiClient.patch<PurchaseActionResponse>(`/purchase/${id}/revert-in-progress`, {});
+    return response.data;
+  }
+
+  async revertPurchaseToDeliveries(id: number): Promise<PurchaseActionResponse> {
+    const response = await apiClient.patch<PurchaseActionResponse>(`/purchase/${id}/revert-deliveries`, {});
     return response.data;
   }
 

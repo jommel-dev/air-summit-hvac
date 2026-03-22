@@ -117,6 +117,11 @@ interface ExcelExportDefinition {
 })
 export class AccountingComponent implements OnInit {
   private readonly reportPermissionPrefix = 'accounting.report.';
+  private readonly reportActionPermissionPrefix = 'accounting.report.action.';
+  private readonly generateReportPermissionKeys = ['accounting.report.action.generate'];
+  private readonly exportReportPermissionKeys = ['accounting.report.action.export'];
+  private readonly printReportPermissionKeys = ['accounting.report.action.print'];
+  private readonly editDraftReportPermissionKeys = ['accounting.report.action.edit-draft'];
 
   treeSearch = '';
   selectedReportKey: AccountingReportKey | null = null;
@@ -470,8 +475,37 @@ export class AccountingComponent implements OnInit {
     }
   }
 
+  canGenerateSelectedReportAction(): boolean {
+    if (!this.selectedReportKey || !this.isLiveReport(this.selectedReportKey)) {
+      return false;
+    }
+
+    return this.canAccessReportAction(this.generateReportPermissionKeys);
+  }
+
+  canExportSelectedReportAction(): boolean {
+    return this.canAccessReportAction(this.exportReportPermissionKeys) && this.canExportSelectedReport();
+  }
+
+  canPrintSelectedReportAction(): boolean {
+    return this.canAccessReportAction(this.printReportPermissionKeys);
+  }
+
+  canEditSelectedReportDraft(): boolean {
+    if (!this.selectedReportKey) {
+      return false;
+    }
+
+    return !this.isLiveReport(this.selectedReportKey) && this.canAccessReportAction(this.editDraftReportPermissionKeys);
+  }
+
   async reloadSelectedReport(): Promise<void> {
     if (!this.selectedReportKey || !this.isLiveReport(this.selectedReportKey)) {
+      return;
+    }
+
+    if (!this.canGenerateSelectedReportAction()) {
+      this.reportError = 'You do not have permission to generate this report.';
       return;
     }
 
@@ -510,6 +544,11 @@ export class AccountingComponent implements OnInit {
   }
 
   async exportSelectedReportAsExcel(): Promise<void> {
+    if (!this.canAccessReportAction(this.exportReportPermissionKeys)) {
+      this.reportError = 'You do not have permission to export reports.';
+      return;
+    }
+
     const definition = this.buildExcelExportDefinition();
     if (!definition) {
       this.reportError = 'No rows available to export.';
@@ -547,6 +586,11 @@ export class AccountingComponent implements OnInit {
   }
 
   printSelectedReport(): void {
+    if (!this.canAccessReportAction(this.printReportPermissionKeys)) {
+      this.reportError = 'You do not have permission to print reports.';
+      return;
+    }
+
     if (typeof window === 'undefined') {
       return;
     }
@@ -555,10 +599,18 @@ export class AccountingComponent implements OnInit {
   }
 
   addChequeDeposit(): void {
+    if (!this.canEditSelectedReportDraft()) {
+      return;
+    }
+
     this.chequeVoucherForm.deposits = [...this.chequeVoucherForm.deposits, this.createChequeDepositDraft()];
   }
 
   removeChequeDeposit(index: number): void {
+    if (!this.canEditSelectedReportDraft()) {
+      return;
+    }
+
     if (this.chequeVoucherForm.deposits.length <= 1) {
       return;
     }
@@ -567,10 +619,18 @@ export class AccountingComponent implements OnInit {
   }
 
   addChequeInvoice(): void {
+    if (!this.canEditSelectedReportDraft()) {
+      return;
+    }
+
     this.chequeVoucherForm.invoices = [...this.chequeVoucherForm.invoices, this.createInvoiceDraft()];
   }
 
   removeChequeInvoice(index: number): void {
+    if (!this.canEditSelectedReportDraft()) {
+      return;
+    }
+
     if (this.chequeVoucherForm.invoices.length <= 1) {
       return;
     }
@@ -579,10 +639,18 @@ export class AccountingComponent implements OnInit {
   }
 
   addAccountTitle(): void {
+    if (!this.canEditSelectedReportDraft()) {
+      return;
+    }
+
     this.chequeVoucherForm.accountTitles = [...this.chequeVoucherForm.accountTitles, this.createAccountTitleDraft()];
   }
 
   removeAccountTitle(index: number): void {
+    if (!this.canEditSelectedReportDraft()) {
+      return;
+    }
+
     if (this.chequeVoucherForm.accountTitles.length <= 1) {
       return;
     }
@@ -591,10 +659,18 @@ export class AccountingComponent implements OnInit {
   }
 
   addJournalSundry(): void {
+    if (!this.canEditSelectedReportDraft()) {
+      return;
+    }
+
     this.generalJournalForm.sundries = [...this.generalJournalForm.sundries, this.createJournalSundryDraft()];
   }
 
   removeJournalSundry(index: number): void {
+    if (!this.canEditSelectedReportDraft()) {
+      return;
+    }
+
     if (this.generalJournalForm.sundries.length <= 1) {
       return;
     }
@@ -644,6 +720,38 @@ export class AccountingComponent implements OnInit {
 
     const hasAnyAllowedRules = this.rbacService.hasAnyEffectivePermissionWithPrefix(this.reportPermissionPrefix);
     const hasAnyDeniedRules = this.rbacService.hasAnyDeniedPermissionWithPrefix(this.reportPermissionPrefix);
+
+    if (!hasAnyAllowedRules && !hasAnyDeniedRules) {
+      return true;
+    }
+
+    const isExplicitlyAllowed = acceptedKeys.some((permissionKey) =>
+      this.rbacService.hasEffectivePermissionKey(permissionKey),
+    );
+    if (isExplicitlyAllowed) {
+      return true;
+    }
+
+    if (!hasAnyAllowedRules && hasAnyDeniedRules) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private canAccessReportAction(permissionKeys: string[]): boolean {
+    const acceptedKeys = permissionKeys ?? [];
+    if (acceptedKeys.length === 0) {
+      return true;
+    }
+
+    const isDenied = acceptedKeys.some((permissionKey) => this.rbacService.hasDeniedPermissionKey(permissionKey));
+    if (isDenied) {
+      return false;
+    }
+
+    const hasAnyAllowedRules = this.rbacService.hasAnyEffectivePermissionWithPrefix(this.reportActionPermissionPrefix);
+    const hasAnyDeniedRules = this.rbacService.hasAnyDeniedPermissionWithPrefix(this.reportActionPermissionPrefix);
 
     if (!hasAnyAllowedRules && !hasAnyDeniedRules) {
       return true;

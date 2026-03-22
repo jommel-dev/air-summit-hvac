@@ -1130,10 +1130,14 @@ export class QuotationService {
     }
 
     const normalizedRoleName = String(roleName ?? '').trim().toLowerCase();
-    if (!normalizedRoleName.includes('admin') && !normalizedRoleName.includes('super')) {
+    if (
+      !normalizedRoleName.includes('admin') &&
+      !normalizedRoleName.includes('super') &&
+      !normalizedRoleName.includes('owner')
+    ) {
       return {
         success: false,
-        message: 'Only admin or super admin can permanently delete expired quotations',
+        message: 'Only admin, super admin, or business owner can permanently delete expired quotations',
       };
     }
 
@@ -1153,6 +1157,7 @@ export class QuotationService {
          AND (
            LOWER(COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename', '')) LIKE '%admin%'
            OR LOWER(COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename', '')) LIKE '%super%'
+           OR LOWER(COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename', '')) LIKE '%owner%'
          )
        LIMIT 1`,
       [effectiveUserId, passwordSha1],

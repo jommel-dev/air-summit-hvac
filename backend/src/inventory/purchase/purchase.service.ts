@@ -1444,6 +1444,14 @@ export class PurchaseService {
     });
   }
 
+  async revertToDeliveries(id: number, userId?: number) {
+    return this.transitionPurchaseStatus(id, 'in-progress', userId, {
+      approvalOnly: true,
+      updateSerialsToInStock: false,
+      successMessage: 'Purchase order reverted to deliveries',
+    });
+  }
+
   async approve(id: number, userId?: number) {
     return this.transitionPurchaseStatus(id, 'approved', userId, {
       approvalOnly: true,

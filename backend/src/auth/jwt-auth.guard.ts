@@ -35,9 +35,10 @@ export class JwtAuthGuard implements CanActivate {
     const roleName = String(payload?.roleName ?? payload?.role_name ?? '')
       .trim()
       .toLowerCase();
-    const isAdminOrSuper = roleName.includes('admin') || roleName.includes('super');
+    const isAdminOrSuperOrOwner =
+      roleName.includes('admin') || roleName.includes('super') || roleName.includes('owner');
 
-    if (!isAdminOrSuper) {
+    if (!isAdminOrSuperOrOwner) {
       return tokenBranchId;
     }
 
