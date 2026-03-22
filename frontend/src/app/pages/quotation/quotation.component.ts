@@ -1273,6 +1273,9 @@ export class QuotationComponent implements OnInit, OnDestroy {
     const toHtmlLines = (text: string) =>
       text.split('\n').map((line) => this.escapeHtml(line)).join('<br/>');
 
+    const logoSrc = this.escapeHtml(this.resolveAssetUrl(payload.logoSrc || '/images/air-summit-logo.png'));
+    const signatorySrc = this.escapeHtml(this.resolveAssetUrl('/images/van-esign.png'));
+
     return `
       <html>
         <head>
@@ -1307,6 +1310,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
             .terms-line .label { width: 110px; color: #333; }
             .signatures { margin-top: 70px; display: flex; justify-content: space-between; }
             .sig { width: 250px; font-size: 12px; }
+            .sig-signature { height: 48px; margin: 0 auto -25px auto; object-fit: contain; object-position: center bottom; display: block; }
             .sig-line { border-top: 1px solid #333; margin-top: 22px; padding-top: 4px; }
             @media print {
               html, body, table, thead, tbody, tr, th, td, .contract-title, .block-title {
@@ -1322,7 +1326,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
         <body>
           <div class="top">
             <div>
-              <img src="${this.escapeHtml(payload.logoSrc || '/images/air-summit-logo.png')}" class="logo" alt="Air Summit" />
+              <img src="${logoSrc}" class="logo" alt="Air Summit" />
             </div>
             <div class="contacts">
               <div>Contact Us: 0917-137-8744 / 0908-811-2850</div>
@@ -1410,6 +1414,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
 
           <div class="signatures">
             <div class="sig">
+              <img src="${signatorySrc}" alt="Roger Van Saraza Signature" class="sig-signature" />
               <div class="sig-line">Roger Van Saraza</div>
               <div>Proprietor & Tech. Manager</div>
             </div>
@@ -1584,6 +1589,24 @@ export class QuotationComponent implements OnInit, OnDestroy {
     page.drawText(`TOTAL: ${this.formatAmountPdf(data.totalAmount)}`, { x: width - 220, y, size: 10, font: fontBold });
     page.drawText(`GRAND TOTAL: ${this.formatAmountPdf(data.totalAmount)}`, { x: width - 220, y: y - 16, size: 10, font: fontBold });
 
+    const eSignBytes = await this.loadLogoPngBytes(['/images/van-esign.png']);
+    if (eSignBytes) {
+      const eSign = await pdfDoc.embedPng(eSignBytes);
+      const eSignWidth = 130;
+      const eSignScale = eSignWidth / eSign.width;
+      const eSignHeight = eSign.height * eSignScale;
+      const preparedByLineStartX = 50;
+      const preparedByLineEndX = 280;
+      const preparedByLineWidth = preparedByLineEndX - preparedByLineStartX;
+      const eSignX = preparedByLineStartX + (preparedByLineWidth - eSignWidth) / 2;
+      page.drawImage(eSign, {
+        x: eSignX,
+        y: 72,
+        width: eSignWidth,
+        height: eSignHeight,
+      });
+    }
+
     page.drawText('Prepared by:', { x: 50, y: 85, size: 10, font });
     page.drawLine({ start: { x: 50, y: 70 }, end: { x: 280, y: 70 }, thickness: 0.8, color: rgb(0.2, 0.2, 0.2) });
     page.drawText('Received by:', { x: width - 280, y: 85, size: 10, font });
@@ -1675,6 +1698,23 @@ export class QuotationComponent implements OnInit, OnDestroy {
     }
 
     return null;
+  }
+
+  private resolveAssetUrl(path: string): string {
+    const normalizedPath = String(path ?? '').trim();
+    if (!normalizedPath) {
+      return '';
+    }
+
+    if (/^https?:\/\//i.test(normalizedPath) || normalizedPath.startsWith('data:') || normalizedPath.startsWith('blob:')) {
+      return normalizedPath;
+    }
+
+    if (typeof window === 'undefined') {
+      return normalizedPath;
+    }
+
+    return new URL(normalizedPath, window.location.origin).toString();
   }
 
   private blobToDataUrl(blob: Blob): Promise<string> {
