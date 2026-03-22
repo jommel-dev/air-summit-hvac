@@ -198,19 +198,12 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   get isFormDrawerBusy(): boolean {
-    return this.isCreating || this.isImportingSerials || this.isFlushingQueuedSerials;
+    return this.isCreating || this.isImportingSerials;
   }
 
   get formDrawerBusyMessage(): string {
     if (this.isImportingSerials) {
       return 'Uploading serial numbers from CSV...';
-    }
-
-    if (this.isFlushingQueuedSerials) {
-      const count = this.pendingSerialScanCount;
-      return count > 0
-        ? `Saving serial numbers... ${count} item${count > 1 ? 's' : ''} remaining.`
-        : 'Saving serial numbers...';
     }
 
     if (this.isCreating) {

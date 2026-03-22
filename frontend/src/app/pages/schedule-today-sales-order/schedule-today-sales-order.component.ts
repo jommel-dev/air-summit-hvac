@@ -71,6 +71,10 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
   isFlushingQueuedSerials = false;
   private activeSerialFlushCount = 0;
   private queuedSerialScans: QueuedSalesSerialScan[] = [];
+
+  get pendingSerialScanCount(): number {
+    return this.queuedSerialScans.length + this.activeSerialFlushCount;
+  }
   private queuedSerialFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private queuedSerialIntervalTimer: ReturnType<typeof setInterval> | null = null;
 
