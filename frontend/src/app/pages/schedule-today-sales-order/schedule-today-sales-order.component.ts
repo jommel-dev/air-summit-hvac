@@ -162,7 +162,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     }
 
     this.serialScanTimers[timerKey] = setTimeout(() => {
-      void this.scanSerialForSelectedUnit(productIndex);
+      void this.scanSerialForSelectedUnit(productIndex, false);
       delete this.serialScanTimers[timerKey];
     }, this.serialScanDebounceMs);
   }
@@ -177,7 +177,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     this.focusSerialScanInput(index, selectedUnitLabel);
   }
 
-  async scanSerialForSelectedUnit(productIndex: number): Promise<void> {
+  async scanSerialForSelectedUnit(productIndex: number, showEmptyError = false): Promise<void> {
     const detail = this.selectedOrderDetail;
     if (!detail) {
       return;
@@ -194,12 +194,21 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       return;
     }
 
+    const timerKey = `${productIndex}::${unitLabel}`;
+    const existingTimer = this.serialScanTimers[timerKey];
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      delete this.serialScanTimers[timerKey];
+    }
+
     const serialNumber = this.normalizeSerial(unitEntry.scanInput);
     unitEntry.scanError = '';
     unitEntry.scanSuccess = '';
 
     if (!serialNumber) {
-      unitEntry.scanError = 'Enter serial number before scanning';
+      if (showEmptyError) {
+        unitEntry.scanError = 'Enter serial number before scanning';
+      }
       return;
     }
 
