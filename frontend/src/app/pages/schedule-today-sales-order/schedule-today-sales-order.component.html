@@ -216,6 +216,11 @@
                           @if (unitType.isScanning) {
                             <p class="text-xs text-gray-500 dark:text-gray-400">Processing serial...</p>
                           }
+                          @if (pendingSerialScanCount > 0) {
+                            <p class="text-xs text-gray-500 dark:text-gray-400">
+                              {{ isFlushingQueuedSerials ? 'Saving scanned serials...' : (pendingSerialScanCount + ' scanned serial(s) queued for saving') }}
+                            </p>
+                          }
 
                           @if (unitType.serials.length > 0) {
                             <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">

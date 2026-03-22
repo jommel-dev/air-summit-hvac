@@ -953,15 +953,43 @@ export class SerialNumberService {
       return { success: false, message: 'branchId must be a valid number' };
     }
 
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialNumberColumn = this.pickColumn(serialColumns, [
+      'serialNumber',
+      'serial_number',
+    ]);
+    const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
+    const serialBranchIdColumn = this.pickColumn(serialColumns, ['branchId', 'branch_id']);
+    const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+    const serialCreatedByColumn = this.pickColumn(serialColumns, [
+      'created_by',
+      'createdBy',
+      'createdby',
+    ]);
+
+    if (!serialNumberColumn) {
+      return {
+        success: false,
+        message: 'Serial number column is not configured in tblserial_numbers',
+      };
+    }
+
+    if (!serialSalesIdColumn) {
+      return {
+        success: false,
+        message: 'Sales reference column is not configured in tblserial_numbers',
+      };
+    }
+
     const serialResult = await this.databaseService.query<SerialScanRow>(
       `SELECT
         sn.id,
-        sn."serialNumber"::text AS "serialNumber",
-        sn.status::text AS status,
-        sn."salesId"::text AS "salesId",
-        sn."productId"::text AS "productId",
-        sn."capacityId"::text AS "capacityId",
-        sn."branchId"::text AS "branchId",
+        COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', null) AS "serialNumber",
+        COALESCE(to_jsonb(sn)->>'status', null) AS status,
+        COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id', null) AS "salesId",
+        COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', null) AS "productId",
+        COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', null) AS "capacityId",
+        COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', null) AS "branchId",
         COALESCE(to_jsonb(sn)->>'unitType', to_jsonb(sn)->>'unit_type', null) AS "unitType",
         COALESCE(
           to_jsonb(p)->>'productName',
@@ -972,11 +1000,28 @@ export class SerialNumberService {
         COALESCE(to_jsonb(c)->>'capacity', null) AS capacity
       FROM tblserial_numbers sn
       LEFT JOIN tblproducts p
-        ON p.id::text = sn."productId"::text
+        ON p.id::text = COALESCE(
+          to_jsonb(sn)->>'productId',
+          to_jsonb(sn)->>'product_id'
+        )
       LEFT JOIN tblcapacity c
-        ON c.id::text = sn."capacityId"::text
+        ON c.id::text = COALESCE(
+          to_jsonb(sn)->>'capacityId',
+          to_jsonb(sn)->>'capacity_id'
+        )
       WHERE LOWER(
-        regexp_replace(BTRIM(COALESCE(sn."serialNumber", '')), '\\s+', ' ', 'g')
+        regexp_replace(
+          BTRIM(
+            COALESCE(
+              to_jsonb(sn)->>'serialNumber',
+              to_jsonb(sn)->>'serial_number',
+              ''
+            )
+          ),
+          '\\s+',
+          ' ',
+          'g'
+        )
       ) = LOWER($1)
       LIMIT 1`,
       [serialNumber],
@@ -1036,28 +1081,23 @@ export class SerialNumberService {
       };
     }
 
-    const updateResult = await this.databaseService.query<SerialScanRow>(
-      `UPDATE tblserial_numbers
-       SET
-         "salesId" = $1,
-         "branchId" = COALESCE($2, "branchId"),
-         status = 'reserved',
-         created_by = COALESCE($3, created_by)
-       WHERE id = $4
-       RETURNING
-         id,
-         "serialNumber"::text AS "serialNumber",
-         status::text AS status,
-         "salesId"::text AS "salesId",
-         "productId"::text AS "productId",
-         "capacityId"::text AS "capacityId",
-         "branchId"::text AS "branchId",
-         COALESCE(to_jsonb(tblserial_numbers)->>'unitType', to_jsonb(tblserial_numbers)->>'unit_type', null) AS "unitType",
-         null::text AS "productName",
-         null::text AS unit,
-         null::text AS capacity`,
-      [salesId, branchId, userId ?? null, serial.id],
-    );
+    const updateRecord: Record<string, unknown> = {
+      [serialSalesIdColumn]: salesId,
+    };
+
+    if (serialBranchIdColumn && branchId !== null) {
+      updateRecord[serialBranchIdColumn] = branchId;
+    }
+
+    if (serialStatusColumn) {
+      updateRecord[serialStatusColumn] = 'reserved';
+    }
+
+    if (serialCreatedByColumn && userId !== undefined) {
+      updateRecord[serialCreatedByColumn] = userId;
+    }
+
+    const updateResult = await this.runUpdateById('tblserial_numbers', serial.id, updateRecord);
 
     if (updateResult.rowCount === 0) {
       return {
@@ -1115,15 +1155,29 @@ export class SerialNumberService {
           : { expectedUnitType: entry.expectedUnitType }),
       };
 
-      const result = await this.scanSalesOrder(payload, userId);
-      results.push({
-        serialNumber: this.normalizeSerialNumber(entry.serialNumber),
-        success: Boolean(result.success),
-        message: result.message,
-        item: {
-          serialNumber: result.item?.serialNumber ?? null,
-        },
-      });
+      try {
+        const result = await this.scanSalesOrder(payload, userId);
+        results.push({
+          serialNumber: this.normalizeSerialNumber(entry.serialNumber),
+          success: Boolean(result.success),
+          message: result.message,
+          item: {
+            serialNumber: result.item?.serialNumber ?? null,
+          },
+        });
+      } catch (error: unknown) {
+        results.push({
+          serialNumber: this.normalizeSerialNumber(entry.serialNumber),
+          success: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Internal Server Error while scanning serial number',
+          item: {
+            serialNumber: null,
+          },
+        });
+      }
     }
 
     const successCount = results.filter((entry) => entry.success).length;
