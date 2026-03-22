@@ -738,7 +738,7 @@ export class PurchaseService {
     return processedItems;
   }
 
-  async create(createPurchaseDto: CreatePurchaseDto, userId?: number) {
+  async create(createPurchaseDto: CreatePurchaseDto, userId?: number, branchId?: number) {
     const poNumber = String(createPurchaseDto.poNumber ?? '').trim();
     const status = String(createPurchaseDto.status ?? 'pending').trim() || 'pending';
 
@@ -898,6 +898,7 @@ export class PurchaseService {
         const totalAmountColumn = this.pickColumn(purchaseColumns, ['total_amount', 'totalAmount']);
         const statusColumn = this.pickColumn(purchaseColumns, ['status']);
         const createdByColumn = this.pickColumn(purchaseColumns, ['created_by', 'createdBy', 'createdby']);
+        const branchIdColumn = this.pickColumn(purchaseColumns, ['branch_id', 'branchId']);
 
         if (!poNumberColumn || !purchaseVendorIdColumn || !totalAmountColumn || !statusColumn) {
           throw new Error('tblpurchase_orders columns are not aligned with expected fields');
@@ -915,6 +916,10 @@ export class PurchaseService {
 
         if (createdByColumn && userId) {
           purchaseRecord[createdByColumn] = userId;
+        }
+
+        if (branchIdColumn && Number.isFinite(branchId) && Number(branchId) > 0) {
+          purchaseRecord[branchIdColumn] = Number(branchId);
         }
 
         const purchaseInsertResult = await this.runInsert(

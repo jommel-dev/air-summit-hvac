@@ -1177,16 +1177,38 @@ export class SerialNumberService {
       return { success: false, message: 'branchId must be a valid number' };
     }
 
-    const purchaseBranchResult = await this.databaseService.query<{ branchId: string | null }>(
-      `SELECT
-         COALESCE(to_jsonb(po)->>'branchId', to_jsonb(po)->>'branch_id', null) AS "branchId"
-       FROM tblpo po
-       WHERE po.id::text = $1
-       LIMIT 1`,
-      [String(purchaseId)],
-    );
+    let purchaseBranchIdRaw: string | null = null;
+    const purchaseBranchSourceTables = ['tblpurchase_orders', 'tblpo'];
 
-    const purchaseBranchIdRaw = purchaseBranchResult.rows[0]?.branchId;
+    for (const tableName of purchaseBranchSourceTables) {
+      try {
+        const purchaseBranchResult = await this.databaseService.query<{ branchId: string | null }>(
+          `SELECT
+             COALESCE(to_jsonb(po)->>'branchId', to_jsonb(po)->>'branch_id', null) AS "branchId"
+           FROM ${tableName} po
+           WHERE po.id::text = $1
+           LIMIT 1`,
+          [String(purchaseId)],
+        );
+
+        if (purchaseBranchResult.rowCount > 0) {
+          purchaseBranchIdRaw = purchaseBranchResult.rows[0]?.branchId ?? null;
+          break;
+        }
+      } catch (error: unknown) {
+        const errorCode =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? String((error as { code?: unknown }).code ?? '')
+            : '';
+
+        if (errorCode === '42P01') {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
     const purchaseBranchId =
       purchaseBranchIdRaw === null || purchaseBranchIdRaw === undefined || purchaseBranchIdRaw === ''
         ? null
@@ -1591,16 +1613,31 @@ export class SerialNumberService {
         unitType: entry.unitType,
       };
 
-      const result = await this.scanPurchaseOrder(payload, userId, branchIdInput);
-      results.push({
-        serialNumber: this.normalizeSerialNumber(entry.serialNumber),
-        success: Boolean(result.success),
-        message: result.message,
-        item: {
-          serialNumber: result.item?.serialNumber ?? null,
-          unitType: result.item?.unitType ?? entry.unitType ?? null,
-        },
-      });
+      try {
+        const result = await this.scanPurchaseOrder(payload, userId, branchIdInput);
+        results.push({
+          serialNumber: this.normalizeSerialNumber(entry.serialNumber),
+          success: Boolean(result.success),
+          message: result.message,
+          item: {
+            serialNumber: result.item?.serialNumber ?? null,
+            unitType: result.item?.unitType ?? entry.unitType ?? null,
+          },
+        });
+      } catch (error: unknown) {
+        results.push({
+          serialNumber: this.normalizeSerialNumber(entry.serialNumber),
+          success: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Internal Server Error while scanning serial number',
+          item: {
+            serialNumber: null,
+            unitType: entry.unitType ?? null,
+          },
+        });
+      }
     }
 
     const successCount = results.filter((entry) => entry.success).length;

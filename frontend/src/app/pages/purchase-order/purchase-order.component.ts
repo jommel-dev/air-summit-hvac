@@ -130,6 +130,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private serialScanErrorTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   isFlushingQueuedSerials = false;
   private activeSerialFlushCount = 0;
+  private serialFlushFailureCount = 0;
+  private isSerialAutoRetryPaused = false;
+  private readonly serialFlushMaxAutoRetryFailures = 2;
   private queuedSerialScans: QueuedPurchaseSerialScan[] = [];
   private queuedSerialFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private queuedSerialIntervalTimer: ReturnType<typeof setInterval> | null = null;
@@ -944,6 +947,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.selectedUnitTypeByProduct = {};
     this.queuedSerialScans = [];
     this.activeSerialFlushCount = 0;
+    this.serialFlushFailureCount = 0;
+    this.isSerialAutoRetryPaused = false;
     this.isFlushingQueuedSerials = false;
     this.clearQueuedSerialFlushTimer();
   }
@@ -953,6 +958,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.clearQueuedSerialFlushTimer();
     this.queuedSerialScans = [];
     this.activeSerialFlushCount = 0;
+    this.serialFlushFailureCount = 0;
+    this.isSerialAutoRetryPaused = false;
     this.isFlushingQueuedSerials = false;
     this.isFormDrawerOpen = false;
     this.isProcessingApprovalAction = false;
@@ -1635,6 +1642,14 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   private queueSerialScan(scan: QueuedPurchaseSerialScan): void {
+    if (this.isSerialAutoRetryPaused) {
+      this.isSerialAutoRetryPaused = false;
+      this.serialFlushFailureCount = 0;
+      if (this.createError === 'Failed to save scanned serial numbers. Automatic retry paused.') {
+        this.createError = '';
+      }
+    }
+
     this.queuedSerialScans = [...this.queuedSerialScans, scan];
 
     if (this.queuedSerialScans.length >= this.serialBatchSize) {
@@ -1665,7 +1680,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private startQueuedSerialAutoFlush(): void {
     this.stopQueuedSerialAutoFlush();
     this.queuedSerialIntervalTimer = setInterval(() => {
-      if (this.queuedSerialScans.length === 0) {
+      if (this.queuedSerialScans.length === 0 || this.isSerialAutoRetryPaused) {
         return;
       }
 
@@ -1752,10 +1767,21 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         this.createError = response.message ?? 'Some serial numbers failed to save.';
       }
 
+      this.serialFlushFailureCount = 0;
+      this.isSerialAutoRetryPaused = false;
+
       return true;
     } catch (error: unknown) {
+      this.serialFlushFailureCount += 1;
       this.queuedSerialScans = [...batch, ...this.queuedSerialScans];
-      this.createError = 'Failed to save scanned serial numbers. Retrying automatically.';
+
+      if (this.serialFlushFailureCount >= this.serialFlushMaxAutoRetryFailures) {
+        this.isSerialAutoRetryPaused = true;
+        this.createError = 'Failed to save scanned serial numbers. Automatic retry paused.';
+      } else {
+        this.createError = 'Failed to save scanned serial numbers. Retrying automatically.';
+      }
+
       this.setBatchScanError(batch, 'Failed to save serial numbers. They remain queued.');
 
       if (axios.isAxiosError(error)) {
@@ -1770,7 +1796,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       this.activeSerialFlushCount = 0;
       this.setBatchScanningState(batch, false);
 
-      if (this.queuedSerialScans.length > 0) {
+      if (this.queuedSerialScans.length > 0 && !this.isSerialAutoRetryPaused) {
         this.scheduleQueuedSerialFlush();
       }
     }
