@@ -1,7 +1,7 @@
 <div>
   <app-page-breadcrumb pageTitle="Accounting" />
 
-  <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-white/[0.02]">
+  <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-white/2">
     <h3 class="text-2xl font-semibold text-gray-800 dark:text-white/90">Accounting Reports</h3>
     <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
       Folder tree view for Task 5 reports with per-report RBAC filtering and live data where current APIs already exist.
@@ -157,110 +157,666 @@
 
         @if (report.key === 'cheque-voucher') {
           <div class="mt-5 space-y-4">
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div class="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">CV No.</label>
-                <input [(ngModel)]="chequeVoucherForm.cvNo" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                <!-- <p class="text-sm font-medium text-gray-700 dark:text-gray-200">Cheque Vouchers</p> -->
+                <p class="text-xs text-gray-500 dark:text-gray-400">Create and release voucher entries through the live accounting drawer workflow.</p>
               </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payee</label>
-                <input [(ngModel)]="chequeVoucherForm.payee" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              <button
+                type="button"
+                (click)="openChequeVoucherDrawer()"
+                [disabled]="!canEditSelectedReportDraft()"
+                class="rounded-lg border border-brand-300 px-4 py-2 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+              >
+                Open Voucher Drawer
+              </button>
+            </div>
+
+            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+              <p class="text-xs text-gray-500 dark:text-gray-400">Account titles and released vouchers are now persisted to backend accounting tables for shared and auditable records.</p>
+            </div>
+
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Released Vouchers</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ filteredReleasedChequeVouchers.length }}</p>
               </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Voucher Date</label>
-                <input type="date" [(ngModel)]="chequeVoucherForm.voucherDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Date Range</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherListDateFrom || '-' }} to {{ chequeVoucherListDateTo || '-' }}</p>
               </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">TIN Number</label>
-                <input [(ngModel)]="chequeVoucherForm.tinNumber" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
-                <input [(ngModel)]="chequeVoucherForm.address" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Zip Code</label>
-                <input [(ngModel)]="chequeVoucherForm.zipCode" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Released Amount Total</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ releasedChequeVoucherAmountTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
               </div>
             </div>
 
-            <div>
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Particulars</label>
-              <textarea [(ngModel)]="chequeVoucherForm.particulars" rows="3" class="w-full rounded-lg border border-gray-300 bg-transparent px-3 py-2 text-sm dark:border-gray-700"></textarea>
+            <div class="flex flex-wrap gap-2">
+              <input type="date" [(ngModel)]="chequeVoucherListDateFrom" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              <input type="date" [(ngModel)]="chequeVoucherListDateTo" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              <button
+                type="button"
+                (click)="applyChequeVoucherFilters()"
+                class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+              >
+                Apply Date Filter
+              </button>
+              <button
+                type="button"
+                (click)="clearChequeVoucherFilters()"
+                class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+              >
+                Clear Date Filter
+              </button>
             </div>
 
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Deposits</p>
-                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherDepositTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+            <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <div class="border-b border-gray-200 px-3 py-2 dark:border-gray-700">
+                <input
+                  type="text"
+                  [(ngModel)]="voucherSearchQuery"
+                  placeholder="Search by CV No., payee, or prepared by..."
+                  class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700 dark:text-gray-200 dark:placeholder-gray-500"
+                />
               </div>
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Invoices</p>
-                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherInvoiceTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
-              </div>
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Debits</p>
-                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherDebitTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
-              </div>
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Credits</p>
-                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherCreditTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+              <div class="overflow-x-auto">
+                <table class="min-w-full text-left text-sm">
+                  <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                    <tr>
+                      <th class="px-3 py-2">CV No.</th>
+                      <th class="px-3 py-2">Date</th>
+                      <th class="px-3 py-2">Release To</th>
+                      <th class="px-3 py-2 text-right">Amount</th>
+                      <th class="px-3 py-2">Prepared By</th>
+                      <th class="px-3 py-2 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (voucher of filteredReleasedChequeVouchers; track voucher.cvNo + '_' + voucher.releasedAt) {
+                      <tr class="border-t border-gray-200 dark:border-gray-700">
+                        <td class="px-3 py-2 font-medium text-gray-800 dark:text-white/90">{{ voucher.cvNo }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ formatDateOnly(voucher.voucherDate) }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ voucher.payee || '-' }}</td>
+                        <td class="px-3 py-2 text-right font-medium text-gray-800 dark:text-white/90">{{ getReleasedVoucherAmountTotal(voucher) | currency:'PHP':'symbol':'1.2-2' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ voucher.preparedBy || '-' }}</td>
+                        <td class="px-3 py-2 text-center">
+                          <button
+                            type="button"
+                            (click)="openVoucherView(voucher)"
+                            class="rounded-md border border-brand-300 px-2.5 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                          >
+                            View
+                          </button>
+                        </td>
+                      </tr>
+                    } @empty {
+                      <tr>
+                        <td colspan="6" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">No released vouchers for the selected date range.</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
               </div>
             </div>
 
-            <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-              <div class="mb-3 flex items-center justify-between">
-                <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Cheque Deposits</h5>
-                <button type="button" (click)="addChequeDeposit()" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Deposit</button>
-              </div>
-              <div class="space-y-3">
-                @for (deposit of chequeVoucherForm.deposits; track $index) {
-                  <div class="grid grid-cols-1 gap-3 md:grid-cols-[1.2fr_1fr_1fr_120px_auto]">
-                    <input [(ngModel)]="deposit.bankName" placeholder="Bank name" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input [(ngModel)]="deposit.chequeNo" placeholder="Cheque no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input type="date" [(ngModel)]="deposit.chequeDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input type="number" [(ngModel)]="deposit.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <button type="button" (click)="removeChequeDeposit($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
+            @if (viewingVoucher) {
+              <div class="fixed inset-0 z-100030 bg-gray-900/40" (click)="closeVoucherView()"></div>
+              <aside class="fixed right-0 top-0 z-100031 h-full w-full max-w-3xl border-l border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900 flex flex-col">
+                <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800 shrink-0">
+                  <div class="flex items-center gap-3">
+                    <div>
+                      <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">{{ viewingVoucher.cvNo }}</h5>
+                      <p class="text-xs text-gray-500 dark:text-gray-400">
+                        @if (isEditingViewingVoucher) { Editing — } @else { Released on } {{ formatDateOnly(viewingVoucher.releasedAt) }}
+                      </p>
+                    </div>
+                    @if (!isEditingViewingVoucher) {
+                      <button type="button" (click)="startEditVoucher()" class="rounded-md border border-brand-300 px-2.5 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">Edit</button>
+                    }
                   </div>
-                }
-              </div>
-            </div>
-
-            <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-              <div class="mb-3 flex items-center justify-between">
-                <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Invoices</h5>
-                <button type="button" (click)="addChequeInvoice()" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Invoice</button>
-              </div>
-              <div class="space-y-3">
-                @for (invoice of chequeVoucherForm.invoices; track $index) {
-                  <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_1.5fr_120px_auto]">
-                    <input [(ngModel)]="invoice.invoiceNo" placeholder="Invoice no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input type="date" [(ngModel)]="invoice.invoiceDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input [(ngModel)]="invoice.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input type="number" [(ngModel)]="invoice.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <button type="button" (click)="removeChequeInvoice($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
+                  <div class="flex items-center gap-2">
+                    @if (!isEditingViewingVoucher) {
+                      <button type="button" (click)="printVoucher()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Print</button>
+                      <button type="button" (click)="exportVoucherPDF()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">PDF Export</button>
+                    }
+                    @if (isEditingViewingVoucher) {
+                      <button type="button" (click)="cancelEditVoucher()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Cancel</button>
+                      <button type="button" (click)="saveVoucherEdit()" [disabled]="isSavingVoucherEdit" class="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60">{{ isSavingVoucherEdit ? 'Saving...' : 'Save Changes' }}</button>
+                    }
+                    <button type="button" (click)="closeVoucherView()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
                   </div>
-                }
-              </div>
-            </div>
+                </div>
 
-            <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-              <div class="mb-3 flex items-center justify-between">
-                <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Account Titles</h5>
-                <button type="button" (click)="addAccountTitle()" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Account Title</button>
-              </div>
-              <div class="space-y-3">
-                @for (accountTitle of chequeVoucherForm.accountTitles; track $index) {
-                  <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.5fr_120px_120px_auto]">
-                    <input [(ngModel)]="accountTitle.accountNumber" placeholder="Account no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input [(ngModel)]="accountTitle.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input type="number" [(ngModel)]="accountTitle.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input type="number" [(ngModel)]="accountTitle.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <button type="button" (click)="removeAccountTitle($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
+                <div class="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+                  @if (!isEditingViewingVoucher) {
+                    <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+                      <div>
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Voucher Type</p>
+                        <p class="mt-0.5 text-sm font-medium text-gray-800 dark:text-white/90">{{ viewingVoucher.voucherType || '-' }}</p>
+                      </div>
+                      <div>
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Voucher Date</p>
+                        <p class="mt-0.5 text-sm font-medium text-gray-800 dark:text-white/90">{{ formatDateOnly(viewingVoucher.voucherDate) }}</p>
+                      </div>
+                      <div class="col-span-2">
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Release To (Payee)</p>
+                        <p class="mt-0.5 text-sm font-medium text-gray-800 dark:text-white/90">{{ viewingVoucher.payee || '-' }}</p>
+                      </div>
+                      <div>
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">TIN Number</p>
+                        <p class="mt-0.5 text-sm font-medium text-gray-800 dark:text-white/90">{{ viewingVoucher.tinNumber || '-' }}</p>
+                      </div>
+                      <div>
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Zip Code</p>
+                        <p class="mt-0.5 text-sm font-medium text-gray-800 dark:text-white/90">{{ viewingVoucher.zipCode || '-' }}</p>
+                      </div>
+                      <div class="col-span-2">
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Address</p>
+                        <p class="mt-0.5 text-sm font-medium text-gray-800 dark:text-white/90">{{ viewingVoucher.address || '-' }}</p>
+                      </div>
+                      <div class="col-span-4">
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Particulars</p>
+                        <p class="mt-0.5 text-sm font-medium text-gray-800 dark:text-white/90 whitespace-pre-wrap">{{ viewingVoucher.particulars || '-' }}</p>
+                      </div>
+                      <div>
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Prepared By</p>
+                        <p class="mt-0.5 text-sm font-medium text-gray-800 dark:text-white/90">{{ viewingVoucher.preparedBy || '-' }}</p>
+                      </div>
+                      <div>
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Amount</p>
+                        <p class="mt-0.5 text-sm font-semibold text-brand-700 dark:text-brand-300">{{ getReleasedVoucherAmountTotal(viewingVoucher) | currency:'PHP':'symbol':'1.2-2' }}</p>
+                      </div>
+                    </div>
+
+                    @if (viewingVoucher.deposits.length > 0) {
+                      <div>
+                        <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300">Cheque Deposits</p>
+                        <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                          <table class="min-w-full text-left text-xs">
+                            <thead class="bg-gray-50 text-gray-500 uppercase dark:bg-gray-900/60 dark:text-gray-400">
+                              <tr>
+                                <th class="px-3 py-2">Bank Name</th>
+                                <th class="px-3 py-2">Cheque No.</th>
+                                <th class="px-3 py-2">Cheque Date</th>
+                                <th class="px-3 py-2 text-right">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              @for (row of viewingVoucher.deposits; track $index) {
+                                <tr class="border-t border-gray-200 dark:border-gray-700">
+                                  <td class="px-3 py-1.5 text-gray-700 dark:text-gray-300">{{ row.bankName || '-' }}</td>
+                                  <td class="px-3 py-1.5 text-gray-700 dark:text-gray-300">{{ row.chequeNo || '-' }}</td>
+                                  <td class="px-3 py-1.5 text-gray-700 dark:text-gray-300">{{ formatDateOnly(row.chequeDate) }}</td>
+                                  <td class="px-3 py-1.5 text-right text-gray-700 dark:text-gray-300">{{ row.amount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                                </tr>
+                              }
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    }
+
+                    @if (viewingVoucher.invoices.length > 0) {
+                      <div>
+                        <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300">Invoices</p>
+                        <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                          <table class="min-w-full text-left text-xs">
+                            <thead class="bg-gray-50 text-gray-500 uppercase dark:bg-gray-900/60 dark:text-gray-400">
+                              <tr>
+                                <th class="px-3 py-2">Invoice No.</th>
+                                <th class="px-3 py-2">Invoice Date</th>
+                                <th class="px-3 py-2">Description</th>
+                                <th class="px-3 py-2 text-right">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              @for (row of viewingVoucher.invoices; track $index) {
+                                <tr class="border-t border-gray-200 dark:border-gray-700">
+                                  <td class="px-3 py-1.5 text-gray-700 dark:text-gray-300">{{ row.invoiceNo || '-' }}</td>
+                                  <td class="px-3 py-1.5 text-gray-700 dark:text-gray-300">{{ formatDateOnly(row.invoiceDate) }}</td>
+                                  <td class="px-3 py-1.5 text-gray-700 dark:text-gray-300">{{ row.description || '-' }}</td>
+                                  <td class="px-3 py-1.5 text-right text-gray-700 dark:text-gray-300">{{ row.amount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                                </tr>
+                              }
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    }
+
+                    @if (viewingVoucher.accountTitles.length > 0) {
+                      <div>
+                        <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-600 dark:text-gray-300">Account Titles</p>
+                        <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                          <table class="min-w-full text-left text-xs">
+                            <thead class="bg-gray-50 text-gray-500 uppercase dark:bg-gray-900/60 dark:text-gray-400">
+                              <tr>
+                                <th class="px-3 py-2">Acct No.</th>
+                                <th class="px-3 py-2">Description</th>
+                                <th class="px-3 py-2 text-right">Debit</th>
+                                <th class="px-3 py-2 text-right">Credit</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              @for (row of viewingVoucher.accountTitles; track $index) {
+                                <tr class="border-t border-gray-200 dark:border-gray-700">
+                                  <td class="px-3 py-1.5 text-gray-700 dark:text-gray-300">{{ row.accountNumber }}</td>
+                                  <td class="px-3 py-1.5 text-gray-700 dark:text-gray-300">{{ row.description }}</td>
+                                  <td class="px-3 py-1.5 text-right text-gray-700 dark:text-gray-300">{{ row.debit | currency:'PHP':'symbol':'1.2-2' }}</td>
+                                  <td class="px-3 py-1.5 text-right text-gray-700 dark:text-gray-300">{{ row.credit | currency:'PHP':'symbol':'1.2-2' }}</td>
+                                </tr>
+                              }
+                              <tr class="border-t-2 border-gray-300 bg-gray-50 font-semibold dark:border-gray-600 dark:bg-gray-800/70">
+                                <td colspan="2" class="px-3 py-2 text-gray-800 dark:text-white/90">Total</td>
+                                <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ getVoucherAccountTitleDebitTotal(viewingVoucher) | currency:'PHP':'symbol':'1.2-2' }}</td>
+                                <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ getVoucherAccountTitleCreditTotal(viewingVoucher) | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    }
+                  } @else {
+                    <!-- Edit form -->
+                    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Voucher Type</label>
+                        <select [(ngModel)]="editingVoucherForm.voucherType" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700">
+                          @for (type of chequeVoucherTypeOptions; track type) {
+                            <option [value]="type">{{ type }}</option>
+                          }
+                        </select>
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Voucher Date</label>
+                        <input type="date" [(ngModel)]="editingVoucherForm.voucherDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      </div>
+                      <div class="col-span-2">
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payee</label>
+                        <input [(ngModel)]="editingVoucherForm.payee" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">TIN Number</label>
+                        <input [(ngModel)]="editingVoucherForm.tinNumber" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Zip Code</label>
+                        <input [(ngModel)]="editingVoucherForm.zipCode" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      </div>
+                      <div class="col-span-2">
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+                        <input [(ngModel)]="editingVoucherForm.address" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      </div>
+                      <div class="col-span-2">
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Particulars</label>
+                        <textarea [(ngModel)]="editingVoucherForm.particulars" rows="2" class="w-full rounded-lg border border-gray-300 bg-transparent px-3 py-2 text-sm dark:border-gray-700"></textarea>
+                      </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+                      <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Deposits</p>
+                        <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ editingVoucherDepositTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+                      </div>
+                      <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Invoices</p>
+                        <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ editingVoucherInvoiceTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+                      </div>
+                      <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Debits</p>
+                        <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ editingVoucherDebitTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+                      </div>
+                      <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Credits</p>
+                        <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ editingVoucherCreditTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+                      </div>
+                    </div>
+
+                    <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                      <div class="mb-3 flex items-center justify-between">
+                        <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Cheque Deposits</h5>
+                        <button type="button" (click)="addEditDeposit()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Deposit</button>
+                      </div>
+                      <div class="space-y-3">
+                        @for (deposit of editingVoucherForm.deposits; track $index) {
+                          <div class="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-5 items-end">
+                            <input [(ngModel)]="deposit.bankName" placeholder="Bank name" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input [(ngModel)]="deposit.chequeNo" placeholder="Cheque no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="date" [(ngModel)]="deposit.chequeDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="number" [(ngModel)]="deposit.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <button type="button" (click)="removeEditDeposit($index)" class="h-10 rounded-md border border-error-300 px-3 text-xs font-medium text-error-600">Remove</button>
+                          </div>
+                        }
+                      </div>
+                    </div>
+
+                    <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                      <div class="mb-3 flex items-center justify-between">
+                        <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Invoices</h5>
+                        <button type="button" (click)="addEditInvoice()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Invoice</button>
+                      </div>
+                      <div class="space-y-3">
+                        @for (invoice of editingVoucherForm.invoices; track $index) {
+                          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5 items-end">
+                            <input [(ngModel)]="invoice.invoiceNo" placeholder="Invoice no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="date" [(ngModel)]="invoice.invoiceDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input [(ngModel)]="invoice.description" placeholder="Description" class="h-10 lg:col-span-1 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="number" [(ngModel)]="invoice.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <button type="button" (click)="removeEditInvoice($index)" class="h-10 rounded-md border border-error-300 px-3 text-xs font-medium text-error-600">Remove</button>
+                          </div>
+                        }
+                      </div>
+                    </div>
+
+                    <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                      <div class="mb-3 flex items-center justify-between">
+                        <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Account Titles Details</h5>
+                        <button type="button" (click)="addEditAccountTitle()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Account Title</button>
+                      </div>
+                      <div class="space-y-3">
+                        @for (accountTitle of editingVoucherForm.accountTitles; track $index) {
+                          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5 items-end">
+                            <input [(ngModel)]="accountTitle.accountNumber" placeholder="Account no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input [(ngModel)]="accountTitle.description" placeholder="Description" class="h-10 lg:col-span-1 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="number" [(ngModel)]="accountTitle.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="number" [(ngModel)]="accountTitle.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <button type="button" (click)="removeEditAccountTitle($index)" class="h-10 rounded-md border border-error-300 px-3 text-xs font-medium text-error-600">Remove</button>
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  }
+                </div>
+              </aside>
+            }
+
+            @if (isPrintPreviewOpen && viewingVoucher) {
+              <div class="fixed inset-0 z-100040 bg-gray-900/40" (click)="closePrintPreview()"></div>
+              <aside class="fixed right-0 top-0 z-100041 h-full w-full max-w-4xl border-l border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900 flex flex-col">
+                <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800 shrink-0">
+                  <div>
+                    <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">Print Preview - {{ viewingVoucher.cvNo }}</h5>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Review before printing</p>
                   </div>
-                }
-              </div>
-            </div>
+                  <div class="flex items-center gap-2">
+                    <button type="button" (click)="executePrint()" class="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600">Print Now</button>
+                    <button type="button" (click)="closePrintPreview()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+                  </div>
+                </div>
+
+                <div class="flex-1 overflow-y-auto bg-gray-50 p-6 dark:bg-gray-800">
+                  <div #printContent class="mx-auto max-w-204 bg-white p-8 shadow dark:bg-gray-900">
+                    <!-- Print Header -->
+                    <div class="mb-4 flex items-start justify-between gap-4 border-b border-gray-300 pb-3">
+                      <img src="/images/air-summit-logo.png" alt="Air Summit" class="h-14 w-auto object-contain" />
+                      <div class="text-right text-[11px] font-semibold leading-5 text-[#1f3f9a]">
+                        <div>Contact Us: 0917-137-8744 / 0908-811-2850</div>
+                        <div>Email: airsummit2022@gmail.com</div>
+                        <div>Main Office: Lot 15, Blk 14, Bulaon Resettlement, City Of San Fernando Pampanga</div>
+                        <div>Warehouse: Tramo Mesulo, Arayat Pampanga</div>
+                      </div>
+                    </div>
+                    <div class="mb-6 text-right">
+                      <h1 class="text-base font-semibold text-gray-800 dark:text-white">Cheque Voucher <span class="text-error-600 dark:text-error-400">{{ viewingVoucher.cvNo }}</span></h1>
+                    </div>
+
+                    <!-- Voucher Details -->
+                    <div class="mb-6 grid grid-cols-2 gap-4 text-xs">
+                      <div>
+                        <p class="font-semibold text-gray-600 dark:text-gray-300">Payee:</p>
+                        <p class="text-gray-800 dark:text-white">{{ viewingVoucher.payee }}</p>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-gray-600 dark:text-gray-300">Date:</p>
+                        <p class="text-gray-800 dark:text-white">{{ formatDateOnly(viewingVoucher.voucherDate) }}</p>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-gray-600 dark:text-gray-300">Address:</p>
+                        <p class="text-gray-800 dark:text-white">{{ (viewingVoucher.address || '-') + (viewingVoucher.zipCode ? ', ' + viewingVoucher.zipCode : '') }}</p>
+                      </div>
+                      <div>
+                        <p class="font-semibold text-gray-600 dark:text-gray-300">TIN:</p>
+                        <p class="text-gray-800 dark:text-white">{{ viewingVoucher.tinNumber || '-' }}</p>
+                      </div>
+                    </div>
+
+                    @if (viewingVoucher.particulars) {
+                      <div class="mb-6 border-t border-gray-200 pt-4">
+                        <p class="mb-2 font-semibold text-gray-600 dark:text-gray-300">Particulars:</p>
+                        <p class="whitespace-pre-wrap text-xs text-gray-800 dark:text-white">{{ viewingVoucher.particulars }}</p>
+                      </div>
+                    }
+
+                    <!-- Deposits Table -->
+                    @if (viewingVoucher.deposits.length > 0) {
+                      <div class="mb-6">
+                        <h3 class="mb-2 font-semibold text-gray-800 dark:text-white">Cheque Deposits</h3>
+                        <table class="w-full text-xs">
+                          <thead class="border-b-2 border-gray-300">
+                            <tr>
+                              <th class="px-2 py-1 text-left">Bank Name</th>
+                              <th class="px-2 py-1 text-left">Cheque No.</th>
+                              <th class="px-2 py-1 text-left">Cheque Date</th>
+                              <th class="px-2 py-1 text-right">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody class="border-b border-gray-200">
+                            @for (row of viewingVoucher.deposits; track $index) {
+                              <tr class="border-b border-gray-100">
+                                <td class="px-2 py-1">{{ row.bankName }}</td>
+                                <td class="px-2 py-1">{{ row.chequeNo }}</td>
+                                <td class="px-2 py-1">{{ formatDateOnly(row.chequeDate) }}</td>
+                                <td class="px-2 py-1 text-right">{{ row.amount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              </tr>
+                            }
+                          </tbody>
+                        </table>
+                      </div>
+                    }
+
+                    <!-- Invoices Table -->
+                    @if (viewingVoucher.invoices.length > 0) {
+                      <div class="mb-6">
+                        <h3 class="mb-2 font-semibold text-gray-800 dark:text-white">Invoices</h3>
+                        <table class="w-full text-xs">
+                          <thead class="border-b-2 border-gray-300">
+                            <tr>
+                              <th class="px-2 py-1 text-left">Invoice No.</th>
+                              <th class="px-2 py-1 text-left">Invoice Date</th>
+                              <th class="px-2 py-1 text-left">Description</th>
+                              <th class="px-2 py-1 text-right">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody class="border-b border-gray-200">
+                            @for (row of viewingVoucher.invoices; track $index) {
+                              <tr class="border-b border-gray-100">
+                                <td class="px-2 py-1">{{ row.invoiceNo }}</td>
+                                <td class="px-2 py-1">{{ formatDateOnly(row.invoiceDate) }}</td>
+                                <td class="px-2 py-1">{{ row.description }}</td>
+                                <td class="px-2 py-1 text-right">{{ row.amount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              </tr>
+                            }
+                          </tbody>
+                        </table>
+                      </div>
+                    }
+
+                    <!-- Account Titles Table -->
+                    @if (viewingVoucher.accountTitles.length > 0) {
+                      <div class="mb-6">
+                        <h3 class="mb-2 font-semibold text-gray-800 dark:text-white">Account Titles</h3>
+                        <table class="w-full text-xs">
+                          <thead class="border-b-2 border-gray-300">
+                            <tr>
+                              <th class="px-2 py-1 text-left">Account No.</th>
+                              <th class="px-2 py-1 text-left">Description</th>
+                              <th class="px-2 py-1 text-right">Debit</th>
+                              <th class="px-2 py-1 text-right">Credit</th>
+                            </tr>
+                          </thead>
+                          <tbody class="border-b border-gray-200">
+                            @for (row of viewingVoucher.accountTitles; track $index) {
+                              <tr class="border-b border-gray-100">
+                                <td class="px-2 py-1">{{ row.accountNumber }}</td>
+                                <td class="px-2 py-1">{{ row.description }}</td>
+                                <td class="px-2 py-1 text-right">{{ row.debit | currency:'PHP':'symbol':'1.2-2' }}</td>
+                                <td class="px-2 py-1 text-right">{{ row.credit | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              </tr>
+                            }
+                            <tr class="border-t-2 border-gray-300 bg-gray-100 font-semibold">
+                              <td colspan="2" class="px-2 py-1.5">Total</td>
+                              <td class="px-2 py-1.5 text-right">{{ getVoucherAccountTitleDebitTotal(viewingVoucher) | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              <td class="px-2 py-1.5 text-right">{{ getVoucherAccountTitleCreditTotal(viewingVoucher) | currency:'PHP':'symbol':'1.2-2' }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    }
+
+                    <!-- Footer -->
+                    <div class="mt-8 border-t border-gray-300 pt-4 text-xs text-gray-600 dark:text-gray-400">
+                      <p>Released on: {{ formatDateOnly(viewingVoucher.releasedAt) }}</p>
+                      <p>Prepared by: {{ viewingVoucher.preparedBy || 'N/A' }}</p>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            }
+
+            @if (isChequeVoucherDrawerOpen) {
+              <div class="fixed inset-0 z-100020 bg-gray-900/40" (click)="closeChequeVoucherDrawer()"></div>
+              <aside class="fixed right-0 top-0 z-100021 h-full w-full max-w-4xl transform border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900">
+                <div class="flex h-full flex-col">
+                  <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+                    <div>
+                      <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">Cheque Voucher</h5>
+                      <p class="text-xs text-gray-500 dark:text-gray-400">Voucher number is auto-generated and locked.</p>
+                    </div>
+                    <button type="button" (click)="closeChequeVoucherDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+                  </div>
+
+                  <div class="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">CV No.</label>
+                        <input [ngModel]="chequeVoucherForm.cvNo" readonly class="h-10 w-full rounded-lg border border-gray-300 bg-gray-50 px-3 text-sm dark:border-gray-700 dark:bg-gray-800" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Voucher Type</label>
+                        <select [(ngModel)]="chequeVoucherForm.voucherType" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700">
+                          @for (type of chequeVoucherTypeOptions; track type) {
+                            <option [value]="type">{{ type }}</option>
+                          }
+                        </select>
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Payee</label>
+                        <input [(ngModel)]="chequeVoucherForm.payee" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Voucher Date</label>
+                        <input type="date" [(ngModel)]="chequeVoucherForm.voucherDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">TIN Number</label>
+                        <input [(ngModel)]="chequeVoucherForm.tinNumber" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+                        <input [(ngModel)]="chequeVoucherForm.address" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Zip Code</label>
+                        <input [(ngModel)]="chequeVoucherForm.zipCode" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Particulars</label>
+                      <textarea [(ngModel)]="chequeVoucherForm.particulars" rows="3" class="w-full rounded-lg border border-gray-300 bg-transparent px-3 py-2 text-sm dark:border-gray-700"></textarea>
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Deposits</p>
+                        <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherDepositTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+                      </div>
+                      <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Invoices</p>
+                        <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherInvoiceTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+                      </div>
+                      <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Debits</p>
+                        <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherDebitTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+                      </div>
+                      <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Credits</p>
+                        <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ chequeVoucherCreditTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+                      </div>
+                    </div>
+
+                    <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                      <div class="mb-3 flex items-center justify-between">
+                        <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Cheque Deposits</h5>
+                        <button type="button" (click)="addChequeDeposit()" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Deposit</button>
+                      </div>
+                      <div class="space-y-3">
+                        @for (deposit of chequeVoucherForm.deposits; track $index) {
+                          <div class="grid grid-cols-1 gap-3 md:grid-cols-[1.2fr_1fr_1fr_120px_auto]">
+                            <input [(ngModel)]="deposit.bankName" placeholder="Bank name" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input [(ngModel)]="deposit.chequeNo" placeholder="Cheque no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="date" [(ngModel)]="deposit.chequeDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="number" [(ngModel)]="deposit.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <button type="button" (click)="removeChequeDeposit($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
+                          </div>
+                        }
+                      </div>
+                    </div>
+
+                    <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                      <div class="mb-3 flex items-center justify-between">
+                        <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Invoices</h5>
+                        <button type="button" (click)="addChequeInvoice()" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Invoice</button>
+                      </div>
+                      <div class="space-y-3">
+                        @for (invoice of chequeVoucherForm.invoices; track $index) {
+                          <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_1.5fr_120px_auto]">
+                            <input [(ngModel)]="invoice.invoiceNo" placeholder="Invoice no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="date" [(ngModel)]="invoice.invoiceDate" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input [(ngModel)]="invoice.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="number" [(ngModel)]="invoice.amount" placeholder="Amount" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <button type="button" (click)="removeChequeInvoice($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
+                          </div>
+                        }
+                      </div>
+                    </div>
+
+                    <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                      <div class="mb-3 flex items-center justify-between">
+                        <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Account Titles Details</h5>
+                        <button type="button" (click)="addAccountTitle()" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Account Title</button>
+                      </div>
+                      <div class="space-y-3">
+                        @for (accountTitle of chequeVoucherForm.accountTitles; track $index) {
+                          <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.5fr_120px_120px_auto]">
+                            <input [(ngModel)]="accountTitle.accountNumber" (blur)="onAccountTitleBlur($index)" placeholder="Account no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input [(ngModel)]="accountTitle.description" (blur)="onAccountTitleBlur($index)" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="number" [(ngModel)]="accountTitle.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="number" [(ngModel)]="accountTitle.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <button type="button" (click)="removeAccountTitle($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+                    <button type="button" (click)="closeChequeVoucherDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
+                    <button type="button" (click)="releaseChequeVoucher()" [disabled]="!canEditSelectedReportDraft() || isSavingChequeVoucher" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">{{ isSavingChequeVoucher ? 'Releasing...' : 'Release Voucher' }}</button>
+                  </div>
+                </div>
+              </aside>
+            }
           </div>
         }
 
@@ -315,7 +871,7 @@
         @if (report.key === 'disbursement-register') {
           <div class="mt-5 space-y-4">
             <div class="rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
-              This preview is currently derived from the Cheque Voucher draft above. Once the backend tables are added, this view can switch to persisted voucher rows.
+              This register is generated from released cheque vouchers.
             </div>
 
             <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
@@ -346,7 +902,7 @@
                     } @empty {
                       <tr>
                         <td colspan="7" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
-                          No disbursement rows yet. Fill the Cheque Voucher draft to populate this preview.
+                          No disbursement rows yet. Release cheque vouchers to populate this register.
                         </td>
                       </tr>
                     }
@@ -571,15 +1127,63 @@
 
         @if (report.key === 'tax-2307-report') {
           <div class="mt-5 space-y-4">
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
               <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
                 <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Withholding Lines</p>
                 <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ withholdingTaxRows.length }}</p>
               </div>
               <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Withholding Total</p>
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Vatable Total</p>
+                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ withholdingVatableTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+              </div>
+              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Tax Withheld Total</p>
                 <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ withholdingTaxTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
               </div>
+            </div>
+
+            <div class="flex flex-wrap gap-2">
+              <input type="date" [(ngModel)]="tax2307DateFrom" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              <input type="date" [(ngModel)]="tax2307DateTo" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+              <select
+                [(ngModel)]="tax2307SupplierFilter"
+                class="h-9 min-w-72 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700"
+              >
+                <option value="">All Suppliers</option>
+                @for (supplier of tax2307SupplierOptions; track supplier) {
+                  <option [value]="supplier">{{ supplier }}</option>
+                }
+              </select>
+              <button
+                type="button"
+                (click)="applyTax2307Filters()"
+                class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+              >
+                Apply Date Filter
+              </button>
+              <button
+                type="button"
+                (click)="clearTax2307Filters()"
+                class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+              >
+                Clear Date Filter
+              </button>
+              <button
+                type="button"
+                (click)="generateTax2307Forms()"
+                class="rounded-md border border-success-300 px-3 py-1.5 text-xs font-medium text-success-700 hover:bg-success-50 dark:border-success-500/40 dark:text-success-300 dark:hover:bg-success-500/10"
+              >
+                Generate 2307 Form(s)
+              </button>
+            </div>
+
+            <div>
+              <input
+                type="text"
+                [(ngModel)]="tax2307SearchQuery"
+                placeholder="Search Reference No., TIN, Supplier Name..."
+                class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700 dark:text-gray-200 dark:placeholder-gray-500"
+              />
             </div>
 
             <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
@@ -587,23 +1191,45 @@
                 <table class="min-w-full text-left text-sm">
                   <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
                     <tr>
-                      <th class="px-3 py-2">Account Number</th>
-                      <th class="px-3 py-2">Description</th>
-                      <th class="px-3 py-2 text-right">Amount</th>
+                      <th class="px-3 py-2">Reference No. (CV No.)</th>
+                      <th class="px-3 py-2">TIN</th>
+                      <th class="px-3 py-2">Supplier Name</th>
+                      <th class="px-3 py-2 text-right">Vatable Amount</th>
+                      <th class="px-3 py-2 text-right">Tax Withheld</th>
+                      <th class="px-3 py-2 text-center">Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    @for (row of withholdingTaxRows; track row.accountNumber + '_' + $index) {
+                    @for (row of withholdingTaxRows; track row.referenceNo + '_' + row.tin + '_' + $index) {
                       <tr class="border-t border-gray-200 dark:border-gray-700">
-                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.accountNumber || '-' }}</td>
-                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.description || '-' }}</td>
-                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.amount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.referenceNo || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.tin || '-' }}</td>
+                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.supplierName || '-' }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.vatableAmount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.taxWithheld | currency:'PHP':'symbol':'1.2-2' }}</td>
+                        <td class="px-3 py-2 text-center">
+                          <button
+                            type="button"
+                            (click)="viewTax2307Row(row)"
+                            class="rounded-md border border-brand-300 px-2.5 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                          >
+                            View
+                          </button>
+                        </td>
                       </tr>
                     } @empty {
                       <tr>
-                        <td colspan="3" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
-                          No 2307 lines yet. Add an account title containing Expanded Withholding Tax in the Cheque Voucher draft to preview this report.
+                        <td colspan="6" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                          No 2307 lines yet. Release a cheque voucher with an account title containing Expanded Withholding Tax to populate this report.
                         </td>
+                      </tr>
+                    }
+                    @if (withholdingTaxRows.length > 0) {
+                      <tr class="border-t-2 border-gray-300 bg-gray-50 font-semibold dark:border-gray-600 dark:bg-gray-800/70">
+                        <td colspan="3" class="px-3 py-2 text-gray-800 dark:text-white/90">Grand Total</td>
+                        <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ withholdingVatableTotal | currency:'PHP':'symbol':'1.2-2' }}</td>
+                        <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ withholdingTaxTotal | currency:'PHP':'symbol':'1.2-2' }}</td>
+                        <td class="px-3 py-2"></td>
                       </tr>
                     }
                   </tbody>

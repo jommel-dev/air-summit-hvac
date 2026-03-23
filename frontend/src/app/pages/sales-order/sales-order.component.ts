@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
@@ -94,6 +94,14 @@ interface SalesPaymentFormItem {
   downPayment: number;
 }
 
+type SalesGuardDialogMode = 'close-confirm' | 'refresh-confirm' | 'remove-serial-confirm';
+
+interface SalesPendingSerialRemoval {
+  productIndex: number;
+  unitLabel: string;
+  serialNumber: string;
+}
+
 @Component({
   selector: 'app-sales-order',
   imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
@@ -171,6 +179,10 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
   isDrawerOpen = false;
   drawerMode: 'create' | 'edit' = 'create';
+  guardDialogMode: SalesGuardDialogMode | null = null;
+  isGuardDialogOpen = false;
+  pendingSerialRemoval: SalesPendingSerialRemoval | null = null;
+  pendingRefreshEvent: BeforeUnloadEvent | null = null;
   editingSalesId: number | null = null;
   customerMode: 'existing' | 'new' = 'existing';
   uiMessage = '';
@@ -183,7 +195,10 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   catalogProducts: ProductOption[] = [];
   activeProductTabIndex = 0;
   activeServiceTabIndex = 0;
+  readonly serialsPerPage = 10;
+  serialPageByUnitType: Record<string, number> = {};
   selectedUnitTypeByProduct: Record<number, string> = {};
+  private drawerBaselineSnapshot = '';
   materialItems: MaterialTransactionItem[] = [];
   branchOptions: Array<{ id: number; branchName: string }> = [];
   activeExpenseTabIndex = 0;
@@ -971,8 +986,10 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     this.editingSalesId = null;
     this.form.salesType = this.getSalesTypeFromActiveTab();
     this.isDrawerOpen = true;
+    this.serialPageByUnitType = {};
     this.uiMessage = '';
     this.uiError = '';
+    this.captureDrawerBaselineSnapshot();
   }
 
   async openEditDrawer(order: SalesOrderRow): Promise<void> {
@@ -998,6 +1015,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     this.drawerMode = 'edit';
     this.editingSalesId = orderId;
     this.isDrawerOpen = true;
+    this.serialPageByUnitType = {};
     this.uiMessage = '';
     this.uiError = '';
 
@@ -1009,6 +1027,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       }
 
       this.applyDetailToForm(detail, fallback);
+      this.captureDrawerBaselineSnapshot();
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
         this.uiError =
@@ -1022,8 +1041,165 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     }
   }
 
-  closeDrawer(): void {
+  closeDrawer(forceClose = false): void {
+    if (!forceClose && this.hasUnsavedDrawerChanges()) {
+      this.openGuardDialog('close-confirm');
+      return;
+    }
+
     this.isDrawerOpen = false;
+    this.closeGuardDialog();
+  }
+
+  requestCloseDrawer(): void {
+    this.closeDrawer();
+  }
+
+  @HostListener('window:beforeunload', ['$event'])
+  onBeforeUnload(event: BeforeUnloadEvent): void {
+    if (!this.hasUnsavedDrawerChanges()) {
+      return;
+    }
+
+    event.preventDefault();
+    event.returnValue = '';
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  onWindowKeydown(event: KeyboardEvent): void {
+    if (!this.isDrawerOpen || !this.hasUnsavedDrawerChanges()) {
+      return;
+    }
+
+    const isRefreshKey = event.key === 'F5' || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r');
+    if (!isRefreshKey) {
+      return;
+    }
+
+    event.preventDefault();
+    this.pendingRefreshEvent = null;
+    this.openGuardDialog('refresh-confirm');
+  }
+
+  confirmGuardDialog(): void {
+    if (!this.guardDialogMode) {
+      this.closeGuardDialog();
+      return;
+    }
+
+    if (this.guardDialogMode === 'remove-serial-confirm') {
+      void this.confirmRemoveScannedSerial();
+      return;
+    }
+
+    if (this.guardDialogMode === 'refresh-confirm') {
+      this.closeGuardDialog();
+      window.location.reload();
+      return;
+    }
+
+    this.closeDrawer(true);
+  }
+
+  cancelGuardDialog(): void {
+    this.pendingSerialRemoval = null;
+    this.closeGuardDialog();
+  }
+
+  getGuardDialogTitle(): string {
+    if (this.guardDialogMode === 'remove-serial-confirm') {
+      return 'Remove serial number?';
+    }
+
+    if (this.guardDialogMode === 'refresh-confirm') {
+      return 'Refresh this page?';
+    }
+
+    return 'Close sales order?';
+  }
+
+  getGuardDialogMessage(): string {
+    if (this.guardDialogMode === 'remove-serial-confirm') {
+      return 'Are you sure you want to remove this serial number?';
+    }
+
+    if (this.guardDialogMode === 'refresh-confirm') {
+      return 'You have unsaved changes. Refreshing will discard all unsaved updates.';
+    }
+
+    return 'Closing this SO drawer will discard the current on-screen editing context. Browser refresh and tab close are also guarded while this drawer is open.';
+  }
+
+  getGuardDialogConfirmText(): string {
+    if (this.guardDialogMode === 'remove-serial-confirm') {
+      return 'Remove Serial';
+    }
+
+    if (this.guardDialogMode === 'refresh-confirm') {
+      return 'Refresh Now';
+    }
+
+    return 'Close Drawer';
+  }
+
+  getGuardDialogCancelText(): string {
+    if (this.guardDialogMode === 'remove-serial-confirm') {
+      return 'Cancel';
+    }
+
+    return 'Keep Editing';
+  }
+
+  getGuardDialogConfirmButtonClasses(): string {
+    if (this.guardDialogMode === 'remove-serial-confirm' || this.guardDialogMode === 'close-confirm') {
+      return 'rounded-lg border border-error-300 bg-error-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-error-600 dark:border-error-500/50 dark:bg-error-500 dark:hover:bg-error-600';
+    }
+
+    return 'rounded-lg border border-brand-300 bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 dark:border-brand-500/50 dark:bg-brand-500 dark:hover:bg-brand-600';
+  }
+
+  private openGuardDialog(mode: SalesGuardDialogMode): void {
+    this.guardDialogMode = mode;
+    this.isGuardDialogOpen = true;
+  }
+
+  private closeGuardDialog(): void {
+    this.isGuardDialogOpen = false;
+    this.guardDialogMode = null;
+    this.pendingRefreshEvent = null;
+  }
+
+  private hasUnsavedDrawerChanges(): boolean {
+    if (!this.isDrawerOpen || this.isSubmitting || this.isRemitting || this.isDrPreviewOpen) {
+      return false;
+    }
+
+    return this.getDrawerSnapshot() !== this.drawerBaselineSnapshot;
+  }
+
+  private captureDrawerBaselineSnapshot(): void {
+    this.drawerBaselineSnapshot = this.getDrawerSnapshot();
+  }
+
+  private getDrawerSnapshot(): string {
+    return JSON.stringify({
+      customerMode: this.customerMode,
+      customerSearch: this.customerSearch,
+      selectedUnitTypeByProduct: this.selectedUnitTypeByProduct,
+      form: this.form,
+      materialItems: this.materialItems,
+    });
+  }
+
+  private getSerialPageKey(productIndex: number, unitLabel: string): string {
+    return `${productIndex}::${unitLabel}`;
+  }
+
+  private ensureSerialPageInBounds(productIndex: number, unitLabel: string): void {
+    const key = this.getSerialPageKey(productIndex, unitLabel);
+    const totalPages = this.getTotalSerialPages(productIndex, unitLabel);
+    const currentPage = this.serialPageByUnitType[key] ?? 1;
+    this.serialPageByUnitType[key] = Math.min(Math.max(1, currentPage), totalPages);
   }
 
   private mapListItemsToRows(items: SalesOrderListItem[]): SalesOrderRow[] {
@@ -1355,15 +1531,46 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     }
   }
 
+  getPaginatedSerials(productIndex: number, unitLabel: string): string[] {
+    const item = this.form.productItems[productIndex];
+    const unitEntry = item?.unitTypes.find((entry: SalesUnitTypeFormItem) => entry.label === unitLabel);
+    if (!unitEntry) {
+      return [];
+    }
+
+    const currentPage = this.getSerialPage(productIndex, unitLabel);
+    const start = (currentPage - 1) * this.serialsPerPage;
+    return unitEntry.serials.slice(start, start + this.serialsPerPage);
+  }
+
+  getSerialPage(productIndex: number, unitLabel: string): number {
+    const key = this.getSerialPageKey(productIndex, unitLabel);
+    const totalPages = this.getTotalSerialPages(productIndex, unitLabel);
+    const currentPage = this.serialPageByUnitType[key] ?? 1;
+    return Math.min(Math.max(1, currentPage), totalPages);
+  }
+
+  getTotalSerialPages(productIndex: number, unitLabel: string): number {
+    const item = this.form.productItems[productIndex];
+    const unitEntry = item?.unitTypes.find((entry: SalesUnitTypeFormItem) => entry.label === unitLabel);
+    const totalSerials = unitEntry?.serials.length ?? 0;
+    return Math.max(1, Math.ceil(totalSerials / this.serialsPerPage));
+  }
+
+  changeSerialPage(productIndex: number, unitLabel: string, nextPage: number): void {
+    const key = this.getSerialPageKey(productIndex, unitLabel);
+    const totalPages = this.getTotalSerialPages(productIndex, unitLabel);
+    this.serialPageByUnitType[key] = Math.min(Math.max(1, nextPage), totalPages);
+  }
+
   onUnitTypeQtyChange(productIndex: number): void {
     const item = this.form.productItems[productIndex];
     if (!item) return;
 
-    const normalizedValues = item.unitTypes.map((entry: SalesUnitTypeFormItem) => Math.max(0, Math.floor(Number(entry.value) || 0)));
-    const derivedTotalSetQty =
-      normalizedValues.find((value: number) => value > 0) ?? Math.max(0, Math.floor(Number(item.totalSetQty) || 0));
-
-    this.applyTotalSetQtyToUnitTypes(item, derivedTotalSetQty);
+    item.unitTypes = item.unitTypes.map((entry: SalesUnitTypeFormItem) => ({
+      ...entry,
+      value: Math.max(0, Math.floor(Number(entry.value) || 0)),
+    }));
 
     this.recalculateTotalAmount();
   }
@@ -1372,18 +1579,9 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     const item = this.form.productItems[productIndex];
     if (!item) return;
 
-    const totalSetQty = Math.max(0, Math.floor(Number(item.totalSetQty) || 0));
-    this.applyTotalSetQtyToUnitTypes(item, totalSetQty);
+    item.totalSetQty = Math.max(0, Math.floor(Number(item.totalSetQty) || 0));
 
     this.recalculateTotalAmount();
-  }
-
-  private applyTotalSetQtyToUnitTypes(item: SalesProductFormItem, totalSetQty: number): void {
-    item.totalSetQty = totalSetQty;
-    item.unitTypes = item.unitTypes.map((entry: SalesUnitTypeFormItem) => ({
-      ...entry,
-      value: totalSetQty,
-    }));
   }
 
   recalculateTotalAmount(): void {
@@ -1508,6 +1706,11 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
 
       if (!existingSerialsLower.has(normalizedSerial.toLowerCase())) {
         unitEntry.serials = [...unitEntry.serials, normalizedSerial];
+        this.changeSerialPage(
+          productIndex,
+          unitLabel,
+          this.getTotalSerialPages(productIndex, unitLabel),
+        );
       }
 
       unitEntry.scanInput = '';
@@ -1528,8 +1731,28 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     }
   }
 
-  async removeScannedSerial(productIndex: number, unitLabel: string, serialNumber: string): Promise<void> {
-    if (!this.editingSalesId) return;
+  requestRemoveScannedSerial(productIndex: number, unitLabel: string, serialNumber: string): void {
+    this.pendingSerialRemoval = {
+      productIndex,
+      unitLabel,
+      serialNumber,
+    };
+    this.openGuardDialog('remove-serial-confirm');
+  }
+
+  async confirmRemoveScannedSerial(): Promise<void> {
+    if (!this.pendingSerialRemoval) {
+      this.closeGuardDialog();
+      return;
+    }
+
+    const { productIndex, unitLabel, serialNumber } = this.pendingSerialRemoval;
+
+    if (!this.editingSalesId) {
+      this.pendingSerialRemoval = null;
+      this.closeGuardDialog();
+      return;
+    }
 
     const item = this.form.productItems[productIndex];
     if (!item) return;
@@ -1556,6 +1779,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       unitEntry.serials = unitEntry.serials.filter(
         (entry: string) => this.normalizeSerial(entry).toLowerCase() !== normalizedTarget,
       );
+      this.ensureSerialPageInBounds(productIndex, unitLabel);
       unitEntry.serialInput = unitEntry.serials.join('\n');
       unitEntry.scanSuccess = response.message ?? 'Serial number removed successfully';
       unitEntry.scanError = '';
@@ -1569,6 +1793,8 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       }
     } finally {
       unitEntry.isScanning = false;
+      this.pendingSerialRemoval = null;
+      this.closeGuardDialog();
     }
   }
 
@@ -1639,7 +1865,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         this.uiMessage = response.message ?? 'Sales order updated successfully';
       }
 
-      this.closeDrawer();
+      this.closeDrawer(true);
       this.page = 1;
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
@@ -1683,7 +1909,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       }
 
       this.uiMessage = response.message ?? 'Sales remitted successfully';
-      this.closeDrawer();
+      this.closeDrawer(true);
       this.page = 1;
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
@@ -1881,7 +2107,12 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     this.editingSalesId = null;
     this.customerSearch = '';
     this.activeProductTabIndex = 0;
+    this.activeServiceTabIndex = 0;
     this.selectedUnitTypeByProduct = {};
+    this.serialPageByUnitType = {};
+    this.pendingSerialRemoval = null;
+    this.closeGuardDialog();
+    this.drawerBaselineSnapshot = '';
     this.materialItems = [];
     this.ensureSelectedUnitType(0);
     this.syncPaymentAmounts();

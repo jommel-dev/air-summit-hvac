@@ -20,7 +20,14 @@ type PurchaseOrderGuardDialogMode =
   | 'idle-warning'
   | 'session-timeout'
   | 'close-confirm'
-  | 'refresh-confirm';
+  | 'refresh-confirm'
+  | 'remove-serial-confirm';
+
+type PendingSerialRemoval = {
+  productIndex: number;
+  unitLabel: string;
+  serialNumber: string;
+};
 
 interface PurchaseProductFormItem {
   productId: string;
@@ -98,6 +105,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   isImportingSerials = false;
   poGuardDialogMode: PurchaseOrderGuardDialogMode | null = null;
   poIdleCountdownSeconds = 0;
+  pendingSerialRemoval: PendingSerialRemoval | null = null;
   sendingForApprovalIds = new Set<number>();
   approvingPurchaseIds = new Set<number>();
   catalogProducts: ProductOption[] = [];
@@ -272,6 +280,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         return 'Close purchase order?';
       case 'refresh-confirm':
         return 'Refresh this page?';
+      case 'remove-serial-confirm':
+        return 'Remove serial number?';
       default:
         return '';
     }
@@ -287,6 +297,12 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         return 'Closing this PO drawer will discard the current on-screen editing context. Browser refresh and tab close are also guarded while this drawer is open.';
       case 'refresh-confirm':
         return 'Refreshing now may lose unsaved PO form changes and queued serial scans. Continue only if you want to reload this page.';
+      case 'remove-serial-confirm': {
+        const serialNumber = String(this.pendingSerialRemoval?.serialNumber ?? '').trim();
+        return serialNumber
+          ? `Are you sure you want to remove serial '${serialNumber}' from this PO item?`
+          : 'Are you sure you want to remove this serial from this PO item?';
+      }
       default:
         return '';
     }
@@ -1010,17 +1026,62 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   keepEditingPo(): void {
-    if (this.poGuardDialogMode !== 'close-confirm' && this.poGuardDialogMode !== 'refresh-confirm') {
+    if (
+      this.poGuardDialogMode !== 'close-confirm' &&
+      this.poGuardDialogMode !== 'refresh-confirm' &&
+      this.poGuardDialogMode !== 'remove-serial-confirm'
+    ) {
       return;
     }
 
     this.poGuardDialogMode = null;
+    this.pendingSerialRemoval = null;
     this.startPoSessionGuard();
   }
 
   async confirmCloseDrawer(): Promise<void> {
     this.poGuardDialogMode = null;
     await this.closeCreateDrawer();
+  }
+
+  requestRemoveScannedSerial(
+    productIndex: number,
+    unitLabel: string,
+    serialNumber: string,
+  ): void {
+    if (this.isFormDrawerBusy) {
+      return;
+    }
+
+    this.pendingSerialRemoval = {
+      productIndex,
+      unitLabel,
+      serialNumber,
+    };
+
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = 'remove-serial-confirm';
+  }
+
+  async confirmRemoveScannedSerial(): Promise<void> {
+    const pendingRemoval = this.pendingSerialRemoval;
+    this.poGuardDialogMode = null;
+
+    if (!pendingRemoval) {
+      this.startPoSessionGuard();
+      return;
+    }
+
+    this.pendingSerialRemoval = null;
+    await this.removeScannedSerial(
+      pendingRemoval.productIndex,
+      pendingRemoval.unitLabel,
+      pendingRemoval.serialNumber,
+    );
+
+    if (this.isFormDrawerOpen) {
+      this.startPoSessionGuard();
+    }
   }
 
   closeTimedOutPo(): void {
@@ -1366,6 +1427,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.clearPoSessionGuardTimers();
     this.poGuardDialogMode = null;
     this.poIdleCountdownSeconds = 0;
+    this.pendingSerialRemoval = null;
     this.suppressBeforeUnloadPrompt = false;
     this.drawerInitialStateSnapshot = '';
   }

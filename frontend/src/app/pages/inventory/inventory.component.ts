@@ -396,7 +396,7 @@ export class InventoryComponent implements OnInit {
 
     for (const group of this.landCostingGroups) {
       worksheet.addRow([`Product (${group.capacityName}): ${group.productName}`]);
-      worksheet.addRow([`Vendor: ${group.vendorName || '-'}`]);
+      worksheet.addRow([`Dealer: ${group.vendorName || '-'}`]);
       worksheet.addRow([
         'No.',
         'Indoor',
@@ -513,7 +513,7 @@ export class InventoryComponent implements OnInit {
         font: fontBold,
       });
       y -= 14;
-      page.drawText(`Vendor: ${group.vendorName || '-'} | PO: ${group.poNumber || '-'} | Date: ${this.formatDateOnly(group.poDate) || '-'}`, {
+      page.drawText(`Dealer: ${group.vendorName || '-'} | PO: ${group.poNumber || '-'} | Date: ${this.formatDateOnly(group.poDate) || '-'}`, {
         x: 40,
         y,
         size: 9,
