@@ -43,6 +43,14 @@ interface QueuedSalesSerialScan {
   capacityId: number;
 }
 
+type TodayScheduleGuardMode = 'close-confirm' | 'remove-serial-confirm';
+
+interface TodaySchedulePendingSerialRemoval {
+  productIndex: number;
+  unitLabel: string;
+  serialNumber: string;
+}
+
 @Component({
   selector: 'app-schedule-today-sales-order',
   imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
@@ -62,6 +70,11 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
   detailProductItems: WarehouseProductScanItem[] = [];
   selectedUnitTypeByProduct: Record<number, string> = {};
   activeProductTabIndex = 0;
+  readonly serialsPerPage = 10;
+  serialPageByUnitType: Record<string, number> = {};
+  guardMode: TodayScheduleGuardMode | null = null;
+  isGuardDialogOpen = false;
+  pendingSerialRemoval: TodaySchedulePendingSerialRemoval | null = null;
   catalogProducts: ProductOption[] = [];
   private readonly serialScanDebounceMs = 120;
   private readonly serialBatchSize = 20;
@@ -96,6 +109,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     this.serialScanTimers = {};
     this.clearQueuedSerialFlushTimer();
     this.stopQueuedSerialAutoFlush();
+    this.closeGuardDialog();
   }
 
   async selectOrder(orderId: number): Promise<void> {
@@ -114,8 +128,128 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     await this.openDetail(orderId);
   }
 
-  closeDetail(): void {
+  closeDetail(forceClose = false): void {
+    if (!forceClose && this.hasPendingSerialScanWork()) {
+      this.openGuardDialog('close-confirm');
+      return;
+    }
+
     this.isDetailOpen = false;
+    this.closeGuardDialog();
+  }
+
+  requestCloseDetail(): void {
+    this.closeDetail();
+  }
+
+  getPaginatedSerials(productIndex: number, unitLabel: string): string[] {
+    const item = this.detailProductItems[productIndex];
+    const unitEntry = item?.unitTypes.find((entry) => entry.label === unitLabel);
+    if (!unitEntry) {
+      return [];
+    }
+
+    const currentPage = this.getSerialPage(productIndex, unitLabel);
+    const start = (currentPage - 1) * this.serialsPerPage;
+    return unitEntry.serials.slice(start, start + this.serialsPerPage);
+  }
+
+  getSerialPage(productIndex: number, unitLabel: string): number {
+    const key = this.getSerialPageKey(productIndex, unitLabel);
+    const totalPages = this.getTotalSerialPages(productIndex, unitLabel);
+    const currentPage = this.serialPageByUnitType[key] ?? 1;
+    return Math.min(Math.max(1, currentPage), totalPages);
+  }
+
+  getTotalSerialPages(productIndex: number, unitLabel: string): number {
+    const item = this.detailProductItems[productIndex];
+    const unitEntry = item?.unitTypes.find((entry) => entry.label === unitLabel);
+    const totalSerials = unitEntry?.serials.length ?? 0;
+    return Math.max(1, Math.ceil(totalSerials / this.serialsPerPage));
+  }
+
+  changeSerialPage(productIndex: number, unitLabel: string, nextPage: number): void {
+    const key = this.getSerialPageKey(productIndex, unitLabel);
+    const totalPages = this.getTotalSerialPages(productIndex, unitLabel);
+    this.serialPageByUnitType[key] = Math.min(Math.max(1, nextPage), totalPages);
+  }
+
+  requestRemoveScannedSerial(productIndex: number, unitLabel: string, serialNumber: string): void {
+    this.pendingSerialRemoval = {
+      productIndex,
+      unitLabel,
+      serialNumber,
+    };
+    this.openGuardDialog('remove-serial-confirm');
+  }
+
+  async confirmGuardDialog(): Promise<void> {
+    if (this.guardMode === 'remove-serial-confirm' && this.pendingSerialRemoval) {
+      const { productIndex, unitLabel, serialNumber } = this.pendingSerialRemoval;
+      await this.removeScannedSerial(productIndex, unitLabel, serialNumber);
+      this.pendingSerialRemoval = null;
+      this.closeGuardDialog();
+      return;
+    }
+
+    if (this.guardMode === 'close-confirm') {
+      const flushed = await this.flushAllQueuedSerialScans();
+      if (!flushed || this.hasPendingSerialScanWork()) {
+        this.detailError = 'Pending serial scans must finish saving before closing this detail.';
+        this.closeGuardDialog();
+        return;
+      }
+
+      this.closeDetail(true);
+      return;
+    }
+
+    this.closeGuardDialog();
+  }
+
+  cancelGuardDialog(): void {
+    this.pendingSerialRemoval = null;
+    this.closeGuardDialog();
+  }
+
+  getGuardDialogTitle(): string {
+    if (this.guardMode === 'remove-serial-confirm') {
+      return 'Remove serial number?';
+    }
+
+    return 'Pending serial scans';
+  }
+
+  getGuardDialogMessage(): string {
+    if (this.guardMode === 'remove-serial-confirm') {
+      return 'Are you sure you want to remove this serial number?';
+    }
+
+    return 'Serial scans are still queued or saving. Save pending serial scans before closing this detail.';
+  }
+
+  getGuardDialogConfirmText(): string {
+    if (this.guardMode === 'remove-serial-confirm') {
+      return 'Remove Serial';
+    }
+
+    return 'Save & Close';
+  }
+
+  getGuardDialogCancelText(): string {
+    if (this.guardMode === 'remove-serial-confirm') {
+      return 'Cancel';
+    }
+
+    return 'Stay';
+  }
+
+  getGuardDialogConfirmButtonClasses(): string {
+    if (this.guardMode === 'remove-serial-confirm') {
+      return 'rounded-lg border border-error-300 bg-error-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-error-600 dark:border-error-500/50 dark:bg-error-500 dark:hover:bg-error-600';
+    }
+
+    return 'rounded-lg border border-brand-300 bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 dark:border-brand-500/50 dark:bg-brand-500 dark:hover:bg-brand-600';
   }
 
   getSelectedUnitTypeLabel(productIndex: number): string {
@@ -252,6 +386,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     }
 
     unitEntry.serials = [...unitEntry.serials, serialNumber];
+    this.changeSerialPage(productIndex, unitLabel, this.getTotalSerialPages(productIndex, unitLabel));
     unitEntry.scanInput = '';
     unitEntry.scanSuccess = 'Serial number queued for saving';
     unitEntry.scanError = '';
@@ -298,6 +433,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     const removedFromQueue = this.queuedSerialScans.length !== queuedSerialCountBefore;
     if (removedFromQueue) {
       this.removeLocalSerial(unitEntry, serialNumber);
+      this.ensureSerialPageInBounds(productIndex, unitLabel);
       unitEntry.scanSuccess = 'Queued serial number removed';
       unitEntry.scanError = '';
       return;
@@ -323,6 +459,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       unitEntry.serials = unitEntry.serials.filter(
         (entry) => this.normalizeSerial(entry).toLowerCase() !== normalizedTarget,
       );
+      this.ensureSerialPageInBounds(productIndex, unitLabel);
       unitEntry.scanSuccess = response.message ?? 'Serial number removed successfully';
       this.focusSerialScanInput(productIndex, unitLabel);
     } catch (error: unknown) {
@@ -611,6 +748,8 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     this.isDetailOpen = true;
     this.isDetailLoading = true;
     this.detailError = '';
+    this.serialPageByUnitType = {};
+    this.closeGuardDialog();
 
     try {
       const detail = await this.salesOrderService.getSalesOrderById(orderId);
@@ -640,6 +779,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       this.selectedOrderDetail = null;
       this.detailProductItems = [];
       this.activeProductTabIndex = 0;
+      this.serialPageByUnitType = {};
     } finally {
       this.isDetailLoading = false;
     }
@@ -825,6 +965,8 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
 
       if (!response.success && (response.summary?.failureCount ?? 0) > 0) {
         this.detailError = response.message ?? 'Some serial numbers failed to save.';
+      } else {
+        this.detailError = '';
       }
 
       return true;
@@ -890,6 +1032,27 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     }
 
     return item.unitTypes.find((entry) => entry.label === unitLabel) ?? null;
+  }
+
+  private getSerialPageKey(productIndex: number, unitLabel: string): string {
+    return `${productIndex}::${unitLabel}`;
+  }
+
+  private ensureSerialPageInBounds(productIndex: number, unitLabel: string): void {
+    const key = this.getSerialPageKey(productIndex, unitLabel);
+    const totalPages = this.getTotalSerialPages(productIndex, unitLabel);
+    const currentPage = this.serialPageByUnitType[key] ?? 1;
+    this.serialPageByUnitType[key] = Math.min(Math.max(1, currentPage), totalPages);
+  }
+
+  private openGuardDialog(mode: TodayScheduleGuardMode): void {
+    this.guardMode = mode;
+    this.isGuardDialogOpen = true;
+  }
+
+  private closeGuardDialog(): void {
+    this.isGuardDialogOpen = false;
+    this.guardMode = null;
   }
 
   private removeLocalSerial(unitEntry: WarehouseUnitTypeScanItem, serialNumber: string): void {

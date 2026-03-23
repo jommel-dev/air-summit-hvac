@@ -175,7 +175,7 @@
   </div>
 
   @if (isDrawerOpen) {
-    <div class="fixed inset-0 z-[100000] bg-gray-900/40" (click)="closeDrawer()"></div>
+    <div class="fixed inset-0 z-[100000] bg-gray-900/40" (click)="requestCloseDrawer()"></div>
   }
 
   <aside class="fixed right-0 top-0 z-[100001] h-full w-full max-w-3xl transform border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
@@ -186,7 +186,7 @@
           <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ drawerMode === 'create' ? 'Create Sales Order' : 'Update Sales Order' }}</h3>
           <p class="text-sm text-gray-500 dark:text-gray-400">Standardized layout matching Purchase Order flow.</p>
         </div>
-        <button type="button" (click)="closeDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+        <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
       </div>
 
       <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
@@ -645,14 +645,14 @@
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    @for (serial of unitType.serials; track serial; let serialIndex = $index) {
+                                    @for (serial of getPaginatedSerials(activeProductTabIndex, unitType.label); track serial; let serialIndex = $index) {
                                       <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
-                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serialIndex + 1 }}</td>
+                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ ((getSerialPage(activeProductTabIndex, unitType.label) - 1) * serialsPerPage) + serialIndex + 1 }}</td>
                                         <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serial }}</td>
                                         <td class="px-3 py-2 text-right">
                                           <button
                                             type="button"
-                                            (click)="removeScannedSerial(activeProductTabIndex, unitType.label, serial)"
+                                            (click)="requestRemoveScannedSerial(activeProductTabIndex, unitType.label, serial)"
                                             [disabled]="unitType.isScanning"
                                             class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
                                           >
@@ -663,6 +663,27 @@
                                     }
                                   </tbody>
                                 </table>
+                              </div>
+                              <div class="mt-2 flex items-center justify-between">
+                                <button
+                                  type="button"
+                                  (click)="changeSerialPage(activeProductTabIndex, unitType.label, getSerialPage(activeProductTabIndex, unitType.label) - 1)"
+                                  [disabled]="getSerialPage(activeProductTabIndex, unitType.label) <= 1"
+                                  class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                                >
+                                  Prev
+                                </button>
+                                <span class="text-[11px] text-gray-500 dark:text-gray-400">
+                                  Page {{ getSerialPage(activeProductTabIndex, unitType.label) }} of {{ getTotalSerialPages(activeProductTabIndex, unitType.label) }}
+                                </span>
+                                <button
+                                  type="button"
+                                  (click)="changeSerialPage(activeProductTabIndex, unitType.label, getSerialPage(activeProductTabIndex, unitType.label) + 1)"
+                                  [disabled]="getSerialPage(activeProductTabIndex, unitType.label) >= getTotalSerialPages(activeProductTabIndex, unitType.label)"
+                                  class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                                >
+                                  Next
+                                </button>
                               </div>
                             </div>
                           } @else {
@@ -941,7 +962,7 @@
       </div>
 
       <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
-        <button type="button" (click)="closeDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
+        <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
         @if (drawerMode === 'edit') {
           <button
             type="button"
@@ -966,6 +987,57 @@
       </div>
     </form>
   </aside>
+
+  @if (isGuardDialogOpen) {
+    <div class="fixed inset-0 z-[100010] bg-gray-950/55 backdrop-blur-sm" (click)="cancelGuardDialog()"></div>
+    <div class="fixed inset-0 z-[100011] flex items-center justify-center p-4">
+      <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <div class="border-b border-gray-200 bg-gradient-to-r from-amber-50 via-white to-sky-50 px-6 py-5 dark:border-gray-800 dark:from-amber-500/10 dark:via-gray-900 dark:to-sky-500/10">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">SO Session Guard</p>
+          <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">{{ getGuardDialogTitle() }}</h3>
+        </div>
+
+        <div class="space-y-4 px-6 py-5">
+          <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">{{ getGuardDialogMessage() }}</p>
+
+          @if (guardDialogMode === 'close-confirm') {
+            <div class="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-100">
+              If you refresh or close the browser tab instead, the browser will still show its native confirmation prompt.
+            </div>
+          }
+
+          @if (guardDialogMode === 'refresh-confirm') {
+            <div class="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+              This prompt appears only when there are unsaved field changes.
+            </div>
+          }
+
+          @if (guardDialogMode === 'remove-serial-confirm') {
+            <div class="rounded-2xl border border-rose-200 bg-rose-50/80 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100">
+              This will remove the serial from the current unit type list for this SO item.
+            </div>
+          }
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          <button
+            type="button"
+            (click)="cancelGuardDialog()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            {{ getGuardDialogCancelText() }}
+          </button>
+          <button
+            type="button"
+            (click)="confirmGuardDialog()"
+            [class]="getGuardDialogConfirmButtonClasses()"
+          >
+            {{ getGuardDialogConfirmText() }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
 
   @if (isDrPreviewOpen) {
     <div class="fixed inset-0 z-[100100] bg-gray-900/70" (click)="closeDrPreview()">
