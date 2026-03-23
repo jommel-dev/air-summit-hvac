@@ -106,6 +106,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   isVendorDropdownOpen = false;
   activeProductTabIndex = 0;
   selectedUnitTypeByProduct: Record<number, string> = {};
+  scannedSerialTablePageByKey: Record<string, number> = {};
+  readonly scannedSerialTablePageSize = 10;
   readonly paymentMethodOptions: PurchasePaymentFormItem['method'][] = [
     'Cash',
     'Bank Transfer',
@@ -1240,6 +1242,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.vendorSearch = '';
     this.activeProductTabIndex = 0;
     this.selectedUnitTypeByProduct = {};
+    this.scannedSerialTablePageByKey = {};
     this.queuedSerialScans = [];
     this.activeSerialFlushCount = 0;
     this.serialFlushFailureCount = 0;
@@ -1721,6 +1724,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         return [itemIndex, label];
       }),
     );
+    this.scannedSerialTablePageByKey = {};
     this.activeProductTabIndex = Math.max(0, Math.min(this.activeProductTabIndex, this.createForm.productItems.length - 1));
     this.ensureSelectedUnitType(this.activeProductTabIndex);
     this.recalculateTotalAmount();
@@ -1740,6 +1744,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       unitTypes: nextUnitTypes,
     };
     this.createForm.productItems = nextItems;
+    this.scannedSerialTablePageByKey = {};
     this.ensureSelectedUnitType(index);
     this.recalculateTotalAmount();
   }
@@ -1935,9 +1940,59 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   selectUnitType(productIndex: number, unitLabel: string): void {
     this.selectedUnitTypeByProduct[productIndex] = unitLabel;
+    this.setScannedSerialPage(productIndex, unitLabel, 1);
     if (this.drawerMode === 'edit') {
       this.focusSerialScanInput(productIndex, unitLabel);
     }
+  }
+
+  private getScannedSerialPageKey(productIndex: number, unitLabel: string): string {
+    return `${productIndex}::${unitLabel}`;
+  }
+
+  private normalizeScannedSerialPage(page: number): number {
+    const parsed = Number(page);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return 1;
+    }
+
+    return Math.floor(parsed);
+  }
+
+  getScannedSerialTotalPages(productIndex: number, unitLabel: string): number {
+    const unitEntry = this.getUnitEntry(productIndex, unitLabel);
+    const totalSerials = unitEntry?.serials.length ?? 0;
+    return Math.max(1, Math.ceil(totalSerials / this.scannedSerialTablePageSize));
+  }
+
+  getScannedSerialCurrentPage(productIndex: number, unitLabel: string): number {
+    const pageKey = this.getScannedSerialPageKey(productIndex, unitLabel);
+    const storedPage = this.normalizeScannedSerialPage(this.scannedSerialTablePageByKey[pageKey] ?? 1);
+    const totalPages = this.getScannedSerialTotalPages(productIndex, unitLabel);
+    return Math.min(storedPage, totalPages);
+  }
+
+  setScannedSerialPage(productIndex: number, unitLabel: string, page: number): void {
+    const totalPages = this.getScannedSerialTotalPages(productIndex, unitLabel);
+    const nextPage = Math.min(this.normalizeScannedSerialPage(page), totalPages);
+    const pageKey = this.getScannedSerialPageKey(productIndex, unitLabel);
+    this.scannedSerialTablePageByKey[pageKey] = nextPage;
+  }
+
+  getPagedScannedSerials(productIndex: number, unitLabel: string): string[] {
+    const unitEntry = this.getUnitEntry(productIndex, unitLabel);
+    if (!unitEntry) {
+      return [];
+    }
+
+    const currentPage = this.getScannedSerialCurrentPage(productIndex, unitLabel);
+    const startIndex = (currentPage - 1) * this.scannedSerialTablePageSize;
+    return unitEntry.serials.slice(startIndex, startIndex + this.scannedSerialTablePageSize);
+  }
+
+  getScannedSerialRowNumber(productIndex: number, unitLabel: string, pageIndex: number): number {
+    const currentPage = this.getScannedSerialCurrentPage(productIndex, unitLabel);
+    return (currentPage - 1) * this.scannedSerialTablePageSize + pageIndex + 1;
   }
 
   onUnitTypeQtyChange(productIndex: number): void {
@@ -1946,17 +2001,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const maxQtyFromUnitTypes = item.unitTypes.reduce((maxQty, entry) => {
-      const parsed = Number(entry.value) || 0;
-      return parsed > maxQty ? parsed : maxQty;
-    }, 0);
-
-    if (maxQtyFromUnitTypes > 0) {
-      item.totalSetQty = maxQtyFromUnitTypes;
-      item.unitTypes.forEach((entry) => {
-        entry.value = maxQtyFromUnitTypes;
-      });
-    }
+    item.unitTypes.forEach((entry) => {
+      entry.value = Math.max(0, Number(entry.value) || 0);
+    });
 
     this.recalculateTotalAmount();
   }
@@ -1969,9 +2016,6 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
     const parsedTotalSetQty = Math.max(0, Number(item.totalSetQty) || 0);
     item.totalSetQty = parsedTotalSetQty;
-    item.unitTypes.forEach((entry) => {
-      entry.value = parsedTotalSetQty;
-    });
 
     this.recalculateTotalAmount();
   }
