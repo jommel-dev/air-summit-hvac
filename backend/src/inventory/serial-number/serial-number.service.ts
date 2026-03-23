@@ -20,6 +20,7 @@ type SerialScanRow = {
   serialNumber: string | null;
   status: string | null;
   salesId: string | null;
+  purchaseId?: string | null;
   productId: string | null;
   capacityId: string | null;
   branchId: string | null;
@@ -255,6 +256,170 @@ export class SerialNumberService {
     }
 
     return normalized;
+  }
+
+  private async getProductDisplayName(productId: number | null): Promise<string | null> {
+    if (!Number.isFinite(productId) || (productId as number) <= 0) {
+      return null;
+    }
+
+    const result = await this.databaseService.query<{ productName: string | null }>(
+      `SELECT COALESCE(
+         to_jsonb(p)->>'productName',
+         to_jsonb(p)->>'product_name',
+         to_jsonb(p)->>'productname'
+       ) AS "productName"
+       FROM tblproducts p
+       WHERE p.id = $1
+       LIMIT 1`,
+      [productId],
+    );
+
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    return String(result.rows[0]?.productName ?? '').trim() || null;
+  }
+
+  private async getCapacityDisplayName(capacityId: number | null): Promise<string | null> {
+    if (!Number.isFinite(capacityId) || (capacityId as number) <= 0) {
+      return null;
+    }
+
+    const result = await this.databaseService.query<{ capacity: string | null }>(
+      `SELECT COALESCE(
+         to_jsonb(c)->>'capacity',
+         to_jsonb(c)->>'capacityName',
+         to_jsonb(c)->>'capacity_name'
+       ) AS capacity
+       FROM tblcapacity c
+       WHERE c.id = $1
+       LIMIT 1`,
+      [capacityId],
+    );
+
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    return String(result.rows[0]?.capacity ?? '').trim() || null;
+  }
+
+  private async getPurchaseOrderReference(
+    purchaseId: number | string | null | undefined,
+  ): Promise<string | null> {
+    const normalizedPurchaseId = String(purchaseId ?? '').trim();
+    if (!normalizedPurchaseId) {
+      return null;
+    }
+
+    for (const tableName of ['tblpurchase_orders', 'tblpo']) {
+      try {
+        const result = await this.databaseService.query<{ poNumber: string | null }>(
+          `SELECT COALESCE(
+             to_jsonb(po)->>'po_number',
+             to_jsonb(po)->>'poNumber',
+             to_jsonb(po)->>'po_no',
+             to_jsonb(po)->>'poNo'
+           ) AS "poNumber"
+           FROM ${tableName} po
+           WHERE po.id::text = $1
+           LIMIT 1`,
+          [normalizedPurchaseId],
+        );
+
+        if (result.rowCount === 0) {
+          continue;
+        }
+
+        const poNumber = String(result.rows[0]?.poNumber ?? '').trim();
+        return poNumber ? `PO ${poNumber}` : `purchase order #${normalizedPurchaseId}`;
+      } catch (error: unknown) {
+        const errorCode =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? String((error as { code?: unknown }).code ?? '')
+            : '';
+
+        if (errorCode === '42P01') {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    return `purchase order #${normalizedPurchaseId}`;
+  }
+
+  private async buildProductMismatchMessage(input: {
+    expectedProductId: number | null;
+    expectedCapacityId: number | null;
+    actualProductName: string | null;
+    actualCapacityName: string | null;
+    purchaseId?: number | string | null;
+  }): Promise<string> {
+    const expectedProductName = await this.getProductDisplayName(input.expectedProductId);
+    const expectedCapacityName = await this.getCapacityDisplayName(input.expectedCapacityId);
+    const purchaseReference = await this.getPurchaseOrderReference(input.purchaseId);
+
+    const expectedProductLabel = expectedProductName
+      ? `product '${expectedProductName}'`
+      : Number.isFinite(input.expectedProductId) && (input.expectedProductId as number) > 0
+        ? `product #${input.expectedProductId}`
+        : 'the expected product';
+
+    const expectedLabel = expectedCapacityName
+      ? `${expectedProductLabel} (${expectedCapacityName})`
+      : expectedProductLabel;
+
+    const actualProductLabel = String(input.actualProductName ?? '').trim()
+      ? `product '${String(input.actualProductName).trim()}'`
+      : 'a different product';
+
+    const actualCapacityLabel = String(input.actualCapacityName ?? '').trim();
+    const actualLabel = actualCapacityLabel
+      ? `${actualProductLabel} (${actualCapacityLabel})`
+      : actualProductLabel;
+
+    return purchaseReference
+      ? `Serial number product mismatch. Expected ${expectedLabel}. This serial belongs to ${actualLabel} from ${purchaseReference}.`
+      : `Serial number product mismatch. Expected ${expectedLabel}. This serial belongs to ${actualLabel}.`;
+  }
+
+  private async buildCapacityMismatchMessage(input: {
+    expectedProductId: number | null;
+    expectedCapacityId: number | null;
+    actualProductName: string | null;
+    actualCapacityName: string | null;
+    purchaseId?: number | string | null;
+  }): Promise<string> {
+    const expectedProductName = await this.getProductDisplayName(input.expectedProductId);
+    const expectedCapacityName = await this.getCapacityDisplayName(input.expectedCapacityId);
+    const purchaseReference = await this.getPurchaseOrderReference(input.purchaseId);
+
+    const expectedProductLabel = expectedProductName
+      ? `product '${expectedProductName}'`
+      : Number.isFinite(input.expectedProductId) && (input.expectedProductId as number) > 0
+        ? `product #${input.expectedProductId}`
+        : 'the expected product';
+
+    const expectedLabel = expectedCapacityName
+      ? `${expectedProductLabel} (${expectedCapacityName})`
+      : expectedProductLabel;
+
+    const actualProductLabel = String(input.actualProductName ?? '').trim()
+      ? `product '${String(input.actualProductName).trim()}'`
+      : 'a different product';
+
+    const actualCapacityLabel = String(input.actualCapacityName ?? '').trim();
+    const actualLabel = actualCapacityLabel
+      ? `${actualProductLabel} (${actualCapacityLabel})`
+      : actualProductLabel;
+
+    return purchaseReference
+      ? `Serial number capacity mismatch. Expected ${expectedLabel}. This serial belongs to ${actualLabel} from ${purchaseReference}.`
+      : `Serial number capacity mismatch. Expected ${expectedLabel}. This serial belongs to ${actualLabel}.`;
   }
 
   async adjustPurchaseUnitTypes(dto: AdjustPurchaseUnitTypesDto) {
@@ -1350,6 +1515,14 @@ export class SerialNumberService {
         COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', null) AS "serialNumber",
         COALESCE(to_jsonb(sn)->>'status', null) AS status,
         COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id', null) AS "salesId",
+        COALESCE(
+          to_jsonb(sn)->>'purchaseId',
+          to_jsonb(sn)->>'purchase_id',
+          to_jsonb(sn)->>'po_id',
+          to_jsonb(sn)->>'purchaseOrderId',
+          to_jsonb(sn)->>'purchase_order_id',
+          null
+        ) AS "purchaseId",
         COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', null) AS "productId",
         COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', null) AS "capacityId",
         COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', null) AS "branchId",
@@ -1405,7 +1578,13 @@ export class SerialNumberService {
     ) {
       return {
         success: false,
-        message: `Serial number product mismatch. Expected productId ${expectedProductId}`,
+        message: await this.buildProductMismatchMessage({
+          expectedProductId,
+          expectedCapacityId,
+          actualProductName: serial.productName,
+          actualCapacityName: serial.capacity,
+          purchaseId: serial.purchaseId,
+        }),
       };
     }
 
@@ -1415,7 +1594,13 @@ export class SerialNumberService {
     ) {
       return {
         success: false,
-        message: `Serial number capacity mismatch. Expected capacityId ${expectedCapacityId}`,
+        message: await this.buildCapacityMismatchMessage({
+          expectedProductId,
+          expectedCapacityId,
+          actualProductName: serial.productName,
+          actualCapacityName: serial.capacity,
+          purchaseId: serial.purchaseId,
+        }),
       };
     }
 
@@ -1895,7 +2080,13 @@ export class SerialNumberService {
     ) {
       return {
         success: false,
-        message: `Serial number product mismatch. Expected productId ${expectedProductId}`,
+        message: await this.buildProductMismatchMessage({
+          expectedProductId,
+          expectedCapacityId,
+          actualProductName: serial.productName,
+          actualCapacityName: serial.capacity,
+          purchaseId: serial.purchaseId,
+        }),
       };
     }
 
@@ -1905,7 +2096,13 @@ export class SerialNumberService {
     ) {
       return {
         success: false,
-        message: `Serial number capacity mismatch. Expected capacityId ${expectedCapacityId}`,
+        message: await this.buildCapacityMismatchMessage({
+          expectedProductId,
+          expectedCapacityId,
+          actualProductName: serial.productName,
+          actualCapacityName: serial.capacity,
+          purchaseId: serial.purchaseId,
+        }),
       };
     }
 

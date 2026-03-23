@@ -51,8 +51,9 @@
         <div>
           <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ drawerMode === 'create' ? 'Create Purchase Order' : ((activeTab === 'approvals' || activeTab === 'master-data') ? 'View Purchase Order' : 'Update Purchase Order') }}</h3>
           <p class="text-sm text-gray-500 dark:text-gray-400">Simple and refined request form based on API body.</p>
+          <p class="mt-1 text-xs text-amber-600 dark:text-amber-300">Idle timeout protection and browser refresh blocking are active while this PO drawer is open.</p>
         </div>
-        <button type="button" (click)="closeCreateDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+        <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
       </div>
 
       <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
@@ -312,7 +313,7 @@
                   ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
                   : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
               >
-                Product {{ index + 1 }}
+                {{ getProductItemTabLabel(item, index) }}
               </button>
             }
           </div>
@@ -488,7 +489,7 @@
       </div>
 
       <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
-        <button type="button" (click)="closeCreateDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
+        <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
         @if (drawerMode === 'edit' && !isMasterDataDrawerMode() && canImportPurchaseCsv()) {
           <input
             id="purchaseSerialCsvInput"
@@ -550,6 +551,77 @@
       </div>
     </form>
   </aside>
+
+  @if (isPoGuardDialogOpen) {
+    <div class="fixed inset-0 z-[100020] bg-gray-950/55 backdrop-blur-sm"></div>
+    <div class="fixed inset-0 z-[100021] flex items-center justify-center p-4">
+      <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900">
+        <div class="border-b border-gray-200 bg-gradient-to-r from-amber-50 via-white to-sky-50 px-6 py-5 dark:border-gray-800 dark:from-amber-500/10 dark:via-gray-900 dark:to-sky-500/10">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">PO Session Guard</p>
+              <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">{{ poGuardDialogTitle }}</h3>
+            </div>
+            @if (poGuardDialogMode === 'idle-warning') {
+              <div class="rounded-full border border-amber-300 bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                {{ poIdleCountdownLabel }}
+              </div>
+            }
+          </div>
+        </div>
+
+        <div class="space-y-4 px-6 py-5">
+          <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">{{ poGuardDialogMessage }}</p>
+
+          @if (poGuardDialogMode === 'idle-warning') {
+            <div class="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+              Your PO session will lock in {{ poIdleCountdownLabel }} if there is no confirmation to continue.
+            </div>
+          }
+
+          @if (poGuardDialogMode === 'session-timeout') {
+            <div class="rounded-2xl border border-rose-200 bg-rose-50/80 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100">
+              Unsaved browser state may be stale now. Refresh is the safest option if you want to continue working in this PO.
+            </div>
+          }
+
+          @if (poGuardDialogMode === 'close-confirm') {
+            <div class="rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-100">
+              If you refresh or close the browser tab instead, the browser will still show its native confirmation prompt.
+            </div>
+          }
+
+          @if (poGuardDialogMode === 'refresh-confirm') {
+            <div class="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+              This prompt appears only when there are unsaved field changes or serials queued for insertion.
+            </div>
+          }
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          @if (poGuardDialogMode === 'idle-warning') {
+            <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Leave PO</button>
+            <button type="button" (click)="continuePoSession()" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white">Continue Session</button>
+          }
+
+          @if (poGuardDialogMode === 'session-timeout') {
+            <button type="button" (click)="closeTimedOutPo()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Close PO</button>
+            <button type="button" (click)="refreshPoSession()" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white">Refresh Page</button>
+          }
+
+          @if (poGuardDialogMode === 'close-confirm') {
+            <button type="button" (click)="keepEditingPo()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Keep Editing</button>
+            <button type="button" (click)="confirmCloseDrawer()" class="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white">Close Drawer</button>
+          }
+
+          @if (poGuardDialogMode === 'refresh-confirm') {
+            <button type="button" (click)="keepEditingPo()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Keep Editing</button>
+            <button type="button" (click)="refreshPoSession()" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white">Refresh Now</button>
+          }
+        </div>
+      </div>
+    </div>
+  }
 
   <div class="border-b border-default">
     <ul class="flex flex-wrap -mb-px text-sm font-medium text-center text-body">

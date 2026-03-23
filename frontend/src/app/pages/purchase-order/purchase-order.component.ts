@@ -16,6 +16,11 @@ import { RbacService } from '../../shared/services/rbac.service';
 import axios from 'axios';
 
 type PurchaseTab = 'deliveries' | 'approvals' | 'master-data';
+type PurchaseOrderGuardDialogMode =
+  | 'idle-warning'
+  | 'session-timeout'
+  | 'close-confirm'
+  | 'refresh-confirm';
 
 interface PurchaseProductFormItem {
   productId: string;
@@ -91,6 +96,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   createSuccess = '';
   isExportingSerials = false;
   isImportingSerials = false;
+  poGuardDialogMode: PurchaseOrderGuardDialogMode | null = null;
+  poIdleCountdownSeconds = 0;
   sendingForApprovalIds = new Set<number>();
   approvingPurchaseIds = new Set<number>();
   catalogProducts: ProductOption[] = [];
@@ -126,6 +133,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private readonly serialBatchSize = 20;
   private readonly serialBatchIdleMs = 1000;
   private readonly serialBatchIntervalMs = 5000;
+  private readonly poIdleWarningMs = 12 * 60 * 1000;
+  private readonly poSessionTimeoutMs = 15 * 60 * 1000;
   private serialScanTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   private serialScanErrorTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   isFlushingQueuedSerials = false;
@@ -136,6 +145,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private queuedSerialScans: QueuedPurchaseSerialScan[] = [];
   private queuedSerialFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private queuedSerialIntervalTimer: ReturnType<typeof setInterval> | null = null;
+  private poIdleWarningTimer: ReturnType<typeof setTimeout> | null = null;
+  private poSessionTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private poIdleCountdownTimer: ReturnType<typeof setInterval> | null = null;
+  private suppressBeforeUnloadPrompt = false;
+  private drawerInitialStateSnapshot = '';
   private readonly purchaseTabPermissionKeyMap: Record<PurchaseTab, string[]> = {
     deliveries: ['purchase-order.tab.deliveries', 'purchase-order.tab.local'],
     approvals: ['purchase-order.tab.approvals'],
@@ -181,16 +195,43 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
     this.clearQueuedSerialFlushTimer();
     this.stopQueuedSerialAutoFlush();
+    this.stopPoSessionGuard();
   }
 
   @HostListener('window:beforeunload', ['$event'])
   onBeforeUnload(event: BeforeUnloadEvent): void {
-    if (!this.isFormDrawerOpen) {
+    if (!this.shouldBlockNavigationPrompt() || this.suppressBeforeUnloadPrompt) {
       return;
     }
 
     event.preventDefault();
     event.returnValue = '';
+  }
+
+  @HostListener('document:mousemove')
+  @HostListener('document:keydown')
+  @HostListener('document:click')
+  @HostListener('document:touchstart')
+  onPurchaseOrderActivity(): void {
+    this.registerPoActivity();
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  onWindowRefreshShortcut(event: KeyboardEvent): void {
+    if (!this.isFormDrawerOpen || !this.shouldBlockNavigationPrompt()) {
+      return;
+    }
+
+    const key = String(event.key ?? '').toLowerCase();
+    const isF5 = key === 'f5';
+    const isReloadShortcut = key === 'r' && (event.ctrlKey || event.metaKey);
+
+    if (!isF5 && !isReloadShortcut) {
+      return;
+    }
+
+    event.preventDefault();
+    this.openRefreshConfirmDialog();
   }
 
   get pendingSerialScanCount(): number {
@@ -213,6 +254,47 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
 
     return 'Processing request...';
+  }
+
+  get isPoGuardDialogOpen(): boolean {
+    return this.poGuardDialogMode !== null;
+  }
+
+  get poGuardDialogTitle(): string {
+    switch (this.poGuardDialogMode) {
+      case 'idle-warning':
+        return 'Still working on this purchase order?';
+      case 'session-timeout':
+        return 'Session timed out for this PO';
+      case 'close-confirm':
+        return 'Close purchase order?';
+      case 'refresh-confirm':
+        return 'Refresh this page?';
+      default:
+        return '';
+    }
+  }
+
+  get poGuardDialogMessage(): string {
+    switch (this.poGuardDialogMode) {
+      case 'idle-warning':
+        return 'You have been idle in the PO drawer. Continue this session to keep scanning and editing without losing your place.';
+      case 'session-timeout':
+        return 'This PO was locked after extended inactivity. Refresh the page to re-establish the session, or close the drawer if you want to leave it for now.';
+      case 'close-confirm':
+        return 'Closing this PO drawer will discard the current on-screen editing context. Browser refresh and tab close are also guarded while this drawer is open.';
+      case 'refresh-confirm':
+        return 'Refreshing now may lose unsaved PO form changes and queued serial scans. Continue only if you want to reload this page.';
+      default:
+        return '';
+    }
+  }
+
+  get poIdleCountdownLabel(): string {
+    const totalSeconds = Math.max(0, this.poIdleCountdownSeconds);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
   }
 
   onVendorSearchChange(value: string): void {
@@ -847,6 +929,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.createSuccess = '';
     this.stopQueuedSerialAutoFlush();
     this.isFormDrawerOpen = true;
+    this.captureDrawerInitialSnapshot();
+    this.startPoSessionGuard();
   }
 
   async openEditDrawer(item: PurchaseOrderItem): Promise<void> {
@@ -862,6 +946,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.createError = '';
     this.createSuccess = '';
     this.startQueuedSerialAutoFlush();
+    this.startPoSessionGuard();
 
     try {
       const detail = await this.purchaseOrderService.getPurchaseById(item.id);
@@ -874,6 +959,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       this.applyDetailToForm(detail, item);
       this.editingPoNumber = String(detail.poNumber ?? item.poNumber ?? '').trim();
       this.editingPurchaseStatus = String(detail.status ?? item.status ?? '').trim();
+      this.captureDrawerInitialSnapshot();
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
         this.createError =
@@ -895,6 +981,55 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
 
     this.finalizeDrawerClose();
+  }
+
+  requestCloseDrawer(): void {
+    if (!this.isFormDrawerOpen || this.isFormDrawerBusy) {
+      return;
+    }
+
+    if (!this.shouldBlockNavigationPrompt()) {
+      void this.closeCreateDrawer();
+      return;
+    }
+
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = 'close-confirm';
+  }
+
+  continuePoSession(): void {
+    if (this.poGuardDialogMode !== 'idle-warning') {
+      return;
+    }
+
+    this.poGuardDialogMode = null;
+    this.poIdleCountdownSeconds = 0;
+    this.startPoSessionGuard();
+  }
+
+  keepEditingPo(): void {
+    if (this.poGuardDialogMode !== 'close-confirm' && this.poGuardDialogMode !== 'refresh-confirm') {
+      return;
+    }
+
+    this.poGuardDialogMode = null;
+    this.startPoSessionGuard();
+  }
+
+  async confirmCloseDrawer(): Promise<void> {
+    this.poGuardDialogMode = null;
+    await this.closeCreateDrawer();
+  }
+
+  closeTimedOutPo(): void {
+    this.poGuardDialogMode = null;
+    this.createError = 'PO session timed out because of inactivity. Reopen the drawer to continue.';
+    this.finalizeDrawerClose();
+  }
+
+  refreshPoSession(): void {
+    this.suppressBeforeUnloadPrompt = true;
+    globalThis.location.reload();
   }
 
   hasAnyScannedSerials(): boolean {
@@ -1114,6 +1249,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   private finalizeDrawerClose(): void {
+    this.stopPoSessionGuard();
     this.stopQueuedSerialAutoFlush();
     this.clearQueuedSerialFlushTimer();
     this.queuedSerialScans = [];
@@ -1124,6 +1260,163 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.isFormDrawerOpen = false;
     this.isProcessingApprovalAction = false;
     this.isExportingSerials = false;
+  }
+
+  private openRefreshConfirmDialog(): void {
+    if (this.isFormDrawerBusy || !this.shouldBlockNavigationPrompt()) {
+      return;
+    }
+
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = 'refresh-confirm';
+  }
+
+  private shouldBlockNavigationPrompt(): boolean {
+    if (!this.isFormDrawerOpen) {
+      return false;
+    }
+
+    return this.hasDrawerFormChanges() || this.pendingSerialScanCount > 0;
+  }
+
+  private hasDrawerFormChanges(): boolean {
+    return this.getDrawerStateSnapshot() !== this.drawerInitialStateSnapshot;
+  }
+
+  private captureDrawerInitialSnapshot(): void {
+    this.drawerInitialStateSnapshot = this.getDrawerStateSnapshot();
+  }
+
+  private getDrawerStateSnapshot(): string {
+    const comparableState = {
+      vendorMode: this.vendorMode,
+      vendorId: String(this.createForm.vendorId ?? '').trim(),
+      vendorName: String(this.createForm.vendorName ?? '').trim(),
+      vendorAddress: String(this.createForm.vendorAddress ?? '').trim(),
+      vendorContactPerson: String(this.createForm.vendorContactPerson ?? '').trim(),
+      vendorContactNumber: String(this.createForm.vendorContactNumber ?? '').trim(),
+      paymentDetails: this.createForm.paymentDetails.map((payment) => ({
+        method: String(payment.method ?? '').trim(),
+        amount: Number(payment.amount) || 0,
+        terms: String(payment.terms ?? '').trim(),
+        termsDueDate: payment.termsDueDate || '',
+        status: String(payment.status ?? '').trim(),
+        paymentDate: payment.paymentDate || '',
+        bankName: String(payment.bankName ?? '').trim(),
+        referenceNo: String(payment.referenceNo ?? '').trim(),
+        checkNo: String(payment.checkNo ?? '').trim(),
+        chequeDate: payment.chequeDate || '',
+        issuedBy: String(payment.issuedBy ?? '').trim(),
+        downPayment: Number(payment.downPayment) || 0,
+      })),
+      productItems: this.createForm.productItems.map((item) => ({
+        productId: String(item.productId ?? '').trim(),
+        capacityId: String(item.capacityId ?? '').trim(),
+        unitPrice: Number(item.unitPrice) || 0,
+        sellPrice: item.sellPrice === '' ? '' : Number(item.sellPrice) || 0,
+        discountPrice: item.discountPrice === '' ? '' : Number(item.discountPrice) || 0,
+        totalSetQty: Number(item.totalSetQty) || 0,
+        unitTypes: item.unitTypes.map((entry) => ({
+          label: String(entry.label ?? '').trim(),
+          value: Number(entry.value) || 0,
+          serials: entry.serials.map((serial) => String(serial ?? '').trim()),
+        })),
+      })),
+      totalAmount: Number(this.createForm.totalAmount) || 0,
+    };
+
+    return JSON.stringify(comparableState);
+  }
+
+  private registerPoActivity(): void {
+    if (!this.isFormDrawerOpen || this.isFormDrawerBusy) {
+      return;
+    }
+
+    if (this.poGuardDialogMode !== null) {
+      return;
+    }
+
+    this.startPoSessionGuard();
+  }
+
+  private startPoSessionGuard(): void {
+    if (!this.isFormDrawerOpen) {
+      return;
+    }
+
+    this.suppressBeforeUnloadPrompt = false;
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = null;
+    this.poIdleCountdownSeconds = 0;
+
+    this.poIdleWarningTimer = setTimeout(() => {
+      this.openPoIdleWarningDialog();
+    }, this.poIdleWarningMs);
+
+    this.poSessionTimeoutTimer = setTimeout(() => {
+      this.openPoSessionTimeoutDialog();
+    }, this.poSessionTimeoutMs);
+  }
+
+  private stopPoSessionGuard(): void {
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = null;
+    this.poIdleCountdownSeconds = 0;
+    this.suppressBeforeUnloadPrompt = false;
+    this.drawerInitialStateSnapshot = '';
+  }
+
+  private clearPoSessionGuardTimers(): void {
+    if (this.poIdleWarningTimer) {
+      clearTimeout(this.poIdleWarningTimer);
+      this.poIdleWarningTimer = null;
+    }
+
+    if (this.poSessionTimeoutTimer) {
+      clearTimeout(this.poSessionTimeoutTimer);
+      this.poSessionTimeoutTimer = null;
+    }
+
+    if (this.poIdleCountdownTimer) {
+      clearInterval(this.poIdleCountdownTimer);
+      this.poIdleCountdownTimer = null;
+    }
+  }
+
+  private openPoIdleWarningDialog(): void {
+    if (!this.isFormDrawerOpen) {
+      return;
+    }
+
+    if (this.isFormDrawerBusy) {
+      this.startPoSessionGuard();
+      return;
+    }
+
+    this.poGuardDialogMode = 'idle-warning';
+    this.poIdleCountdownSeconds = Math.max(
+      0,
+      Math.ceil((this.poSessionTimeoutMs - this.poIdleWarningMs) / 1000),
+    );
+
+    if (this.poIdleCountdownTimer) {
+      clearInterval(this.poIdleCountdownTimer);
+    }
+
+    this.poIdleCountdownTimer = setInterval(() => {
+      this.poIdleCountdownSeconds = Math.max(0, this.poIdleCountdownSeconds - 1);
+    }, 1000);
+  }
+
+  private openPoSessionTimeoutDialog(): void {
+    if (!this.isFormDrawerOpen) {
+      return;
+    }
+
+    this.clearPoSessionGuardTimers();
+    this.poGuardDialogMode = 'session-timeout';
+    this.poIdleCountdownSeconds = 0;
   }
 
   private buildScannedSerialExportRows(): Array<{
@@ -1467,6 +1760,30 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   getCapacitiesByProduct(productId: string): ProductCapacityOption[] {
     const product = this.catalogProducts.find((item) => String(item.id) === String(productId));
     return product?.capacities ?? [];
+  }
+
+  getProductItemTabLabel(item: PurchaseProductFormItem, index: number): string {
+    const fallbackLabel = `Product ${index + 1}`;
+    if (!item) {
+      return fallbackLabel;
+    }
+
+    const productName = String(item.productId ? this.getProductNameById(item.productId) : '').trim();
+    const capacityName = String(
+      item.productId && item.capacityId
+        ? this.getCapacityNameByProductAndCapacity(item.productId, item.capacityId)
+        : '',
+    ).trim();
+
+    if (productName && capacityName) {
+      return `${productName} (${capacityName})`;
+    }
+
+    if (productName) {
+      return productName;
+    }
+
+    return fallbackLabel;
   }
 
   addPaymentDetail(): void {
