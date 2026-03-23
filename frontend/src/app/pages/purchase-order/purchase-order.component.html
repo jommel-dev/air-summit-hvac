@@ -440,9 +440,9 @@
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    @for (serial of unitType.serials; track serial; let serialIndex = $index) {
+                                    @for (serial of getPagedScannedSerials(activeProductTabIndex, unitType.label); track serial; let serialIndex = $index) {
                                       <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
-                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serialIndex + 1 }}</td>
+                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ getScannedSerialRowNumber(activeProductTabIndex, unitType.label, serialIndex) }}</td>
                                         <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serial }}</td>
                                         @if (!isMasterDataDrawerMode()) {
                                           <td class="px-3 py-2 text-right">
@@ -461,6 +461,32 @@
                                   </tbody>
                                 </table>
                               </div>
+
+                              @if (unitType.serials.length > scannedSerialTablePageSize) {
+                                <div class="mt-2 flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
+                                  <p>
+                                    Page {{ getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) }} of {{ getScannedSerialTotalPages(activeProductTabIndex, unitType.label) }}
+                                  </p>
+                                  <div class="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      (click)="setScannedSerialPage(activeProductTabIndex, unitType.label, getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) - 1)"
+                                      [disabled]="getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) <= 1"
+                                      class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
+                                    >
+                                      Prev
+                                    </button>
+                                    <button
+                                      type="button"
+                                      (click)="setScannedSerialPage(activeProductTabIndex, unitType.label, getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) + 1)"
+                                      [disabled]="getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) >= getScannedSerialTotalPages(activeProductTabIndex, unitType.label)"
+                                      class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
+                                    >
+                                      Next
+                                    </button>
+                                  </div>
+                                </div>
+                              }
                             </div>
                           }
 
