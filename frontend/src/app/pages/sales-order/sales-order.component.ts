@@ -40,6 +40,7 @@ interface SalesOrderRow {
   soNumber: string;
   customerName: string;
   totalAmount: number;
+  paymentMethod: string;
   status: string;
   salesType: string;
   projectCode?: string;
@@ -94,7 +95,7 @@ interface SalesPaymentFormItem {
   downPayment: number;
 }
 
-type SalesGuardDialogMode = 'close-confirm' | 'refresh-confirm' | 'remove-serial-confirm';
+type SalesGuardDialogMode = 'close-confirm' | 'refresh-confirm' | 'remove-serial-confirm' | 'receive-confirm';
 
 interface SalesPendingSerialRemoval {
   productIndex: number;
@@ -492,34 +493,33 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     }
   }
 
+  pendingReceiveOrder: SalesOrderRow | null = null;
+
   async markOrderAsReceived(order: SalesOrderRow): Promise<void> {
     if (this.activeTab !== 'sales-receivable' || this.receivingOrderIds.has(order.id)) {
       return;
     }
+    this.pendingReceiveOrder = order;
+    this.openGuardDialog('receive-confirm');
+  }
 
-    const confirmed = window.confirm(
-      `Mark sales order ${order.soNumber || order.id} as received/complete?`,
-    );
-    if (!confirmed) {
-      return;
-    }
-
+  private async confirmMarkOrderAsReceived(): Promise<void> {
+    const order = this.pendingReceiveOrder;
+    if (!order) return;
     this.receivingOrderIds.add(order.id);
     this.uiError = '';
     this.uiMessage = '';
-
     try {
       const response = await this.salesOrderService.updateSalesOrder(order.id, {
         productItems: [],
         status: 'complete',
         remarks: 'Marked as received from Sales Receivable table',
       });
-
       if (!response.success) {
         this.uiError = response.message ?? 'Failed to mark sales order as received';
+        this.receivingOrderIds.delete(order.id);
         return;
       }
-
       this.uiMessage = 'Sales order marked as received successfully.';
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
@@ -532,6 +532,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       }
     } finally {
       this.receivingOrderIds.delete(order.id);
+      this.pendingReceiveOrder = null;
     }
   }
 
@@ -596,9 +597,10 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         soNumber: '',
         customerName: this.form.customer.name || '',
         totalAmount: Number(this.form.totalAmount) || 0,
+        paymentMethod: '',
         status: this.form.status || 'pending',
         salesType: this.form.salesType || '',
-        scheduleDate: this.form.scheduleDate || '',
+        scheduleDate: this.form.scheduleDate || '-',
         serialCount: 0,
         createdAt: null,
       };
@@ -635,8 +637,39 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     const italicFont = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
     const width = page.getWidth();
     const height = page.getHeight();
+    const showDrAddressDetails = this.parsePrintBool(businessProfile?.printAddressShowDr, true);
+    const drAddressDetails = showDrAddressDetails
+      ? String(businessProfile?.printAddressDetails ?? businessProfile?.businessAddress ?? '').trim()
+      : '';
+    const drContactDetails = String(businessProfile?.businessContact ?? '').trim();
+    const drEmailDetails = String(businessProfile?.businessEmail ?? '').trim();
 
-    this.drawDrTemplateHeader(page, row, detail, regularFont, width, height);
+    const logoSources = await this.getDrLogoCandidatePaths(businessProfile);
+    const logoBytes = await this.loadDrLogoPngBytes(logoSources);
+    if (logoBytes) {
+      const logo = await pdfDoc.embedPng(logoBytes);
+      const logoWidth = 120;
+      const scale = logoWidth / Math.max(1, logo.width);
+      const logoHeight = logo.height * scale;
+      page.drawImage(logo, {
+        x: 30,
+        y: height - logoHeight - 20,
+        width: logoWidth,
+        height: logoHeight,
+      });
+    }
+
+    this.drawDrTemplateHeader(
+      page,
+      row,
+      detail,
+      regularFont,
+      width,
+      height,
+      drAddressDetails,
+      drContactDetails,
+      drEmailDetails,
+    );
 
     let y = height - 250;
 
@@ -808,6 +841,102 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     }
   }
 
+  private async getDrLogoCandidatePaths(
+    businessProfile: BusinessProfileSettings | null,
+  ): Promise<string[]> {
+    const showLogo = this.parsePrintBool(businessProfile?.printShowLogo, true);
+    if (!showLogo) {
+      return [];
+    }
+
+    const preferredLogo = String(
+      (businessProfile?.printLogoVariant ?? 'light') === 'dark'
+        ? (businessProfile?.businessLogoDark ?? businessProfile?.businessLogo ?? '')
+        : (businessProfile?.businessLogoLight ?? businessProfile?.businessLogo ?? ''),
+    ).trim();
+
+    return [preferredLogo, '/images/air-summit-logo.png', '/images/logo/logo.svg']
+      .map((path) => this.resolveAssetUrl(path))
+      .filter((path) => String(path || '').trim().length > 0);
+  }
+
+  private resolveAssetUrl(path: string | null | undefined): string {
+    const raw = String(path ?? '').trim();
+    if (!raw) {
+      return '';
+    }
+
+    if (/^https?:\/\//i.test(raw) || raw.startsWith('data:') || raw.startsWith('blob:')) {
+      return raw;
+    }
+
+    if (raw.startsWith('/')) {
+      return raw;
+    }
+
+    return `/${raw}`;
+  }
+
+  private async loadDrLogoPngBytes(paths: string[]): Promise<Uint8Array | null> {
+    for (const path of paths) {
+      const bytes = await this.loadDrLogoPngBytesFromPath(path);
+      if (bytes) {
+        return bytes;
+      }
+    }
+
+    return null;
+  }
+
+  private async loadDrLogoPngBytesFromPath(path: string): Promise<Uint8Array | null> {
+    try {
+      const response = await fetch(path);
+      if (!response.ok) {
+        return null;
+      }
+
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      const normalizedPath = String(path || '').toLowerCase();
+      const isPng = contentType.includes('image/png') || normalizedPath.endsWith('.png');
+      const isJpeg = contentType.includes('image/jpeg') || contentType.includes('image/jpg') || normalizedPath.endsWith('.jpg') || normalizedPath.endsWith('.jpeg');
+
+      if (isPng || isJpeg) {
+        const bytes = await response.arrayBuffer();
+        return new Uint8Array(bytes);
+      }
+
+      const svgText = await response.text();
+      const blob = new Blob([svgText], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+
+      try {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error('Unable to load DR logo image'));
+          img.src = url;
+        });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, image.width);
+        canvas.height = Math.max(1, image.height);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          return null;
+        }
+
+        ctx.drawImage(image, 0, 0);
+        const dataUrl = canvas.toDataURL('image/png');
+        const bytes = await fetch(dataUrl).then((item) => item.arrayBuffer());
+        return new Uint8Array(bytes);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      return null;
+    }
+  }
+
   private drawDrTemplateHeader(
     page: ReturnType<PDFDocument['getPages']>[number],
     row: SalesOrderRow,
@@ -815,6 +944,9 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     font: PDFFont,
     width: number,
     height: number,
+    drAddressDetails: string,
+    drContactDetails: string,
+    drEmailDetails: string,
   ): void {
     const customerName = this.trimToLength(detail.customerName || row.customerName || '', 36);
     const address = String(detail.customerAddress || '').trim();
@@ -828,10 +960,66 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     if (address.length > 70) {
       page.drawText(address.slice(0, 40), { x: 110, y: height - 160, size: 10, font });
       page.drawText(address.slice(40, 80), { x: 110, y: height - 175, size: 10, font });
-      return;
+    } else {
+      page.drawText(address, { x: 110, y: height - 160, size: 10, font });
     }
 
-    page.drawText(address, { x: 110, y: height - 160, size: 10, font });
+    const headerLines = [
+      drAddressDetails ? `Address: ${drAddressDetails}` : '',
+      drContactDetails ? `Contact Us: ${drContactDetails}` : '',
+      drEmailDetails ? `Email Us: ${drEmailDetails}` : '',
+    ].filter((line) => String(line || '').trim().length > 0);
+
+    const wrapHeaderLine = (text: string, maxWidth: number): string[] => {
+      const words = String(text || '').trim().split(/\s+/).filter((word) => word.length > 0);
+      if (words.length === 0) {
+        return [];
+      }
+
+      const lines: string[] = [];
+      let currentLine = '';
+
+      for (const word of words) {
+        const candidate = currentLine ? `${currentLine} ${word}` : word;
+        if (font.widthOfTextAtSize(candidate, 8) <= maxWidth) {
+          currentLine = candidate;
+          continue;
+        }
+
+        if (currentLine) {
+          lines.push(currentLine);
+        }
+        currentLine = word;
+      }
+
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+
+      return lines;
+    };
+
+    const headerBlockWidth = Math.min(190, Math.max(130, Math.floor(width * 0.32)));
+    const headerX = width - headerBlockWidth - 60;
+    const minHeaderY = height - 245;
+
+    let headerY = height - 30;
+    for (const line of headerLines.flatMap((entry) => wrapHeaderLine(entry, headerBlockWidth)).slice(0, 6)) {
+      if (headerY < minHeaderY) {
+        break;
+      }
+
+      page.drawText(line, { x: headerX, y: headerY, size: 9, font });
+      headerY -= 9;
+    }
+  }
+
+  private parsePrintBool(value: string | null | undefined, defaultValue: boolean): boolean {
+    if (value === null || value === undefined) {
+      return defaultValue;
+    }
+
+    return String(value).trim().toLowerCase() === 'true';
   }
 
   private createDrAttachmentPage(
@@ -1004,6 +1192,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         soNumber: '',
         customerName: '',
         totalAmount: 0,
+        paymentMethod: '',
         status: 'pending',
         salesType: '',
         scheduleDate: '-',
@@ -1086,18 +1275,20 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       this.closeGuardDialog();
       return;
     }
-
     if (this.guardDialogMode === 'remove-serial-confirm') {
       void this.confirmRemoveScannedSerial();
       return;
     }
-
     if (this.guardDialogMode === 'refresh-confirm') {
       this.closeGuardDialog();
       window.location.reload();
       return;
     }
-
+    if (this.guardDialogMode === 'receive-confirm') {
+      void this.confirmMarkOrderAsReceived();
+      this.closeGuardDialog();
+      return;
+    }
     this.closeDrawer(true);
   }
 
@@ -1110,11 +1301,12 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     if (this.guardDialogMode === 'remove-serial-confirm') {
       return 'Remove serial number?';
     }
-
     if (this.guardDialogMode === 'refresh-confirm') {
       return 'Refresh this page?';
     }
-
+    if (this.guardDialogMode === 'receive-confirm') {
+      return 'Mark sales order as received/complete?';
+    }
     return 'Close sales order?';
   }
 
@@ -1122,11 +1314,13 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     if (this.guardDialogMode === 'remove-serial-confirm') {
       return 'Are you sure you want to remove this serial number?';
     }
-
     if (this.guardDialogMode === 'refresh-confirm') {
       return 'You have unsaved changes. Refreshing will discard all unsaved updates.';
     }
-
+    if (this.guardDialogMode === 'receive-confirm') {
+      const order = this.pendingReceiveOrder;
+      return order ? `Mark sales order ${order.soNumber || order.id} as received/complete?` : '';
+    }
     return 'Closing this SO drawer will discard the current on-screen editing context. Browser refresh and tab close are also guarded while this drawer is open.';
   }
 
@@ -1134,11 +1328,12 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     if (this.guardDialogMode === 'remove-serial-confirm') {
       return 'Remove Serial';
     }
-
     if (this.guardDialogMode === 'refresh-confirm') {
       return 'Refresh Now';
     }
-
+    if (this.guardDialogMode === 'receive-confirm') {
+      return 'Mark as Received';
+    }
     return 'Close Drawer';
   }
 
@@ -1146,7 +1341,9 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     if (this.guardDialogMode === 'remove-serial-confirm') {
       return 'Cancel';
     }
-
+    if (this.guardDialogMode === 'receive-confirm') {
+      return 'Cancel';
+    }
     return 'Keep Editing';
   }
 
@@ -1208,6 +1405,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
       soNumber: item.soNumber,
       customerName: item.customerName,
       totalAmount: Number(item.totalAmount ?? 0),
+      paymentMethod: item.paymentMethod ?? '-',
       status: item.status ?? 'pending',
       salesType: item.salesType ?? '',
       projectCode: item.projectCode ?? '',
@@ -1799,6 +1997,25 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   }
 
   async saveDesignForm(): Promise<void> {
+
+    // Only strictly validate serials if product items are being changed or status is being set to for-delivery/remitted
+    const isProductEdit = this.drawerMode === 'create' || this.form.productItems.some((item: any) => item._edited);
+    const isDeliveryOrRemit = ['for-delivery', 'remitted'].includes((this.form.status || '').toLowerCase());
+    if (isProductEdit || isDeliveryOrRemit) {
+      const hasProduct = (this.form.productItems ?? []).length > 0;
+      const hasZeroQty = (this.form.productItems ?? []).some((item: any) => Number(item.totalSetQty) <= 0);
+      const missingSerials = (this.form.productItems ?? []).some((item: any) => {
+        return (item.unitTypes ?? []).some((ut: any) => ut.value > 0 && (!ut.serials || ut.serials.length < ut.value));
+      });
+      if (hasProduct && hasZeroQty) {
+        this.uiError = 'Unit quantity must not be zero.';
+        return;
+      }
+      if (hasProduct && missingSerials) {
+        this.uiError = 'All required serial numbers must be scanned before submitting.';
+        return;
+      }
+    }
     if (this.isSubmitting) {
       return;
     }
@@ -1882,6 +2099,22 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   }
 
   async remitSales(): Promise<void> {
+        // Block if any product item has qty 0 or missing serials
+        const hasProduct = (this.form.productItems ?? []).length > 0;
+        const hasZeroQty = (this.form.productItems ?? []).some((item: any) => Number(item.totalSetQty) <= 0);
+        const missingSerials = (this.form.productItems ?? []).some((item: any) => {
+          return (item.unitTypes ?? []).some((ut: any) => ut.value > 0 && (!ut.serials || ut.serials.length < ut.value));
+        });
+        if (hasProduct && hasZeroQty) {
+          this.uiError = 'Unit quantity must not be zero.';
+          this.isRemitting = false;
+          return;
+        }
+        if (hasProduct && missingSerials) {
+          this.uiError = 'All required serial numbers must be scanned before remitting.';
+          this.isRemitting = false;
+          return;
+        }
     if (this.drawerMode !== 'edit' || this.isRemitting || this.isSubmitting) {
       return;
     }
@@ -2365,7 +2598,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         : [this.createEmptyPaymentItem()];
 
     const productItems =
-      detail.productItems.length > 0
+      Array.isArray(detail.productItems) && detail.productItems.length > 0
         ? detail.productItems.map((product) => this.mapDetailProductItem(product))
         : [this.createEmptyProductItem()];
 

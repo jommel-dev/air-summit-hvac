@@ -793,6 +793,28 @@
                         {{ getRowActionLabel() }}
                       </button>
                     }
+
+                    @if (canCancelPurchase(item.status) && canCreateOrUpdatePurchase()) {
+                      <button
+                        type="button"
+                        (click)="requestCancelPurchase(item)"
+                        [disabled]="cancellingPurchaseIds.has(item.id)"
+                        class="rounded-lg border border-warning-300 px-3 py-1.5 text-xs font-medium text-warning-700 transition hover:bg-warning-50 disabled:opacity-50 dark:border-warning-500/40 dark:text-warning-400 dark:hover:bg-warning-500/10"
+                      >
+                        {{ cancellingPurchaseIds.has(item.id) ? 'Cancelling...' : 'Cancel' }}
+                      </button>
+                    }
+
+                    @if (canDeletePurchase(item.status) && canCreateOrUpdatePurchase()) {
+                      <button
+                        type="button"
+                        (click)="requestDeletePurchase(item)"
+                        [disabled]="deletingPurchaseIds.has(item.id)"
+                        class="rounded-lg border border-error-300 px-3 py-1.5 text-xs font-medium text-error-700 transition hover:bg-error-50 disabled:opacity-50 dark:border-error-500/40 dark:text-error-400 dark:hover:bg-error-500/10"
+                      >
+                        {{ deletingPurchaseIds.has(item.id) ? 'Deleting...' : 'Delete' }}
+                      </button>
+                    }
                   </div>
                 </td>
               </tr>
@@ -832,3 +854,99 @@
 
   </div>
 </div>
+
+@if (poActionDialogMode !== null) {
+  <div class="fixed inset-0 z-[100030] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm">
+    <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+      <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+        <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+          @if (poActionDialogMode === 'cancel-confirm') { Cancel Purchase Order }
+          @if (poActionDialogMode === 'delete-confirm') { Delete Purchase Order }
+        </h3>
+      </div>
+
+      <div class="space-y-4 px-6 py-5">
+        @if (poActionDialogMode === 'cancel-confirm') {
+          <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">
+            Are you sure you want to cancel
+            <span class="font-semibold text-gray-900 dark:text-white">{{ poActionTargetItem?.poNumber || 'this purchase order' }}</span>?
+            The status will be changed to <span class="font-medium text-warning-700 dark:text-warning-400">Cancelled</span> and all related serial numbers will be deleted.
+          </p>
+          <div class="rounded-2xl border border-warning-200 bg-warning-50/80 px-4 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-100">
+            This is permanent for serial records. Cancelled purchase orders are visible in the master data tab but can no longer be edited or sent for approval.
+          </div>
+        }
+
+        @if (poActionDialogMode === 'delete-confirm') {
+          <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">
+            Are you sure you want to permanently delete
+            <span class="font-semibold text-gray-900 dark:text-white">{{ poActionTargetItem?.poNumber || 'this purchase order' }}</span>?
+            All related product items, payments, and serial numbers will be permanently deleted.
+          </p>
+
+          @if (!requiresAdminCredentialsForDelete) {
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Confirm your password
+              </label>
+              <input
+                type="password"
+                [(ngModel)]="deleteAuthPassword"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-primary-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                placeholder="Enter your password"
+              />
+            </div>
+          }
+
+          @if (requiresAdminCredentialsForDelete) {
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Admin Username
+              </label>
+              <input
+                type="text"
+                [(ngModel)]="deleteAuthUsername"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-primary-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                placeholder="Enter admin or super admin username"
+              />
+            </div>
+
+            <div class="space-y-2">
+              <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Admin Password
+              </label>
+              <input
+                type="password"
+                [(ngModel)]="deleteAuthPassword"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-primary-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                placeholder="Enter admin password"
+              />
+            </div>
+          }
+
+          <div class="rounded-2xl border border-error-200 bg-error-50/80 px-4 py-3 text-sm text-error-800 dark:border-error-500/20 dark:bg-error-500/10 dark:text-error-100">
+            This is a <strong>permanent action</strong> and cannot be undone. Only pending, in-progress, for-approval, or cancelled POs can be deleted.
+          </div>
+        }
+      </div>
+
+      <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button type="button" (click)="dismissPoActionDialog()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">
+          Keep PO
+        </button>
+
+        @if (poActionDialogMode === 'cancel-confirm') {
+          <button type="button" (click)="confirmCancelPurchase()" class="rounded-lg bg-warning-500 px-4 py-2 text-sm font-medium text-white hover:bg-warning-600">
+            Cancel PO
+          </button>
+        }
+
+        @if (poActionDialogMode === 'delete-confirm') {
+          <button type="button" (click)="confirmDeletePurchase()" class="rounded-lg bg-error-600 px-4 py-2 text-sm font-medium text-white hover:bg-error-700">
+            Delete PO
+          </button>
+        }
+      </div>
+    </div>
+  </div>
+}

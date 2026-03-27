@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
+import { PoolClient } from 'pg';
 
 type Trend = 'up' | 'down';
 
@@ -55,6 +56,29 @@ type TopCustomerRow = { name: string; orders: string; balance: string };
 type TopCapacityRow = { label: string; units: string; sellThrough: string };
 type MarginRow = { label: string; margin: string };
 type ActivityRow = { eventAt: string | null; text: string; status: 'received' | 'dispatch' | 'install' | 'payment' };
+type SalesFinancialSummaryRow = {
+  settledAmount: string;
+  settledCount: string;
+  unpaidAmount: string;
+  unpaidCount: string;
+  overdueAmount: string;
+  overdueCount: string;
+  chequeAmount: string;
+  chequeCount: string;
+};
+type DashboardSalesDetailMode = 'sales' | 'unpaid' | 'overdues' | 'cheques';
+type DashboardOperationDetailMode = 'receiving' | 'dispatch' | 'installation' | 'stock-alerts';
+type DashboardSettlementMode = 'partial' | 'full' | 'cheque' | 'split';
+type DashboardReceivableVerificationMode = 'cheque' | 'credit-card';
+type SalesSettlementStateRow = {
+  soId: string;
+  totalAmount: string;
+  paidAmount: string;
+  remainingAmount: string;
+  outstandingReceivableAmount: string;
+  normalizedStatus: string;
+  branchId: string | null;
+};
 
 @Injectable()
 export class DashboardService {
@@ -108,6 +132,334 @@ export class DashboardService {
     const hours = String(parsed.getHours()).padStart(2, '0');
     const minutes = String(parsed.getMinutes()).padStart(2, '0');
     return `${hours}:${minutes}`;
+  }
+
+  private async getTableColumns(client: PoolClient, tableName: string): Promise<string[]> {
+    const result = await client.query<{ column_name: string }>(
+      `SELECT column_name
+       FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = $1`,
+      [tableName],
+    );
+
+    return result.rows.map((row) => row.column_name);
+  }
+
+  private pickColumn(columns: string[], candidates: string[]): string | null {
+    for (const candidate of candidates) {
+      if (columns.includes(candidate)) {
+        return candidate;
+      }
+    }
+
+    return null;
+  }
+
+  private toIsoDateOrNull(value: unknown): string | null {
+    const raw = String(value ?? '').trim();
+    if (!raw) {
+      return null;
+    }
+
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  private async loadSalesSettlementState(
+    client: PoolClient,
+    salesOrderId: number,
+    branchId?: number,
+  ): Promise<SalesSettlementStateRow> {
+    const branchParam = branchId ? String(branchId) : null;
+    const result = await client.query<SalesSettlementStateRow>(
+      `${this.getSalesDashboardBaseCte()}
+       SELECT
+         ss.so_id::text AS "soId",
+         ss.total_amount::text AS "totalAmount",
+         ss.paid_amount::text AS "paidAmount",
+         ss.remaining_amount::text AS "remainingAmount",
+         ss.outstanding_receivable_amount::text AS "outstandingReceivableAmount",
+         ss.normalized_status::text AS "normalizedStatus",
+         NULLIF(ss.branch_id, '')::text AS "branchId"
+       FROM sales_scope ss
+       WHERE ss.so_id = $1::text
+         AND ($2::text IS NULL OR ss.branch_id = $2::text)
+       LIMIT 1`,
+      [String(salesOrderId), branchParam],
+    );
+
+    if (result.rowCount === 0) {
+      throw new NotFoundException('Sales order not found for settlement');
+    }
+
+    return result.rows[0];
+  }
+
+  private async insertSalesPaymentRecord(
+    client: PoolClient,
+    salesOrderId: number,
+    payload: {
+      method: string;
+      amount: number;
+      status: string;
+      paymentDate?: string | null;
+      referenceNo?: string | null;
+      checkNo?: string | null;
+      bankName?: string | null;
+      bankAccount?: string | null;
+      postDated?: string | null;
+      termsDueDate?: string | null;
+    },
+  ): Promise<void> {
+    const paymentColumns = await this.getTableColumns(client, 'tblso_payments');
+    const soIdColumn = this.pickColumn(paymentColumns, ['so_id', 'soId']);
+    const methodColumn = this.pickColumn(paymentColumns, ['method']);
+    const amountColumn = this.pickColumn(paymentColumns, ['amount']);
+    const statusColumn = this.pickColumn(paymentColumns, ['status']);
+    const paymentDateColumn = this.pickColumn(paymentColumns, ['payment_date', 'paymentDate']);
+    const referenceNoColumn = this.pickColumn(paymentColumns, ['reference_no', 'referenceNo']);
+    const checkNoColumn = this.pickColumn(paymentColumns, ['check_no', 'checkNo']);
+    const bankNameColumn = this.pickColumn(paymentColumns, ['bank_name', 'bankName']);
+    const bankAccountColumn = this.pickColumn(paymentColumns, ['bank_account', 'bankAccount']);
+    const postDatedColumn = this.pickColumn(paymentColumns, ['post_dated', 'postDated']);
+    const termsDueDateColumn = this.pickColumn(paymentColumns, ['terms_due_date', 'termsDueDate']);
+
+    if (!soIdColumn || !methodColumn || !amountColumn || !statusColumn) {
+      throw new BadRequestException('Sales payment columns are not configured as expected');
+    }
+
+    const record: Record<string, unknown> = {
+      [soIdColumn]: salesOrderId,
+      [methodColumn]: payload.method,
+      [amountColumn]: payload.amount,
+      [statusColumn]: payload.status,
+    };
+
+    if (paymentDateColumn) record[paymentDateColumn] = payload.paymentDate ?? null;
+    if (referenceNoColumn && payload.referenceNo !== undefined) record[referenceNoColumn] = payload.referenceNo;
+    if (checkNoColumn && payload.checkNo !== undefined) record[checkNoColumn] = payload.checkNo;
+    if (bankNameColumn && payload.bankName !== undefined) record[bankNameColumn] = payload.bankName;
+    if (bankAccountColumn && payload.bankAccount !== undefined) record[bankAccountColumn] = payload.bankAccount;
+    if (postDatedColumn && payload.postDated !== undefined) record[postDatedColumn] = payload.postDated;
+    if (termsDueDateColumn && payload.termsDueDate !== undefined) record[termsDueDateColumn] = payload.termsDueDate;
+
+    const columns = Object.keys(record);
+    const values = Object.values(record);
+    const placeholders = values.map((_, index) => `$${index + 1}`);
+
+    await client.query(
+      `INSERT INTO tblso_payments (${columns.map((column) => `"${column}"`).join(', ')})
+       VALUES (${placeholders.join(', ')})`,
+      values,
+    );
+  }
+
+  private async updateSalesOrderStatusForSettlement(client: PoolClient, salesOrderId: number, branchId?: number): Promise<void> {
+    const state = await this.loadSalesSettlementState(client, salesOrderId, branchId);
+    const currentStatus = this.normalizeStatus(state.normalizedStatus);
+    if (['remitted', 'complete', 'completed', 'cancelled', 'rejected', 'void'].includes(currentStatus)) {
+      return;
+    }
+
+    const paidAmount = this.toNumber(state.paidAmount);
+    const remainingAmount = this.toNumber(state.remainingAmount);
+    const outstandingReceivableAmount = this.toNumber(state.outstandingReceivableAmount);
+    const totalAmount = this.toNumber(state.totalAmount);
+    let nextStatus = currentStatus || 'pending';
+
+    if (Math.max(totalAmount - paidAmount, 0) <= 0) {
+      nextStatus = 'paid';
+    } else if (paidAmount > 0 || outstandingReceivableAmount > 0 || remainingAmount < totalAmount) {
+      nextStatus = 'partial';
+    }
+
+    if (nextStatus === currentStatus) {
+      return;
+    }
+
+    const salesOrderColumns = await this.getTableColumns(client, 'tblsales_order');
+    const statusColumn = this.pickColumn(salesOrderColumns, ['status']);
+    if (!statusColumn) {
+      throw new BadRequestException('Sales order status column is not configured as expected');
+    }
+
+    await client.query(
+      `UPDATE tblsales_order
+       SET "${statusColumn}" = $1
+       WHERE id = $2`,
+      [nextStatus, salesOrderId],
+    );
+  }
+
+  private getSalesDashboardBaseCte(): string {
+    return `WITH payment_scope AS (
+      SELECT
+        COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
+        CASE
+          WHEN COALESCE(to_jsonb(sp)->>'amount', '0') ~ '^-?\\d+(\\.\\d+)?$'
+            THEN COALESCE(to_jsonb(sp)->>'amount', '0')::numeric
+          ELSE 0
+        END AS amount,
+        REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'method', ''))), '_', '-'), ' ', '-') AS normalized_method,
+        REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'status', ''))), '_', '-'), ' ', '-') AS normalized_status,
+        CASE
+          WHEN REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'method', ''))), '_', '-'), ' ', '-') = 'cheque'
+            THEN COALESCE(
+              NULLIF(to_jsonb(sp)->>'post_dated', ''),
+              NULLIF(to_jsonb(sp)->>'postDated', '')
+            )::timestamptz
+          ELSE COALESCE(
+            NULLIF(to_jsonb(sp)->>'terms_due_date', ''),
+            NULLIF(to_jsonb(sp)->>'termsDueDate', '')
+          )::timestamptz
+        END AS due_date
+      FROM tblso_payments sp
+    ),
+    payment_totals AS (
+      SELECT
+        ps.so_id,
+        COALESCE(SUM(ps.amount) FILTER (
+          WHERE COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
+        ), 0) AS paid_amount,
+        COALESCE(SUM(ps.amount) FILTER (
+          WHERE ps.normalized_method IN ('cheque', 'credit-card')
+            AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
+        ), 0) AS outstanding_receivable_amount,
+        COUNT(*) FILTER (
+          WHERE ps.normalized_method IN ('cheque', 'credit-card')
+            AND ps.amount > 0
+            AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
+        )::int AS outstanding_receivable_count,
+        MIN(ps.due_date) FILTER (
+          WHERE COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
+            AND ps.due_date IS NOT NULL
+        ) AS next_due_date,
+        COALESCE(
+          STRING_AGG(
+            DISTINCT ps.normalized_method,
+            ', ' ORDER BY ps.normalized_method
+          ),
+          'Unknown'
+        ) AS payment_methods,
+        COALESCE(
+          STRING_AGG(
+            DISTINCT CASE
+              WHEN ps.normalized_method = 'terms-with-dp' THEN 'Terms with DP'
+              WHEN ps.normalized_method = 'installment' THEN 'Installment'
+              WHEN ps.normalized_method = 'terms' THEN 'Terms'
+              ELSE NULL
+            END,
+            ', '
+          ) FILTER (
+            WHERE ps.normalized_method IN ('terms', 'terms-with-dp', 'installment')
+          ),
+          '-'
+        ) AS credit_terms_methods,
+        COALESCE(
+          STRING_AGG(
+            DISTINCT CASE
+              WHEN ps.normalized_method = 'credit-card' THEN 'Credit Card'
+              WHEN ps.normalized_method = 'cheque' THEN 'Cheque'
+              ELSE NULL
+            END,
+            ', '
+          ) FILTER (
+            WHERE ps.normalized_method IN ('cheque', 'credit-card')
+              AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
+          ),
+          'Unknown'
+        ) AS outstanding_payment_methods
+      FROM payment_scope ps
+      WHERE COALESCE(ps.so_id, '') <> ''
+      GROUP BY ps.so_id
+    ),
+    sales_scope AS (
+      SELECT
+        so.id::text AS so_id,
+        COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS so_number,
+        COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS customer,
+        CASE
+          WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
+            THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
+          ELSE 0
+        END AS total_amount,
+        REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', COALESCE(so.status, 'pending')))), '_', '-'), ' ', '-') AS normalized_status,
+        COALESCE(NULLIF(to_jsonb(so)->>'created_at', ''), NULLIF(to_jsonb(so)->>'createdAt', ''))::timestamptz AS created_at,
+        COALESCE(
+          COALESCE(NULLIF(to_jsonb(so)->>'due_date', ''), NULLIF(to_jsonb(so)->>'dueDate', ''))::timestamptz,
+          pt.next_due_date
+        ) AS due_date,
+        COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id,
+        COALESCE(pt.paid_amount, 0) AS paid_amount,
+        GREATEST(
+          CASE
+            WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
+              THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
+            ELSE 0
+          END - COALESCE(pt.paid_amount, 0) - COALESCE(pt.outstanding_receivable_amount, 0),
+          0
+        ) AS remaining_amount,
+        COALESCE(pt.outstanding_receivable_amount, 0) AS outstanding_receivable_amount,
+        COALESCE(pt.outstanding_receivable_count, 0) AS outstanding_receivable_count,
+        COALESCE(pt.payment_methods, 'Unknown') AS payment_methods,
+        COALESCE(pt.credit_terms_methods, '-') AS credit_terms_methods,
+        COALESCE(pt.outstanding_payment_methods, 'Unknown') AS outstanding_payment_methods
+      FROM tblsales_order so
+      LEFT JOIN tblcustomer c
+        ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
+      LEFT JOIN payment_totals pt
+        ON pt.so_id = so.id::text
+    )`;
+  }
+
+  private getSettledSalesPredicate(alias: string): string {
+    return `(
+      ${alias}.normalized_status IN ('complete', 'completed')
+      OR (
+        GREATEST(${alias}.total_amount - ${alias}.paid_amount, 0) <= 0
+        AND ${alias}.normalized_status IN ('approved', 'released', 'delivered', 'partial', 'paid', 'remitted', 'complete', 'completed')
+      )
+    )`;
+  }
+
+  private getRecordedSalesAmountExpression(alias: string): string {
+    return `(
+      CASE
+        WHEN ${alias}.paid_amount > 0 THEN ${alias}.paid_amount
+        WHEN ${alias}.remaining_amount <= 0
+          AND ${alias}.normalized_status IN ('paid', 'remitted', 'complete', 'completed')
+          THEN ${alias}.total_amount
+        ELSE 0
+      END
+    )`;
+  }
+
+  private getRecordedSalesPredicate(alias: string): string {
+    // Only include cheque payments if their status is paid/posted/cleared/complete/completed/remitted
+    // Exclude all other cheques from collected sales
+    // All other payment methods remain included as before
+    return `(
+      ${this.getRecordedSalesAmountExpression(alias)} > 0
+      AND ${alias}.normalized_status IN ('remitted', 'complete', 'completed')
+      AND (
+        POSITION('cheque' IN COALESCE(${alias}.payment_methods, '')) = 0
+        OR EXISTS (
+          SELECT 1 FROM payment_scope ps
+          WHERE ps.so_id = ${alias}.so_id
+            AND ps.normalized_method = 'cheque'
+            AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
+        )
+      )
+    )`;
+  }
+
+  private getOpenBalancePredicate(alias: string): string {
+    return `(
+      ${alias}.remaining_amount > 0
+      AND ${alias}.normalized_status IN ('remitted', 'complete', 'completed')
+      AND COALESCE(${alias}.credit_terms_methods, '-') <> '-'
+    )`;
   }
 
   async getOverview(branchId?: number): Promise<DashboardResponse> {
@@ -221,29 +573,22 @@ export class DashboardService {
         [branchParam],
       );
 
-      const salesSummaryResult = await this.databaseService.query<SalesRow>(
-        `WITH sales_scope AS (
-           SELECT
-             CASE
-               WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
-               ELSE 0
-             END AS total_amount,
-             COALESCE(NULLIF(to_jsonb(so)->>'created_at', ''), NULLIF(to_jsonb(so)->>'createdAt', ''))::timestamptz AS created_at,
-             COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
-           FROM tblsales_order so
-         )
+      const recordedSalesPredicate = this.getRecordedSalesPredicate('ss');
+      const recordedSalesAmountExpression = this.getRecordedSalesAmountExpression('ss');
+      const openBalancePredicate = this.getOpenBalancePredicate('ss');
+      const overdueBalancePredicate = `${openBalancePredicate} AND ss.due_date IS NOT NULL AND (ss.due_date AT TIME ZONE 'UTC')::date < CURRENT_DATE`;
+
+      const salesSummaryResult = await this.databaseService.query<SalesFinancialSummaryRow>(
+        `${this.getSalesDashboardBaseCte()}
          SELECT
-           COALESCE(SUM(total_amount) FILTER (WHERE (created_at AT TIME ZONE 'UTC')::date = CURRENT_DATE), 0)::text AS "todaySales",
-           COALESCE(SUM(total_amount) FILTER (WHERE (created_at AT TIME ZONE 'UTC')::date = CURRENT_DATE - INTERVAL '1 day'), 0)::text AS "yesterdaySales",
-           COALESCE(SUM(total_amount) FILTER (
-             WHERE date_trunc('month', created_at AT TIME ZONE 'UTC') = date_trunc('month', CURRENT_DATE::timestamp)
-               AND (created_at AT TIME ZONE 'UTC')::date <= CURRENT_DATE
-           ), 0)::text AS "mtdSales",
-           COALESCE(SUM(total_amount) FILTER (
-             WHERE date_trunc('month', created_at AT TIME ZONE 'UTC') = date_trunc('month', (CURRENT_DATE - INTERVAL '1 month')::timestamp)
-               AND EXTRACT(DAY FROM created_at AT TIME ZONE 'UTC') <= EXTRACT(DAY FROM CURRENT_DATE)
-           ), 0)::text AS "prevMtdSales"
+           COALESCE(SUM(${recordedSalesAmountExpression}) FILTER (WHERE ${recordedSalesPredicate}), 0)::text AS "settledAmount",
+           COUNT(*) FILTER (WHERE ${recordedSalesPredicate})::text AS "settledCount",
+           COALESCE(SUM(ss.remaining_amount) FILTER (WHERE ${openBalancePredicate}), 0)::text AS "unpaidAmount",
+           COUNT(*) FILTER (WHERE ${openBalancePredicate})::text AS "unpaidCount",
+           COALESCE(SUM(ss.remaining_amount) FILTER (WHERE ${overdueBalancePredicate}), 0)::text AS "overdueAmount",
+           COUNT(*) FILTER (WHERE ${overdueBalancePredicate})::text AS "overdueCount",
+           COALESCE(SUM(ss.outstanding_receivable_amount) FILTER (WHERE ss.normalized_status IN ('remitted', 'complete', 'completed')), 0)::text AS "chequeAmount",
+           COALESCE(SUM(ss.outstanding_receivable_count) FILTER (WHERE ss.normalized_status IN ('remitted', 'complete', 'completed')), 0)::text AS "chequeCount"
          FROM sales_scope ss
          WHERE ($1::text IS NULL OR ss.branch_id = $1::text)`,
         [branchParam],
@@ -293,7 +638,8 @@ export class DashboardService {
              COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
              SUM(
                CASE
-                 WHEN COALESCE(to_jsonb(sp)->>'amount', '0') ~ '^-?\\d+(\\.\\d+)?$'
+                WHEN COALESCE(to_jsonb(sp)->>'amount', '0') ~ '^-?\d+(\.\d+)?$'
+                 AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'status', ''))), '_', '-'), ' ', '-') IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
                    THEN COALESCE(to_jsonb(sp)->>'amount', '0')::numeric
                  ELSE 0
                END
@@ -561,10 +907,14 @@ export class DashboardService {
       const poTodayCount = this.toNumber(receivingTodayResult.rows[0]?.count);
       const scannedTodayCount = this.toNumber(scannedTodayResult.rows[0]?.count);
 
-      const todaySales = this.toNumber(salesSummaryResult.rows[0]?.todaySales);
-      const yesterdaySales = this.toNumber(salesSummaryResult.rows[0]?.yesterdaySales);
-      const mtdSales = this.toNumber(salesSummaryResult.rows[0]?.mtdSales);
-      const prevMtdSales = this.toNumber(salesSummaryResult.rows[0]?.prevMtdSales);
+      const settledSalesAmount = this.toNumber(salesSummaryResult.rows[0]?.settledAmount);
+      const settledSalesCount = this.toNumber(salesSummaryResult.rows[0]?.settledCount);
+      const unpaidSalesAmount = this.toNumber(salesSummaryResult.rows[0]?.unpaidAmount);
+      const unpaidSalesCount = this.toNumber(salesSummaryResult.rows[0]?.unpaidCount);
+      const overdueSalesAmount = this.toNumber(salesSummaryResult.rows[0]?.overdueAmount);
+      const overdueSalesCount = this.toNumber(salesSummaryResult.rows[0]?.overdueCount);
+      const chequeReceivableAmount = this.toNumber(salesSummaryResult.rows[0]?.chequeAmount);
+      const chequeReceivableCount = this.toNumber(salesSummaryResult.rows[0]?.chequeCount);
       const grossMarginPercent = this.toNumber(grossMarginResult.rows[0]?.marginPercent);
       const unpaidReceivable = this.toNumber(receivableResult.rows[0]?.amount);
 
@@ -572,9 +922,6 @@ export class DashboardService {
       const openPoDelta = this.buildDelta(openPoCount, openPoCount);
       const dispatchDelta = this.buildDelta(dispatchCount, dispatchCount);
       const installDelta = this.buildDelta(installQueueCount, installQueueCount);
-      const salesTodayDelta = this.buildDelta(todaySales, yesterdaySales);
-      const mtdDelta = this.buildDelta(mtdSales, prevMtdSales);
-
       const topKpis: KpiCard[] = [
         {
           label: 'In-Stock Units',
@@ -631,28 +978,28 @@ export class DashboardService {
 
       const salesSummary: KpiCard[] = [
         {
-          label: 'Sales Today',
-          value: this.formatCurrency(todaySales),
-          change: salesTodayDelta.change,
-          trend: salesTodayDelta.trend,
-        },
-        {
-          label: 'Month-to-Date Sales',
-          value: this.formatCurrency(mtdSales),
-          change: mtdDelta.change,
-          trend: mtdDelta.trend,
-        },
-        {
-          label: 'Gross Margin',
-          value: this.formatPercent(grossMarginPercent),
-          change: '+0.0%',
+          label: 'Collected Sales',
+          value: this.formatCurrency(settledSalesAmount),
+          change: `${this.formatInteger(settledSalesCount)} paid / remitted`,
           trend: 'up',
         },
         {
-          label: 'Unpaid Receivables',
-          value: this.formatCurrency(unpaidReceivable),
-          change: '+0.0%',
-          trend: unpaidReceivable > 0 ? 'down' : 'up',
+          label: 'Unpaid S.O.',
+          value: this.formatCurrency(unpaidSalesAmount),
+          change: `${this.formatInteger(unpaidSalesCount)} open balances`,
+          trend: unpaidSalesAmount > 0 ? 'down' : 'up',
+        },
+        {
+          label: 'Overdues',
+          value: this.formatCurrency(overdueSalesAmount),
+          change: `${this.formatInteger(overdueSalesCount)} overdue accounts`,
+          trend: overdueSalesAmount > 0 ? 'down' : 'up',
+        },
+        {
+          label: 'Cheque & Card Receivables',
+          value: this.formatCurrency(chequeReceivableAmount),
+          change: `${this.formatInteger(chequeReceivableCount)} outstanding cheques`,
+          trend: chequeReceivableAmount > 0 ? 'down' : 'up',
         },
       ];
 
@@ -699,6 +1046,9 @@ export class DashboardService {
       if (installQueueCount > 0) {
         focusSegments.push(`${this.formatInteger(installQueueCount)} installs in queue`);
       }
+      if (unpaidReceivable > 0) {
+        focusSegments.push(`${this.formatCurrency(unpaidReceivable)} still collectible`);
+      }
 
       return {
         success: true,
@@ -720,6 +1070,523 @@ export class DashboardService {
         success: false,
         message: error instanceof Error ? error.message : 'Unable to load dashboard overview',
       };
+    }
+  }
+
+  async getSalesDetail(mode: DashboardSalesDetailMode, branchId?: number): Promise<{ success: boolean; items: unknown[] }> {
+    try {
+      const branchParam = branchId ? String(branchId) : null;
+      const recordedSalesPredicate = this.getRecordedSalesPredicate('ss');
+      const recordedSalesAmountExpression = this.getRecordedSalesAmountExpression('ss');
+      const openBalancePredicate = this.getOpenBalancePredicate('ss');
+      const overdueBalancePredicate = `${openBalancePredicate} AND ss.due_date IS NOT NULL AND (ss.due_date AT TIME ZONE 'UTC')::date < CURRENT_DATE`;
+
+      if (mode === 'sales') {
+        const result = await this.databaseService.query<{
+          soNumber: string;
+          customer: string;
+          amount: string;
+          status: string;
+          date: string;
+          method: string;
+        }>(
+          `${this.getSalesDashboardBaseCte()}
+           SELECT
+             ss.so_id::text AS id,
+             ss.so_number::text AS "soNumber",
+             ss.customer::text AS customer,
+             ${recordedSalesAmountExpression}::text AS amount,
+             CASE
+               WHEN ss.normalized_status IN ('complete', 'completed') THEN ss.normalized_status
+               WHEN ss.normalized_status = 'remitted' THEN 'remitted'
+               WHEN ss.normalized_status = 'partial' THEN 'partial'
+               ELSE 'paid'
+             END::text AS status,
+             ss.created_at::text AS date,
+             ss.payment_methods::text AS method
+           FROM sales_scope ss
+           WHERE ${recordedSalesPredicate}
+             AND ($1::text IS NULL OR ss.branch_id = $1::text)
+           ORDER BY ss.created_at DESC
+           LIMIT 100`,
+          [branchParam],
+        );
+
+        return {
+          success: true,
+          items: result.rows.map((row) => ({
+            id: row.id,
+            soNumber: row.soNumber,
+            customer: row.customer,
+            amount: this.toNumber(row.amount),
+            status: row.status,
+            date: new Date(row.date),
+            method: row.method,
+          })),
+        };
+      }
+
+      if (mode === 'unpaid' || mode === 'overdues') {
+        const result = await this.databaseService.query<{
+          soId: string;
+          soNumber: string;
+          customer: string;
+          totalAmount: string;
+          paidAmount: string;
+          method: string;
+          dueDate: string;
+        }>(
+          `${this.getSalesDashboardBaseCte()}
+           SELECT
+             ss.so_id::text AS "soId",
+             ss.so_number::text AS "soNumber",
+             ss.customer::text AS customer,
+             ss.total_amount::text AS "totalAmount",
+             ss.paid_amount::text AS "paidAmount",
+             ss.credit_terms_methods::text AS method,
+             ss.due_date::text AS "dueDate"
+           FROM sales_scope ss
+           WHERE ${mode === 'overdues' ? overdueBalancePredicate : openBalancePredicate}
+             AND ($1::text IS NULL OR ss.branch_id = $1::text)
+           ORDER BY ss.due_date ASC NULLS LAST, ss.created_at DESC
+           LIMIT 100`,
+          [branchParam],
+        );
+
+        return {
+          success: true,
+          items: result.rows.map((row) => ({
+            id: row.soId,
+            soId: Number(row.soId),
+            soNumber: row.soNumber,
+            customer: row.customer,
+            totalAmount: this.toNumber(row.totalAmount),
+            paidAmount: this.toNumber(row.paidAmount),
+            method: row.method,
+            balance: Math.max(this.toNumber(row.totalAmount) - this.toNumber(row.paidAmount), 0),
+            dueDate: row.dueDate ? new Date(row.dueDate) : null,
+          })),
+        };
+      }
+
+      if (mode === 'cheques') {
+        const result = await this.databaseService.query<{
+          paymentId: string;
+          soNumber: string;
+          customer: string;
+          method: string;
+          referenceNo: string;
+          chequeNo: string;
+          amount: string;
+          bank: string;
+          postDated: string;
+          status: string;
+        }>(
+          `WITH payment_scope AS (
+             SELECT
+               sp.id::text AS payment_id,
+               COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
+               CASE
+                 WHEN COALESCE(to_jsonb(sp)->>'amount', '0') ~ '^-?\\d+(\\.\\d+)?$'
+                   THEN COALESCE(to_jsonb(sp)->>'amount', '0')::numeric
+                 ELSE 0
+               END AS amount,
+               REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'method', ''))), '_', '-'), ' ', '-') AS normalized_method,
+               REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'status', ''))), '_', '-'), ' ', '-') AS normalized_status,
+               COALESCE(to_jsonb(sp)->>'reference_no', to_jsonb(sp)->>'referenceNo', '-') AS reference_no,
+               COALESCE(to_jsonb(sp)->>'check_no', to_jsonb(sp)->>'checkNo', '-') AS check_no,
+               COALESCE(to_jsonb(sp)->>'bank_name', to_jsonb(sp)->>'bankName', '-') AS bank_name,
+               COALESCE(to_jsonb(sp)->>'post_dated', to_jsonb(sp)->>'postDated', null) AS post_dated
+             FROM tblso_payments sp
+           )
+           SELECT
+             ps.payment_id::text AS "paymentId",
+             COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS "soNumber",
+             COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS customer,
+             ps.normalized_method::text AS method,
+             ps.reference_no::text AS "referenceNo",
+             ps.check_no::text AS "chequeNo",
+             ps.amount::text AS amount,
+             ps.bank_name::text AS bank,
+             COALESCE(ps.post_dated::text, '') AS "postDated",
+             COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid')::text AS status
+           FROM payment_scope ps
+           LEFT JOIN tblsales_order so ON so.id::text = ps.so_id
+           LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
+           WHERE ps.normalized_method IN ('cheque', 'credit-card')
+             AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
+             AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', 'pending'))), '_', '-'), ' ', '-') IN ('remitted', 'complete', 'completed')
+             AND ($1::text IS NULL OR COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') = $1::text)
+           ORDER BY so.id DESC
+           LIMIT 100`,
+          [branchParam],
+        );
+
+        return {
+          success: true,
+          items: result.rows.map((row) => ({
+            id: row.paymentId,
+            paymentId: Number(row.paymentId),
+            soNumber: row.soNumber,
+            customer: row.customer,
+            method: row.method === 'credit-card' ? 'Credit Card' : 'Cheque',
+            referenceNo: row.method === 'credit-card' ? row.referenceNo : row.chequeNo,
+            chequeNo: row.chequeNo,
+            amount: this.toNumber(row.amount),
+            bank: row.bank,
+            postDated: row.postDated ? new Date(row.postDated) : null,
+            status: row.status,
+          })),
+        };
+      }
+
+      return { success: false, items: [] };
+    } catch (error) {
+      return { success: false, items: [] };
+    }
+  }
+
+  async settleSalesOrder(
+    payload: {
+      salesOrderId?: number;
+      mode?: DashboardSettlementMode;
+      amount?: number;
+      bankAmount?: number;
+      chequeAmount?: number;
+      bankName?: string | null;
+      checkNo?: string | null;
+      postDated?: string | null;
+    },
+    branchId?: number,
+  ): Promise<{ success: boolean; message: string }> {
+    const salesOrderId = Number(payload.salesOrderId);
+    if (!Number.isFinite(salesOrderId) || salesOrderId <= 0) {
+      throw new BadRequestException('A valid salesOrderId is required');
+    }
+
+    const mode = payload.mode;
+    if (!mode || !['partial', 'full', 'cheque', 'split'].includes(mode)) {
+      throw new BadRequestException('A valid settlement mode is required');
+    }
+
+    await this.databaseService.withTransaction(async (client) => {
+      const state = await this.loadSalesSettlementState(client, salesOrderId, branchId);
+      const remainingAmount = this.toNumber(state.remainingAmount);
+      if (remainingAmount <= 0) {
+        throw new BadRequestException('This sales order no longer has an open balance');
+      }
+
+      if (mode === 'partial' || mode === 'full') {
+        const amount = mode === 'full'
+          ? remainingAmount
+          : Math.min(Math.max(this.toNumber(payload.amount), 0), remainingAmount);
+
+        if (amount <= 0) {
+          throw new BadRequestException('Partial settlement amount must be greater than zero');
+        }
+
+        await this.insertSalesPaymentRecord(client, salesOrderId, {
+          method: 'Bank Transfer',
+          amount,
+          status: 'paid',
+          paymentDate: new Date().toISOString(),
+        });
+      }
+
+      if (mode === 'cheque') {
+        await this.insertSalesPaymentRecord(client, salesOrderId, {
+          method: 'Cheque',
+          amount: remainingAmount,
+          status: 'unpaid',
+          checkNo: String(payload.checkNo ?? '').trim() || null,
+          bankName: String(payload.bankName ?? '').trim() || null,
+          postDated: this.toIsoDateOrNull(payload.postDated),
+        });
+      }
+
+      if (mode === 'split') {
+        const bankAmount = Math.max(this.toNumber(payload.bankAmount), 0);
+        const chequeAmount = Math.max(this.toNumber(payload.chequeAmount), 0);
+
+        if (bankAmount <= 0 || chequeAmount <= 0) {
+          throw new BadRequestException('Split settlement requires both bank and cheque amounts.');
+        }
+
+        if (Math.abs(bankAmount + chequeAmount - remainingAmount) > 0.01) {
+          throw new BadRequestException('Split settlement must match the full remaining balance.');
+        }
+
+        await this.insertSalesPaymentRecord(client, salesOrderId, {
+          method: 'Bank Transfer',
+          amount: bankAmount,
+          status: 'paid',
+          paymentDate: new Date().toISOString(),
+        });
+
+        await this.insertSalesPaymentRecord(client, salesOrderId, {
+          method: 'Cheque',
+          amount: chequeAmount,
+          status: 'unpaid',
+          checkNo: String(payload.checkNo ?? '').trim() || null,
+          bankName: String(payload.bankName ?? '').trim() || null,
+          postDated: this.toIsoDateOrNull(payload.postDated),
+        });
+      }
+
+      await this.updateSalesOrderStatusForSettlement(client, salesOrderId, branchId);
+    });
+
+    return {
+      success: true,
+      message:
+        mode === 'cheque'
+          ? 'Balance transferred to cheque receivables'
+          : mode === 'split'
+            ? 'Split settlement recorded successfully'
+            : 'Settlement recorded successfully',
+    };
+  }
+
+  async verifySalesReceivable(
+    payload: { paymentId?: number; method?: DashboardReceivableVerificationMode },
+    branchId?: number,
+  ): Promise<{ success: boolean; message: string }> {
+    const paymentId = Number(payload.paymentId);
+    if (!Number.isFinite(paymentId) || paymentId <= 0) {
+      throw new BadRequestException('A valid paymentId is required');
+    }
+
+    await this.databaseService.withTransaction(async (client) => {
+      const result = await client.query<{
+        paymentId: string;
+        salesOrderId: string;
+        method: string;
+        branchId: string | null;
+      }>(
+        `SELECT
+           sp.id::text AS "paymentId",
+           COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS "salesOrderId",
+           REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'method', ''))), '_', '-'), ' ', '-') AS method,
+           NULLIF(COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', ''), '') AS "branchId"
+         FROM tblso_payments sp
+         LEFT JOIN tblsales_order so
+           ON so.id::text = COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId')
+         WHERE sp.id = $1
+         LIMIT 1`,
+        [paymentId],
+      );
+
+      if (result.rowCount === 0) {
+        throw new NotFoundException('Receivable payment not found');
+      }
+
+      const payment = result.rows[0];
+      if (!['cheque', 'credit-card'].includes(payment.method)) {
+        throw new BadRequestException('Only cheque or credit card receivables can be verified here');
+      }
+      if (branchId && payment.branchId && payment.branchId !== String(branchId)) {
+        throw new NotFoundException('Receivable payment not found in the current branch');
+      }
+
+      const paymentColumns = await this.getTableColumns(client, 'tblso_payments');
+      const statusColumn = this.pickColumn(paymentColumns, ['status']);
+      const paymentDateColumn = this.pickColumn(paymentColumns, ['payment_date', 'paymentDate']);
+      if (!statusColumn) {
+        throw new BadRequestException('Sales payment status column is not configured as expected');
+      }
+
+      const updateParams: unknown[] = ['paid'];
+      const updates = [`"${statusColumn}" = $1`];
+      if (paymentDateColumn) {
+        updateParams.push(new Date().toISOString());
+        updates.push(`"${paymentDateColumn}" = $${updateParams.length}`);
+      }
+      updateParams.push(paymentId);
+
+      await client.query(
+        `UPDATE tblso_payments
+         SET ${updates.join(', ')}
+         WHERE id = $${updateParams.length}`,
+        updateParams,
+      );
+
+      await this.updateSalesOrderStatusForSettlement(client, Number(payment.salesOrderId), branchId);
+    });
+
+    return {
+      success: true,
+      message: 'Receivable payment verified successfully',
+    };
+  }
+
+  async getOperationsDetail(mode: DashboardOperationDetailMode, branchId?: number): Promise<{ success: boolean; items: unknown[] }> {
+    try {
+      const branchParam = branchId ? String(branchId) : null;
+
+      if (mode === 'receiving') {
+        const result = await this.databaseService.query<{
+          id: string;
+          poNumber: string;
+          vendor: string;
+          amount: string;
+          status: string;
+          createdAt: string;
+        }>(
+          `SELECT
+             po.id::text AS id,
+             COALESCE(po.po_number::text, CONCAT('#', po.id::text)) AS "poNumber",
+             COALESCE(to_jsonb(v)->>'name', 'Unknown Vendor') AS vendor,
+             COALESCE(po.total_amount, 0)::text AS amount,
+             COALESCE(po.status, 'pending') AS status,
+             po.created_at::text AS "createdAt"
+           FROM tblpurchase_orders po
+           LEFT JOIN tblvendors v
+             ON v.id::text = po.vendor_id::text
+           WHERE (po.created_at AT TIME ZONE 'UTC')::date = CURRENT_DATE
+           ORDER BY po.created_at DESC
+           LIMIT 100`,
+        );
+
+        return { success: true, items: result.rows };
+      }
+
+      if (mode === 'dispatch') {
+        const result = await this.databaseService.query<{
+          id: string;
+          soNumber: string;
+          customer: string;
+          amount: string;
+          status: string;
+          scheduleDate: string;
+        }>(
+          `WITH sales_scope AS (
+             SELECT
+               so.id::text AS id,
+               COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS so_number,
+               COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS customer,
+               CASE
+                 WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
+                   THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
+                 ELSE 0
+               END AS total_amount,
+               REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', COALESCE(so.status, 'pending')))), '_', '-'), ' ', '-') AS normalized_status,
+               COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', '') AS schedule_date,
+               COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
+             FROM tblsales_order so
+             LEFT JOIN tblcustomer c
+               ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
+           )
+           SELECT
+             ss.id,
+             ss.so_number::text AS "soNumber",
+             ss.customer::text AS customer,
+             ss.total_amount::text AS amount,
+             ss.normalized_status::text AS status,
+             ss.schedule_date::text AS "scheduleDate"
+           FROM sales_scope ss
+           WHERE ss.normalized_status IN ('pending', 'for-delivery', 'to-remit', 'released', 'in-progress')
+             AND ($1::text IS NULL OR ss.branch_id = $1::text)
+           ORDER BY NULLIF(ss.schedule_date, '') ASC NULLS LAST, ss.id DESC
+           LIMIT 100`,
+          [branchParam],
+        );
+
+        return { success: true, items: result.rows };
+      }
+
+      if (mode === 'installation') {
+        const result = await this.databaseService.query<{
+          id: string;
+          soNumber: string;
+          customer: string;
+          scheduleDate: string;
+          installer: string;
+          status: string;
+        }>(
+          `WITH sales_scope AS (
+             SELECT
+               so.id::text AS id,
+               COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS so_number,
+               COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS customer,
+               COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', '') AS schedule_date,
+               COALESCE(to_jsonb(so)->>'installer', '') AS installer,
+               REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', COALESCE(so.status, 'pending')))), '_', '-'), ' ', '-') AS normalized_status,
+               COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
+             FROM tblsales_order so
+             LEFT JOIN tblcustomer c
+               ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
+           )
+           SELECT
+             ss.id,
+             ss.so_number::text AS "soNumber",
+             ss.customer::text AS customer,
+             ss.schedule_date::text AS "scheduleDate",
+             ss.installer::text AS installer,
+             ss.normalized_status::text AS status
+           FROM sales_scope ss
+           WHERE ss.normalized_status LIKE '%install%'
+             AND ss.normalized_status NOT IN ('installed', 'completed', 'cancelled')
+             AND ($1::text IS NULL OR ss.branch_id = $1::text)
+           ORDER BY NULLIF(ss.schedule_date, '') ASC NULLS LAST, ss.id DESC
+           LIMIT 100`,
+          [branchParam],
+        );
+
+        return { success: true, items: result.rows };
+      }
+
+      if (mode === 'stock-alerts') {
+        const result = await this.databaseService.query<{
+          id: string;
+          product: string;
+          capacity: string;
+          inStock: string;
+        }>(
+          `WITH serial_scope AS (
+             SELECT
+               COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', '') AS product_id,
+               COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', '') AS capacity_id,
+               REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sn)->>'status', ''))), '_', '-'), ' ', '-') AS normalized_status,
+               COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', '') AS branch_id
+             FROM tblserial_numbers sn
+           ),
+           grouped AS (
+             SELECT
+               ss.product_id,
+               ss.capacity_id,
+               COUNT(*) FILTER (
+                 WHERE ss.normalized_status NOT IN (
+                   'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound'
+                 )
+               )::int AS in_stock
+             FROM serial_scope ss
+             WHERE ss.product_id <> ''
+               AND ss.capacity_id <> ''
+               AND ($1::text IS NULL OR ss.branch_id = $1::text)
+             GROUP BY ss.product_id, ss.capacity_id
+           )
+           SELECT
+             CONCAT(g.product_id, '-', g.capacity_id) AS id,
+             COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', to_jsonb(p)->>'productname', 'Unknown Product') AS product,
+             COALESCE(to_jsonb(c)->>'capacity', to_jsonb(c)->>'capacityValue', to_jsonb(c)->>'capacity_value', '-') AS capacity,
+             g.in_stock::text AS "inStock"
+           FROM grouped g
+           LEFT JOIN tblproducts p
+             ON p.id::text = g.product_id
+           LEFT JOIN tblcapacity c
+             ON c.id::text = g.capacity_id
+           WHERE g.in_stock <= 5
+           ORDER BY g.in_stock ASC, product ASC
+           LIMIT 100`,
+          [branchParam],
+        );
+
+        return { success: true, items: result.rows };
+      }
+
+      return { success: false, items: [] };
+    } catch (error) {
+      return { success: false, items: [] };
     }
   }
 }

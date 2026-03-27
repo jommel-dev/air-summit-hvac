@@ -1,4 +1,6 @@
 export class UpdateBusinessProfileDto {
+  websiteTabName?: string | null;
+  routingTabName?: string | null;
   businessName?: string | null;
   businessAddress?: string | null;
   businessContact?: string | null;
@@ -8,4 +10,32 @@ export class UpdateBusinessProfileDto {
   businessLogoLight?: string | null;
   businessLogoDark?: string | null;
   drTemplatePdf?: string | null;
+  printPaperSize?: string | null;
+  printShowLogo?: string | null;
+  printLogoVariant?: string | null;
+  printFooterText?: string | null;
+  printQuoteHeaderColor?: string | null;
+  printQuoteShowTerms?: string | null;
+  printQuoteShowMisc?: string | null;
+  printQuoteShowValidity?: string | null;
+  printSoShowDiscount?: string | null;
+  printSoShowPaymentTerms?: string | null;
+  printSoShowSerials?: string | null;
+  printDrShowSerials?: string | null;
+  printDrShowSignature?: string | null;
+  printReportShowHeader?: string | null;
+  printCvShowPreparedBy?: string | null;
+  printCvShowSignatureLine?: string | null;
+  printAddressDetails?: string | null;
+  printAddressShowSoInvoice?: string | null;
+  printAddressShowQuotation?: string | null;
+  printAddressShowDr?: string | null;
+  printAddressShowAccounting?: string | null;
+  printSignaturePreparedBy?: string | null;
+  printSignatureCheckedBy?: string | null;
+  printSignatureApprovedBy?: string | null;
+  cvNumberPrefix?: string | null;
+  cvNumberSuffix?: string | null;
+  gjNumberPrefix?: string | null;
+  gjNumberSuffix?: string | null;
 }

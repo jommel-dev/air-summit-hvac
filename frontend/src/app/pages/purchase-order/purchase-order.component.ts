@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import {
   CreatePurchaseRequestPayload,
+  DeletePurchaseAuthPayload,
   PurchaseOrderDetailItem,
   PurchaseOrderDetailProductItem,
   ProductCapacityOption,
@@ -22,6 +23,8 @@ type PurchaseOrderGuardDialogMode =
   | 'close-confirm'
   | 'refresh-confirm'
   | 'remove-serial-confirm';
+
+type PurchaseActionDialogMode = 'cancel-confirm' | 'delete-confirm';
 
 type PendingSerialRemoval = {
   productIndex: number;
@@ -108,6 +111,12 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   pendingSerialRemoval: PendingSerialRemoval | null = null;
   sendingForApprovalIds = new Set<number>();
   approvingPurchaseIds = new Set<number>();
+  cancellingPurchaseIds = new Set<number>();
+  deletingPurchaseIds = new Set<number>();
+  poActionDialogMode: PurchaseActionDialogMode | null = null;
+  poActionTargetItem: PurchaseOrderItem | null = null;
+  deleteAuthPassword = '';
+  deleteAuthUsername = '';
   catalogProducts: ProductOption[] = [];
   vendorOptions: VendorOption[] = [];
   vendorSearch = '';
@@ -933,6 +942,156 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       this.approvingPurchaseIds.delete(item.id);
     }
   }
+
+  // ── Cancel / Delete ────────────────────────────────────────────────
+
+  canCancelPurchase(status: string | null | undefined): boolean {
+    const normalized = String(status ?? '').trim().toLowerCase();
+    return !['approved', 'completed', 'cancelled', 'rejected'].includes(normalized);
+  }
+
+  canDeletePurchase(status: string | null | undefined): boolean {
+    const normalized = String(status ?? '').trim().toLowerCase();
+    return !['approved', 'completed'].includes(normalized);
+  }
+
+  requestCancelPurchase(item: PurchaseOrderItem): void {
+    if (!this.canCancelPurchase(item.status)) {
+      return;
+    }
+    this.poActionTargetItem = item;
+    this.poActionDialogMode = 'cancel-confirm';
+  }
+
+  requestDeletePurchase(item: PurchaseOrderItem): void {
+    if (!this.canDeletePurchase(item.status)) {
+      return;
+    }
+    this.deleteAuthPassword = '';
+    this.deleteAuthUsername = '';
+    this.poActionTargetItem = item;
+    this.poActionDialogMode = 'delete-confirm';
+  }
+
+  dismissPoActionDialog(): void {
+    this.poActionDialogMode = null;
+    this.poActionTargetItem = null;
+    this.deleteAuthPassword = '';
+    this.deleteAuthUsername = '';
+  }
+
+  get requiresAdminCredentialsForDelete(): boolean {
+    const roleName = String(this.rbacService.getPayload()?.roleName ?? '')
+      .trim()
+      .toLowerCase();
+    return (
+      !roleName.includes('admin') &&
+      !roleName.includes('super') &&
+      !roleName.includes('owner')
+    );
+  }
+
+  async confirmCancelPurchase(): Promise<void> {
+    const item = this.poActionTargetItem;
+    this.dismissPoActionDialog();
+
+    if (!item) {
+      return;
+    }
+
+    if (this.cancellingPurchaseIds.has(item.id)) {
+      return;
+    }
+
+    this.cancellingPurchaseIds.add(item.id);
+    this.createError = '';
+    this.createSuccess = '';
+
+    try {
+      const response = await this.purchaseOrderService.cancelPurchase(item.id);
+      if (!response.success) {
+        this.createError = response.message ?? 'Failed to cancel purchase order';
+        return;
+      }
+
+      this.createSuccess = response.message ?? 'Purchase order cancelled successfully';
+      await this.loadTabData(this.activeTab);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.createError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to cancel purchase order';
+      } else {
+        this.createError = 'Failed to cancel purchase order';
+      }
+    } finally {
+      this.cancellingPurchaseIds.delete(item.id);
+    }
+  }
+
+  async confirmDeletePurchase(): Promise<void> {
+    const item = this.poActionTargetItem;
+
+    if (!item) {
+      return;
+    }
+
+    const normalizedPassword = this.deleteAuthPassword.trim();
+    const normalizedAuthUsername = this.deleteAuthUsername.trim();
+
+    if (this.requiresAdminCredentialsForDelete) {
+      if (!normalizedAuthUsername || !normalizedPassword) {
+        this.createError = 'Admin username and password are required to authorize deletion.';
+        return;
+      }
+    } else if (!normalizedPassword) {
+      this.createError = 'Your password is required to delete this purchase order.';
+      return;
+    }
+
+    if (this.deletingPurchaseIds.has(item.id)) {
+      return;
+    }
+
+    this.deletingPurchaseIds.add(item.id);
+    this.createError = '';
+    this.createSuccess = '';
+
+    try {
+      const payload: DeletePurchaseAuthPayload = {
+        password: normalizedPassword,
+        ...(this.requiresAdminCredentialsForDelete
+          ? { authUsername: normalizedAuthUsername }
+          : {}),
+      };
+
+      const response = await this.purchaseOrderService.deletePurchase(item.id, payload);
+      if (!response.success) {
+        this.createError = response.message ?? 'Failed to delete purchase order';
+        return;
+      }
+
+      this.createSuccess = response.message ?? 'Purchase order deleted successfully';
+      this.dismissPoActionDialog();
+      // If we deleted the last item on this page, go back one page
+      if (this.purchaseOrders.length === 1 && this.page > 1) {
+        this.page -= 1;
+      }
+      await this.loadTabData(this.activeTab);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.createError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to delete purchase order';
+      } else {
+        this.createError = 'Failed to delete purchase order';
+      }
+    } finally {
+      this.deletingPurchaseIds.delete(item.id);
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────
 
   openCreateDrawer(): void {
     if (!this.canCreateOrUpdatePurchase()) {

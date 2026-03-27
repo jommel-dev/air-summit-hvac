@@ -54,4 +54,25 @@ export class SettingsController {
   uploadDrTemplate(@UploadedFile() file: any) {
     return this.settingsService.uploadBusinessAsset('drTemplatePdf', file);
   }
+
+  @Post('business-profile/signature/prepared-by')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('file'))
+  uploadPreparedBySignature(@UploadedFile() file: any) {
+    return this.settingsService.uploadBusinessAsset('printSignaturePreparedBy', file);
+  }
+
+  @Post('business-profile/signature/checked-by')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('file'))
+  uploadCheckedBySignature(@UploadedFile() file: any) {
+    return this.settingsService.uploadBusinessAsset('printSignatureCheckedBy', file);
+  }
+
+  @Post('business-profile/signature/approved-by')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('file'))
+  uploadApprovedBySignature(@UploadedFile() file: any) {
+    return this.settingsService.uploadBusinessAsset('printSignatureApprovedBy', file);
+  }
 }

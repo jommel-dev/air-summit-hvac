@@ -140,6 +140,19 @@
             >
               Print
             </button>
+            @if (report.key === 'cheque-voucher' || report.key === 'tax-2307-report' || report.key === 'general-journal-register' || report.key === 'disbursement-register') {
+              <button
+                type="button"
+                (click)="report.key === 'cheque-voucher' ? openChequeVoucherPrintSettingsDrawer() : report.key === 'tax-2307-report' ? openTax2307PrintSettingsDrawer() : report.key === 'disbursement-register' ? openDisbursementRegisterPrintSettingsDrawer() : openGeneralJournalPrintSettingsDrawer()"
+                title="Print Report Settings"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-300 text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+              >
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82L4.21 7.2a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h.01A1.65 1.65 0 0 0 10 3.25V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
+              </button>
+            }
           </div>
         </div>
 
@@ -516,7 +529,29 @@
                       <div class="space-y-3">
                         @for (accountTitle of editingVoucherForm.accountTitles; track $index) {
                           <div class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5 items-end">
-                            <input [(ngModel)]="accountTitle.accountNumber" placeholder="Account no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <div class="relative">
+                              <input
+                                [(ngModel)]="accountTitle.accountNumber"
+                                placeholder="Account no."
+                                (input)="onEditCvAccountInput($index, $any($event.target).value)"
+                                (blur)="closeEditCvAccountDropdown($index)"
+                                class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700"
+                              />
+                              @if (editCvAccountDropdownIndex === $index && editCvAccountSearchResults.length > 0) {
+                                <div class="absolute z-50 mt-1 w-full min-w-65 rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                                  @for (result of editCvAccountSearchResults; track result.accountNumber) {
+                                    <button
+                                      type="button"
+                                      (mousedown)="selectEditCvAccount($index, result)"
+                                      class="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+                                    >
+                                      <span class="font-medium text-gray-800 dark:text-white/90">{{ result.accountNumber }}</span>
+                                      <span class="ml-2 text-gray-500 dark:text-gray-400">— {{ result.description }}</span>
+                                    </button>
+                                  }
+                                </div>
+                              }
+                            </div>
                             <input [(ngModel)]="accountTitle.description" placeholder="Description" class="h-10 lg:col-span-1 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <input type="number" [(ngModel)]="accountTitle.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <input type="number" [(ngModel)]="accountTitle.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
@@ -530,12 +565,285 @@
               </aside>
             }
 
-            @if (isPrintPreviewOpen && viewingVoucher) {
-              <div class="fixed inset-0 z-100040 bg-gray-900/40" (click)="closePrintPreview()"></div>
-              <aside class="fixed right-0 top-0 z-100041 h-full w-full max-w-4xl border-l border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900 flex flex-col">
+            @if (isChequeVoucherPrintSettingsDrawerOpen) {
+              <div class="fixed inset-0 z-100032 bg-gray-900/40" (click)="closeChequeVoucherPrintSettingsDrawer()"></div>
+              <aside class="fixed right-0 top-0 z-100033 h-full w-full max-w-xl border-l border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900 flex flex-col">
                 <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800 shrink-0">
                   <div>
-                    <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">Print Preview - {{ viewingVoucher.cvNo }}</h5>
+                    <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">Cheque Voucher Print Settings</h5>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Customize this report locally and preview the layout before printing.</p>
+                  </div>
+                  <button type="button" (click)="closeChequeVoucherPrintSettingsDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+                </div>
+
+                <div class="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+                  <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+                    <p class="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Layout Controls</p>
+                    <div class="space-y-3">
+                      <label class="flex items-center justify-between gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <span>Show business header</span>
+                        <input type="checkbox" [(ngModel)]="chequeVoucherPrintSettings.showHeader" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-700" />
+                      </label>
+                      <label class="flex items-center justify-between gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <span>Show business logo</span>
+                        <input type="checkbox" [(ngModel)]="chequeVoucherPrintSettings.showLogo" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-700" />
+                      </label>
+                      <label class="flex items-center justify-between gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <span>Show address details</span>
+                        <input type="checkbox" [(ngModel)]="chequeVoucherPrintSettings.showAddress" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-700" />
+                      </label>
+                      <label class="flex items-center justify-between gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <span>Show prepared by footer line</span>
+                        <input type="checkbox" [(ngModel)]="chequeVoucherPrintSettings.showPreparedBy" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-700" />
+                      </label>
+                      <label class="flex items-center justify-between gap-3 text-sm text-gray-700 dark:text-gray-200">
+                        <span>Show signature section</span>
+                        <input type="checkbox" [(ngModel)]="chequeVoucherPrintSettings.showSignatureLine" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-700" />
+                      </label>
+                    </div>
+
+                    <div class="mt-4 grid grid-cols-2 gap-3">
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">Paper Size</span>
+                        <select [(ngModel)]="chequeVoucherPrintSettings.paperSize" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                          <option value="A4">A4</option>
+                          <option value="LETTER">Letter</option>
+                          <option value="LEGAL">Legal</option>
+                          <option value="CUSTOM">Custom</option>
+                        </select>
+                      </label>
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">Orientation</span>
+                        <select [(ngModel)]="chequeVoucherPrintSettings.orientation" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                          <option value="portrait">Portrait</option>
+                          <option value="landscape">Landscape</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    @if (chequeVoucherPrintSettings.paperSize === 'CUSTOM') {
+                      <div class="mt-3 grid grid-cols-2 gap-3">
+                        <label class="text-xs text-gray-500 dark:text-gray-400">
+                          <span class="mb-1 block">Width (mm)</span>
+                          <input type="number" min="10" max="1200" step="0.5" [(ngModel)]="chequeVoucherPrintSettings.customWidthMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                        </label>
+                        <label class="text-xs text-gray-500 dark:text-gray-400">
+                          <span class="mb-1 block">Height (mm)</span>
+                          <input type="number" min="10" max="1200" step="0.5" [(ngModel)]="chequeVoucherPrintSettings.customHeightMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                        </label>
+                      </div>
+                    }
+
+                    <p class="mt-4 mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Margins (mm)</p>
+                    <div class="grid grid-cols-2 gap-3">
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">Top</span>
+                        <input type="number" min="0" max="50" step="0.5" [(ngModel)]="chequeVoucherPrintSettings.marginTopMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                      </label>
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">Right</span>
+                        <input type="number" min="0" max="50" step="0.5" [(ngModel)]="chequeVoucherPrintSettings.marginRightMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                      </label>
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">Bottom</span>
+                        <input type="number" min="0" max="50" step="0.5" [(ngModel)]="chequeVoucherPrintSettings.marginBottomMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                      </label>
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">Left</span>
+                        <input type="number" min="0" max="50" step="0.5" [(ngModel)]="chequeVoucherPrintSettings.marginLeftMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                      </label>
+                    </div>
+
+                    <label class="mt-4 block text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Default Address Override</span>
+                      <textarea rows="2" [(ngModel)]="chequeVoucherPrintSettings.defaultAddress" class="w-full rounded-lg border border-gray-300 bg-transparent px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Leave blank to use shared business address"></textarea>
+                    </label>
+
+                    <p class="mt-4 mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Footer Notes</p>
+                    <div class="space-y-2">
+                      <input type="text" [(ngModel)]="chequeVoucherPrintSettings.footerLeft" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Left" />
+                      <input type="text" [(ngModel)]="chequeVoucherPrintSettings.footerCenter" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Center" />
+                      <input type="text" [(ngModel)]="chequeVoucherPrintSettings.footerRight" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Right" />
+                    </div>
+
+                    <div class="mt-4 border-t border-gray-200 pt-4 dark:border-gray-700">
+                      <div class="mb-2 flex items-center justify-between">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Signatories</p>
+                        <button type="button" (click)="addChequeVoucherSignatory()" class="rounded-md border border-brand-300 px-2.5 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">Add Signatory</button>
+                      </div>
+
+                      <div class="space-y-3">
+                        @for (signatory of chequeVoucherPrintSettings.signatories; track signatory.id; let i = $index) {
+                          <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                            <div class="mb-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                              <input type="text" [(ngModel)]="signatory.label" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Signatory Label (e.g., Prepared by)" />
+                              <select [(ngModel)]="signatory.valueSource" class="h-9 rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                                <option value="prepared_by">Use voucher prepared_by</option>
+                                <option value="custom">Use custom value</option>
+                              </select>
+                            </div>
+
+                            @if (signatory.valueSource === 'custom') {
+                              <input type="text" [(ngModel)]="signatory.customValue" class="mb-2 h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Custom signatory name" />
+                            }
+
+                            <div class="flex items-center justify-between gap-2">
+                              <select [(ngModel)]="signatory.signatureSource" class="h-9 flex-1 rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                                <option value="none">No signature image</option>
+                                <option value="preparedBy">Prepared By signature asset</option>
+                                <option value="checkedBy">Checked By signature asset</option>
+                                <option value="approvedBy">Approved By signature asset</option>
+                              </select>
+                              <button type="button" (click)="removeChequeVoucherSignatory(i)" [disabled]="chequeVoucherPrintSettings.signatories.length <= 1" class="rounded-md border border-error-300 px-2.5 py-1 text-xs font-medium text-error-600 hover:bg-error-50 disabled:opacity-60 dark:border-error-500/40 dark:text-error-400 dark:hover:bg-error-500/10">Remove</button>
+                            </div>
+                          </div>
+                        }
+                      </div>
+                    </div>
+
+                    <p class="mt-4 text-xs text-gray-500 dark:text-gray-400">Header assets still come from shared business settings, but report visibility, paper setup, margins, default address, and footer text are now per-report configurable.</p>
+                  </div>
+
+                  <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+                    <div class="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Live Preview</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">Quick visual check before opening the full print preview.</p>
+                      </div>
+                      <button type="button" (click)="printVoucher()" class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">Open Full Preview</button>
+                    </div>
+
+                    <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 text-xs dark:border-gray-700 dark:bg-gray-950/40">
+                      @if (chequeVoucherPrintSettings.showHeader) {
+                        <div class="mb-4 flex items-start justify-between gap-4 border-b border-gray-300 pb-3 dark:border-gray-700">
+                          <div>
+                            @if (getChequeVoucherPrintLogoSrc(); as logoSrc) {
+                              <img [src]="logoSrc" [alt]="getChequeVoucherBusinessName()" class="h-14 w-auto object-contain" />
+                            } @else {
+                              <div class="text-sm font-semibold text-gray-800 dark:text-white">{{ getChequeVoucherBusinessName() }}</div>
+                            }
+                          </div>
+                          <div class="max-w-64 text-right font-semibold leading-5 text-[#1f3f9a]">
+                            @for (line of getChequeVoucherHeaderLines(); track line) {
+                              <div>{{ line }}</div>
+                            }
+                          </div>
+                        </div>
+                      }
+
+                      @if (viewingVoucher) {
+                        <div class="mb-4 text-right">
+                          <h6 class="text-sm font-semibold text-gray-800 dark:text-white">Cheque Voucher <span class="text-error-600 dark:text-error-400">{{ viewingVoucher.cvNo }}</span></h6>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3 text-[11px]">
+                          <div>
+                            <p class="font-semibold text-gray-600 dark:text-gray-300">Payee</p>
+                            <p class="text-gray-800 dark:text-white">{{ viewingVoucher.payee || '-' }}</p>
+                          </div>
+                          <div>
+                            <p class="font-semibold text-gray-600 dark:text-gray-300">Date</p>
+                            <p class="text-gray-800 dark:text-white">{{ formatDateOnly(viewingVoucher.voucherDate) }}</p>
+                          </div>
+                          <div>
+                            <p class="font-semibold text-gray-600 dark:text-gray-300">Address</p>
+                            <p class="text-gray-800 dark:text-white">{{ (viewingVoucher.address || '-') + (viewingVoucher.zipCode ? ', ' + viewingVoucher.zipCode : '') }}</p>
+                          </div>
+                          <div>
+                            <p class="font-semibold text-gray-600 dark:text-gray-300">TIN</p>
+                            <p class="text-gray-800 dark:text-white">{{ viewingVoucher.tinNumber || '-' }}</p>
+                          </div>
+                        </div>
+
+                        <div class="mt-4 border-t border-gray-300 pt-3 text-[11px] text-gray-600 dark:border-gray-700 dark:text-gray-400">
+                          <p>Released on: {{ formatDateOnly(viewingVoucher.releasedAt) }}</p>
+                          @if (chequeVoucherPrintSettings.showPreparedBy) {
+                            <p>Prepared by: {{ viewingVoucher.preparedBy || '' }}</p>
+                          }
+                        </div>
+                      } @else {
+                        <div class="mb-4 text-right">
+                          <h6 class="text-sm font-semibold text-gray-800 dark:text-white">Cheque Voucher <span class="text-error-600 dark:text-error-400">CV-2026-0042</span></h6>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3 text-[11px]">
+                          <div>
+                            <p class="font-semibold text-gray-600 dark:text-gray-300">Payee</p>
+                            <p class="text-gray-800 dark:text-white">Juan Dela Cruz Trading</p>
+                          </div>
+                          <div>
+                            <p class="font-semibold text-gray-600 dark:text-gray-300">Date</p>
+                            <p class="text-gray-800 dark:text-white">2026-03-27</p>
+                          </div>
+                          <div>
+                            <p class="font-semibold text-gray-600 dark:text-gray-300">Address</p>
+                            <p class="text-gray-800 dark:text-white">#25 Mabini Street, Quezon City, 1100</p>
+                          </div>
+                          <div>
+                            <p class="font-semibold text-gray-600 dark:text-gray-300">TIN</p>
+                            <p class="text-gray-800 dark:text-white">123-456-789-000</p>
+                          </div>
+                        </div>
+
+                        <div class="mt-4 border-t border-gray-300 pt-3 text-[11px] text-gray-600 dark:border-gray-700 dark:text-gray-400">
+                          <p>Released on: 2026-03-27</p>
+                          @if (chequeVoucherPrintSettings.showPreparedBy) {
+                            <p>Prepared by: Accounting Staff</p>
+                          }
+                        </div>
+                      }
+
+                      @if (chequeVoucherPrintSettings.showSignatureLine && getActiveChequeVoucherSignatories().length > 0) {
+                        <div class="mt-4 grid gap-3 text-center text-[11px] text-gray-600 dark:text-gray-400" [style.grid-template-columns]="'repeat(' + (getActiveChequeVoucherSignatories().length >= 4 ? 4 : (getActiveChequeVoucherSignatories().length <= 1 ? 1 : getActiveChequeVoucherSignatories().length)) + ', minmax(0, 1fr))'">
+                          @for (signatory of getActiveChequeVoucherSignatories(); track signatory.id) {
+                            <div class="border-t border-gray-400 pt-2 dark:border-gray-600">
+                              @if (getSignatoryImageSrc(signatory); as signatureImage) {
+                                <img [src]="signatureImage" [alt]="signatory.label + ' signature'" class="mx-auto mb-1 max-h-8 w-auto object-contain" />
+                              }
+                              <div class="font-semibold text-gray-700 dark:text-gray-300">{{ getSignatoryPreviewName(signatory) }}</div>
+                              <div>{{ signatory.label }}</div>
+                            </div>
+                          }
+                        </div>
+                      }
+
+                      <div class="mt-4 border-t border-dashed border-gray-300 pt-3 text-[11px] text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                        <p>Paper: {{ chequeVoucherPrintSettings.paperSize === 'CUSTOM' ? (chequeVoucherPrintSettings.customWidthMm + '×' + chequeVoucherPrintSettings.customHeightMm + ' mm') : chequeVoucherPrintSettings.paperSize }} ({{ chequeVoucherPrintSettings.orientation }})</p>
+                        <p>
+                          Margins (mm):
+                          T {{ chequeVoucherPrintSettings.marginTopMm }},
+                          R {{ chequeVoucherPrintSettings.marginRightMm }},
+                          B {{ chequeVoucherPrintSettings.marginBottomMm }},
+                          L {{ chequeVoucherPrintSettings.marginLeftMm }}
+                        </p>
+                        @if (chequeVoucherPrintSettings.footerLeft || chequeVoucherPrintSettings.footerCenter || chequeVoucherPrintSettings.footerRight) {
+                          <p class="mt-1">Footer: {{ chequeVoucherPrintSettings.footerLeft || '-' }} | {{ chequeVoucherPrintSettings.footerCenter || '-' }} | {{ chequeVoucherPrintSettings.footerRight || '-' }}</p>
+                        }
+                      </div>
+                    </div>
+                  </div>
+
+                  @if (chequeVoucherPrintSettingsNotice) {
+                    <div class="rounded-lg border border-success-200 bg-success-50 px-4 py-3 text-sm text-success-700 dark:border-success-500/30 dark:bg-success-500/10 dark:text-success-300">
+                      {{ chequeVoucherPrintSettingsNotice }}
+                    </div>
+                  }
+                </div>
+
+                <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800 shrink-0">
+                  <button type="button" (click)="resetChequeVoucherPrintSettings()" [disabled]="isSavingChequeVoucherPrintSettings" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Reset</button>
+                  <button type="button" (click)="saveChequeVoucherPrintSettings()" [disabled]="isSavingChequeVoucherPrintSettings" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">{{ isSavingChequeVoucherPrintSettings ? 'Saving...' : 'Save' }}</button>
+                </div>
+              </aside>
+            }
+
+            @if (isPrintPreviewOpen) {
+              <div class="fixed inset-0 z-100040 bg-gray-900/40" (click)="closePrintPreview()"></div>
+              <aside class="fixed right-0 top-0 z-100041 h-full w-full max-w-4xl border-l border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900 flex flex-col">
+                @if (getChequeVoucherPreviewData(); as previewVoucher) {
+                <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800 shrink-0">
+                  <div>
+                    <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">Print Preview - {{ previewVoucher.cvNo }}</h5>
                     <p class="text-xs text-gray-500 dark:text-gray-400">Review before printing</p>
                   </div>
                   <div class="flex items-center gap-2">
@@ -547,48 +855,55 @@
                 <div class="flex-1 overflow-y-auto bg-gray-50 p-6 dark:bg-gray-800">
                   <div #printContent class="mx-auto max-w-204 bg-white p-8 shadow dark:bg-gray-900">
                     <!-- Print Header -->
-                    <div class="mb-4 flex items-start justify-between gap-4 border-b border-gray-300 pb-3">
-                      <img src="/images/air-summit-logo.png" alt="Air Summit" class="h-14 w-auto object-contain" />
-                      <div class="text-right text-[11px] font-semibold leading-5 text-[#1f3f9a]">
-                        <div>Contact Us: 0917-137-8744 / 0908-811-2850</div>
-                        <div>Email: airsummit2022@gmail.com</div>
-                        <div>Main Office: Lot 15, Blk 14, Bulaon Resettlement, City Of San Fernando Pampanga</div>
-                        <div>Warehouse: Tramo Mesulo, Arayat Pampanga</div>
+                    @if (chequeVoucherPrintSettings.showHeader) {
+                      <div class="mb-4 flex items-start justify-between gap-4 border-b border-gray-300 pb-3 dark:border-gray-700">
+                        <div>
+                          @if (getChequeVoucherPrintLogoSrc(); as logoSrc) {
+                            <img [src]="logoSrc" [alt]="getChequeVoucherBusinessName()" class="h-14 w-auto object-contain" />
+                          } @else {
+                            <div class="text-sm font-semibold text-gray-800 dark:text-white">{{ getChequeVoucherBusinessName() }}</div>
+                          }
+                        </div>
+                        <div class="max-w-72 text-right text-[11px] font-semibold leading-5 text-[#1f3f9a]">
+                          @for (line of getChequeVoucherHeaderLines(); track line) {
+                            <div>{{ line }}</div>
+                          }
+                        </div>
                       </div>
-                    </div>
+                    }
                     <div class="mb-6 text-right">
-                      <h1 class="text-base font-semibold text-gray-800 dark:text-white">Cheque Voucher <span class="text-error-600 dark:text-error-400">{{ viewingVoucher.cvNo }}</span></h1>
+                      <h1 class="text-base font-semibold text-gray-800 dark:text-white">Cheque Voucher <span class="text-error-600 dark:text-error-400">{{ previewVoucher.cvNo }}</span></h1>
                     </div>
 
                     <!-- Voucher Details -->
                     <div class="mb-6 grid grid-cols-2 gap-4 text-xs">
                       <div>
                         <p class="font-semibold text-gray-600 dark:text-gray-300">Payee:</p>
-                        <p class="text-gray-800 dark:text-white">{{ viewingVoucher.payee }}</p>
+                        <p class="text-gray-800 dark:text-white">{{ previewVoucher.payee }}</p>
                       </div>
                       <div>
                         <p class="font-semibold text-gray-600 dark:text-gray-300">Date:</p>
-                        <p class="text-gray-800 dark:text-white">{{ formatDateOnly(viewingVoucher.voucherDate) }}</p>
+                        <p class="text-gray-800 dark:text-white">{{ formatDateOnly(previewVoucher.voucherDate) }}</p>
                       </div>
                       <div>
                         <p class="font-semibold text-gray-600 dark:text-gray-300">Address:</p>
-                        <p class="text-gray-800 dark:text-white">{{ (viewingVoucher.address || '-') + (viewingVoucher.zipCode ? ', ' + viewingVoucher.zipCode : '') }}</p>
+                        <p class="text-gray-800 dark:text-white">{{ (previewVoucher.address || '-') + (previewVoucher.zipCode ? ', ' + previewVoucher.zipCode : '') }}</p>
                       </div>
                       <div>
                         <p class="font-semibold text-gray-600 dark:text-gray-300">TIN:</p>
-                        <p class="text-gray-800 dark:text-white">{{ viewingVoucher.tinNumber || '-' }}</p>
+                        <p class="text-gray-800 dark:text-white">{{ previewVoucher.tinNumber || '-' }}</p>
                       </div>
                     </div>
 
-                    @if (viewingVoucher.particulars) {
+                    @if (previewVoucher.particulars) {
                       <div class="mb-6 border-t border-gray-200 pt-4">
                         <p class="mb-2 font-semibold text-gray-600 dark:text-gray-300">Particulars:</p>
-                        <p class="whitespace-pre-wrap text-xs text-gray-800 dark:text-white">{{ viewingVoucher.particulars }}</p>
+                        <p class="whitespace-pre-wrap text-xs text-gray-800 dark:text-white">{{ previewVoucher.particulars }}</p>
                       </div>
                     }
 
                     <!-- Deposits Table -->
-                    @if (viewingVoucher.deposits.length > 0) {
+                    @if (previewVoucher.deposits.length > 0) {
                       <div class="mb-6">
                         <h3 class="mb-2 font-semibold text-gray-800 dark:text-white">Cheque Deposits</h3>
                         <table class="w-full text-xs">
@@ -601,7 +916,7 @@
                             </tr>
                           </thead>
                           <tbody class="border-b border-gray-200">
-                            @for (row of viewingVoucher.deposits; track $index) {
+                            @for (row of previewVoucher.deposits; track $index) {
                               <tr class="border-b border-gray-100">
                                 <td class="px-2 py-1">{{ row.bankName }}</td>
                                 <td class="px-2 py-1">{{ row.chequeNo }}</td>
@@ -615,7 +930,7 @@
                     }
 
                     <!-- Invoices Table -->
-                    @if (viewingVoucher.invoices.length > 0) {
+                    @if (previewVoucher.invoices.length > 0) {
                       <div class="mb-6">
                         <h3 class="mb-2 font-semibold text-gray-800 dark:text-white">Invoices</h3>
                         <table class="w-full text-xs">
@@ -628,7 +943,7 @@
                             </tr>
                           </thead>
                           <tbody class="border-b border-gray-200">
-                            @for (row of viewingVoucher.invoices; track $index) {
+                            @for (row of previewVoucher.invoices; track $index) {
                               <tr class="border-b border-gray-100">
                                 <td class="px-2 py-1">{{ row.invoiceNo }}</td>
                                 <td class="px-2 py-1">{{ formatDateOnly(row.invoiceDate) }}</td>
@@ -642,7 +957,7 @@
                     }
 
                     <!-- Account Titles Table -->
-                    @if (viewingVoucher.accountTitles.length > 0) {
+                    @if (previewVoucher.accountTitles.length > 0) {
                       <div class="mb-6">
                         <h3 class="mb-2 font-semibold text-gray-800 dark:text-white">Account Titles</h3>
                         <table class="w-full text-xs">
@@ -655,7 +970,7 @@
                             </tr>
                           </thead>
                           <tbody class="border-b border-gray-200">
-                            @for (row of viewingVoucher.accountTitles; track $index) {
+                            @for (row of previewVoucher.accountTitles; track $index) {
                               <tr class="border-b border-gray-100">
                                 <td class="px-2 py-1">{{ row.accountNumber }}</td>
                                 <td class="px-2 py-1">{{ row.description }}</td>
@@ -665,8 +980,8 @@
                             }
                             <tr class="border-t-2 border-gray-300 bg-gray-100 font-semibold">
                               <td colspan="2" class="px-2 py-1.5">Total</td>
-                              <td class="px-2 py-1.5 text-right">{{ getVoucherAccountTitleDebitTotal(viewingVoucher) | currency:'PHP':'symbol':'1.2-2' }}</td>
-                              <td class="px-2 py-1.5 text-right">{{ getVoucherAccountTitleCreditTotal(viewingVoucher) | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              <td class="px-2 py-1.5 text-right">{{ getVoucherAccountTitleDebitTotal(previewVoucher) | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              <td class="px-2 py-1.5 text-right">{{ getVoucherAccountTitleCreditTotal(previewVoucher) | currency:'PHP':'symbol':'1.2-2' }}</td>
                             </tr>
                           </tbody>
                         </table>
@@ -675,11 +990,36 @@
 
                     <!-- Footer -->
                     <div class="mt-8 border-t border-gray-300 pt-4 text-xs text-gray-600 dark:text-gray-400">
-                      <p>Released on: {{ formatDateOnly(viewingVoucher.releasedAt) }}</p>
-                      <p>Prepared by: {{ viewingVoucher.preparedBy || 'N/A' }}</p>
+                      <p>Released on: {{ formatDateOnly(previewVoucher.releasedAt) }}</p>
+                      @if (chequeVoucherPrintSettings.showPreparedBy) {
+                        <p>Prepared by: {{ previewVoucher.preparedBy || '' }}</p>
+                      }
                     </div>
+
+                    @if (chequeVoucherPrintSettings.footerLeft || chequeVoucherPrintSettings.footerCenter || chequeVoucherPrintSettings.footerRight) {
+                      <div class="mt-4 grid grid-cols-3 gap-3 border-t border-dashed border-gray-300 pt-3 text-[11px] text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                        <div>{{ chequeVoucherPrintSettings.footerLeft || '-' }}</div>
+                        <div class="text-center">{{ chequeVoucherPrintSettings.footerCenter || '-' }}</div>
+                        <div class="text-right">{{ chequeVoucherPrintSettings.footerRight || '-' }}</div>
+                      </div>
+                    }
+
+                    @if (chequeVoucherPrintSettings.showSignatureLine && getActiveChequeVoucherSignatories().length > 0) {
+                      <div class="mt-6 grid gap-6 text-center text-xs text-gray-600 dark:text-gray-400" [style.grid-template-columns]="'repeat(' + (getActiveChequeVoucherSignatories().length >= 4 ? 4 : (getActiveChequeVoucherSignatories().length <= 1 ? 1 : getActiveChequeVoucherSignatories().length)) + ', minmax(0, 1fr))'">
+                        @for (signatory of getActiveChequeVoucherSignatories(); track signatory.id) {
+                          <div class="border-t border-gray-300 pt-2 dark:border-gray-700">
+                            @if (getSignatoryImageSrc(signatory); as signatureImage) {
+                              <img [src]="signatureImage" [alt]="signatory.label + ' signature'" class="mx-auto mb-1 max-h-10 w-auto object-contain" />
+                            }
+                            <div class="font-semibold text-gray-700 dark:text-gray-300">{{ getSignatoryDisplayName(signatory, previewVoucher) }}</div>
+                            <div>{{ signatory.label }}</div>
+                          </div>
+                        }
+                      </div>
+                    }
                   </div>
                 </div>
+                }
               </aside>
             }
 
@@ -799,8 +1139,31 @@
                       <div class="space-y-3">
                         @for (accountTitle of chequeVoucherForm.accountTitles; track $index) {
                           <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.5fr_120px_120px_auto]">
-                            <input [(ngModel)]="accountTitle.accountNumber" (blur)="onAccountTitleBlur($index)" placeholder="Account no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                            <input [(ngModel)]="accountTitle.description" (blur)="onAccountTitleBlur($index)" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <div class="relative">
+                              <input
+                                [(ngModel)]="accountTitle.accountNumber"
+                                placeholder="Account no."
+                                [readonly]="accountTitle.locked"
+                                (input)="!accountTitle.locked && onCvAccountInput($index, $any($event.target).value)"
+                                (blur)="closeCvAccountDropdown($index); onAccountTitleBlur($index)"
+                                [class]="'h-10 w-full rounded-lg border border-gray-300 px-3 text-sm dark:border-gray-700 ' + (accountTitle.locked ? 'bg-gray-100 dark:bg-gray-800 cursor-default' : 'bg-transparent')"
+                              />
+                              @if (!accountTitle.locked && cvAccountDropdownIndex === $index && cvAccountSearchResults.length > 0) {
+                                <div class="absolute z-50 mt-1 w-full min-w-65 rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                                  @for (result of cvAccountSearchResults; track result.accountNumber) {
+                                    <button
+                                      type="button"
+                                      (mousedown)="selectCvAccount($index, result)"
+                                      class="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+                                    >
+                                      <span class="font-medium text-gray-800 dark:text-white/90">{{ result.accountNumber }}</span>
+                                      <span class="ml-2 text-gray-500 dark:text-gray-400">— {{ result.description }}</span>
+                                    </button>
+                                  }
+                                </div>
+                              }
+                            </div>
+                            <input [(ngModel)]="accountTitle.description" [readonly]="accountTitle.locked" (blur)="onAccountTitleBlur($index)" placeholder="Description" [class]="'h-10 rounded-lg border border-gray-300 px-3 text-sm dark:border-gray-700 ' + (accountTitle.locked ? 'bg-gray-100 dark:bg-gray-800 cursor-default' : 'bg-transparent')" />
                             <input type="number" [(ngModel)]="accountTitle.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <input type="number" [(ngModel)]="accountTitle.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
                             <button type="button" (click)="removeAccountTitle($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
@@ -822,95 +1185,1331 @@
 
         @if (report.key === 'general-journal-register') {
           <div class="mt-5 space-y-4">
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Journal No.</label>
-                <input [(ngModel)]="generalJournalForm.journalNo" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Journal Date</label>
-                <input type="date" [(ngModel)]="generalJournalForm.journalDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Description</label>
-                <input [(ngModel)]="generalJournalForm.description" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-              </div>
-            </div>
-
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Debits</p>
-                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ generalJournalDebitTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
-              </div>
-              <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Credits</p>
-                <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ generalJournalCreditTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
-              </div>
+            <div class="flex items-center justify-between rounded-lg border border-dashed border-gray-300 px-4 py-3 dark:border-gray-700">
+              <p class="text-sm text-gray-600 dark:text-gray-300">Create and post General Journal entries using the drawer workflow.</p>
+              <button
+                type="button"
+                (click)="openGeneralJournalDrawer()"
+                [disabled]="!canManageGeneralJournal()"
+                class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60"
+              >
+                New Journal Entry
+              </button>
             </div>
 
             <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
-              <div class="mb-3 flex items-center justify-between">
-                <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Sundries</h5>
-                <button type="button" (click)="addJournalSundry()" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Sundry</button>
+              <div class="mb-3 flex flex-wrap items-center gap-2">
+                <input type="date" [(ngModel)]="generalJournalListDateFrom" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                <input type="date" [(ngModel)]="generalJournalListDateTo" class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                <button
+                  type="button"
+                  (click)="applyGeneralJournalFilters()"
+                  class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                >
+                  Apply Date Filter
+                </button>
+                <button
+                  type="button"
+                  (click)="clearGeneralJournalFilters()"
+                  class="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  Clear Date Filter
+                </button>
               </div>
-              <div class="space-y-3">
-                @for (sundry of generalJournalForm.sundries; track $index) {
-                  <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.5fr_120px_120px_auto]">
-                    <input [(ngModel)]="sundry.accountNumber" placeholder="Account no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input [(ngModel)]="sundry.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input type="number" [(ngModel)]="sundry.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <input type="number" [(ngModel)]="sundry.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
-                    <button type="button" (click)="removeJournalSundry($index)" [disabled]="!canEditSelectedReportDraft()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
-                  </div>
-                }
+
+              <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                <div class="overflow-x-auto">
+                  <table class="min-w-full text-left text-sm">
+                    <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                      <tr>
+                        <th class="px-3 py-2">Journal No.</th>
+                        <th class="px-3 py-2">Date</th>
+                        <th class="px-3 py-2">Description</th>
+                        <th class="px-3 py-2 text-right">Total Debit</th>
+                        <th class="px-3 py-2 text-right">Total Credit</th>
+                        <th class="px-3 py-2 text-center">Status</th>
+                        <th class="px-3 py-2 text-center">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @if (isLoadingGeneralJournalData) {
+                        <tr>
+                          <td colspan="7" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">Loading general journal entries...</td>
+                        </tr>
+                      } @else {
+                        @for (entry of releasedGeneralJournals; track entry.journalNumber + '_' + $index) {
+                          <tr class="border-t border-gray-200 dark:border-gray-700">
+                            <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ entry.journalNumber || '-' }}</td>
+                            <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ formatDateOnly(entry.journalDate) }}</td>
+                            <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ entry.description || '-' }}</td>
+                            <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ entry.totalDebit | currency:'PHP':'symbol':'1.2-2' }}</td>
+                            <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ entry.totalCredit | currency:'PHP':'symbol':'1.2-2' }}</td>
+                            <td class="px-3 py-2 text-center text-xs uppercase text-gray-600 dark:text-gray-300">{{ entry.status }}</td>
+                            <td class="px-3 py-2 text-center">
+                              <div class="inline-flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  (click)="openGeneralJournalView(entry)"
+                                  class="rounded-md border border-brand-300 px-2.5 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                                >
+                                  View
+                                </button>
+                                <button
+                                  type="button"
+                                  (click)="openGeneralJournalEdit(entry)"
+                                  [disabled]="!canManageGeneralJournal()"
+                                  class="rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  (click)="printGeneralJournalEntry(entry)"
+                                  class="rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                                >
+                                  Print
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        } @empty {
+                          <tr>
+                            <td colspan="7" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+                              No posted journal entries yet.
+                            </td>
+                          </tr>
+                        }
+                      }
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
+
+            @if (isGeneralJournalDrawerOpen) {
+              <div class="fixed inset-0 z-100032 bg-gray-900/40" (click)="closeGeneralJournalDrawer()"></div>
+              <aside class="fixed right-0 top-0 z-100033 h-screen w-full max-w-4xl overflow-y-auto border-l border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+                <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white/95 px-6 py-4 backdrop-blur dark:border-gray-700 dark:bg-gray-900/95">
+                  <div>
+                    <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">General Journal Entry</h5>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Fill the journal details and post balanced entries.</p>
+                  </div>
+                  <button type="button" (click)="closeGeneralJournalDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+                </div>
+
+                <div class="space-y-4 px-6 py-5">
+                  <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Journal No.</label>
+                      <input
+                        [(ngModel)]="generalJournalForm.journalNo"
+                        [readonly]="true"
+                        [disabled]="isSavingGeneralJournal || isLoadingGeneralJournalNextNumber"
+                        class="h-10 w-full rounded-lg border border-gray-300 bg-gray-100 px-3 text-sm dark:border-gray-700 dark:bg-gray-800"
+                      />
+                    </div>
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Journal Date</label>
+                      <input type="date" [(ngModel)]="generalJournalForm.journalDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                    </div>
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Description</label>
+                    <textarea [(ngModel)]="generalJournalForm.description" rows="3" class="w-full rounded-lg border border-gray-300 bg-transparent px-3 py-2 text-sm dark:border-gray-700"></textarea>
+                  </div>
+
+                  <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Debits</p>
+                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ generalJournalDebitTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Credits</p>
+                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ generalJournalCreditTotal | currency:'PHP':'symbol':'1.2-2' }}</p>
+                    </div>
+                  </div>
+
+                  <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                    <div class="mb-3 flex items-center justify-between">
+                      <h5 class="text-sm font-semibold text-gray-800 dark:text-white/90">Sundries</h5>
+                      <button type="button" (click)="addJournalSundry()" [disabled]="!canManageGeneralJournal()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">Add Sundry</button>
+                    </div>
+                    <div class="space-y-3">
+                      @for (sundry of generalJournalForm.sundries; track $index) {
+                        <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.5fr_120px_120px_auto]">
+                          <div class="relative">
+                            <input
+                              [(ngModel)]="sundry.accountNumber"
+                              placeholder="Account no."
+                              (input)="onSundryAccountInput($index, $any($event.target).value)"
+                              (blur)="closeSundryAccountDropdown()"
+                              class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700"
+                            />
+                            @if (sundryAccountDropdownIndex === $index && sundryAccountSearchResults.length > 0) {
+                              <div class="absolute z-50 mt-1 w-full min-w-65 rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                                @for (result of sundryAccountSearchResults; track result.accountNumber) {
+                                  <button
+                                    type="button"
+                                    (mousedown)="selectSundryAccount($index, result)"
+                                    class="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+                                  >
+                                    <span class="font-medium text-gray-800 dark:text-white/90">{{ result.accountNumber }}</span>
+                                    <span class="ml-2 text-gray-500 dark:text-gray-400">— {{ result.description }}</span>
+                                  </button>
+                                }
+                              </div>
+                            }
+                          </div>
+                          <input [(ngModel)]="sundry.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                          <input type="number" [(ngModel)]="sundry.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                          <input type="number" [(ngModel)]="sundry.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                          <button type="button" (click)="removeJournalSundry($index)" [disabled]="!canManageGeneralJournal()" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600 disabled:opacity-50">Remove</button>
+                        </div>
+                      }
+                    </div>
+                  </div>
+
+                  <div class="flex items-center justify-end gap-2 border-t border-gray-200 pt-4 dark:border-gray-700">
+                    <button type="button" (click)="closeGeneralJournalDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
+                    <button
+                      type="button"
+                      (click)="postGeneralJournal()"
+                      [disabled]="!canManageGeneralJournal() || isSavingGeneralJournal"
+                      class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60"
+                    >
+                      {{ isSavingGeneralJournal ? 'Posting...' : 'Post Journal Entry' }}
+                    </button>
+                  </div>
+                </div>
+              </aside>
+            }
+
+            @if (viewingGeneralJournal) {
+              <div class="fixed inset-0 z-100034 bg-gray-900/40" (click)="closeGeneralJournalView()"></div>
+              <aside class="fixed right-0 top-0 z-100035 h-screen w-full max-w-4xl overflow-y-auto border-l border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+                <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white/95 px-6 py-4 backdrop-blur dark:border-gray-700 dark:bg-gray-900/95">
+                  <div>
+                    <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">General Journal <span class="text-brand-600 dark:text-brand-300">{{ viewingGeneralJournal.journalNumber }}</span></h5>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">
+                      @if (isEditingGeneralJournalView) { Editing mode } @else { Posted on {{ formatDateOnly(viewingGeneralJournal.postedAt) }} }
+                    </p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    @if (!isEditingGeneralJournalView) {
+                      <button type="button" (click)="startEditGeneralJournal()" [disabled]="!canManageGeneralJournal()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-sm text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">Edit</button>
+                      <button type="button" (click)="printGeneralJournalEntry()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Print</button>
+                    }
+                    @if (isEditingGeneralJournalView) {
+                      <button type="button" (click)="cancelEditGeneralJournal()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Cancel</button>
+                      <button type="button" (click)="saveGeneralJournalEdit()" [disabled]="isSavingGeneralJournalEdit" class="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60">{{ isSavingGeneralJournalEdit ? 'Saving...' : 'Save Changes' }}</button>
+                    }
+                    <button type="button" (click)="closeGeneralJournalView()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+                  </div>
+                </div>
+
+                <div class="space-y-4 px-6 py-5">
+                  @if (!isEditingGeneralJournalView) {
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div>
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Journal Date</p>
+                        <p class="mt-1 text-sm font-medium text-gray-800 dark:text-white/90">{{ formatDateOnly(viewingGeneralJournal.journalDate) }}</p>
+                      </div>
+                      <div>
+                        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Status</p>
+                        <p class="mt-1 text-sm font-medium uppercase text-gray-800 dark:text-white/90">{{ viewingGeneralJournal.status }}</p>
+                      </div>
+                    </div>
+                    <div>
+                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Description</p>
+                      <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">{{ viewingGeneralJournal.description || '-' }}</p>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                      <div class="mb-3 flex items-center justify-between">
+                        <h6 class="text-sm font-semibold text-gray-800 dark:text-white/90">Sundries</h6>
+                        <div class="text-xs text-gray-500 dark:text-gray-400">{{ viewingGeneralJournal.lines.length }} line(s)</div>
+                      </div>
+                      <div class="overflow-x-auto">
+                        <table class="min-w-full text-left text-sm">
+                          <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                            <tr>
+                              <th class="px-3 py-2">Account No.</th>
+                              <th class="px-3 py-2">Description</th>
+                              <th class="px-3 py-2 text-right">Debit</th>
+                              <th class="px-3 py-2 text-right">Credit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            @for (line of viewingGeneralJournal.lines; track line.accountNumber + '_' + $index) {
+                              <tr class="border-t border-gray-200 dark:border-gray-700">
+                                <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ line.accountNumber }}</td>
+                                <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ line.description }}</td>
+                                <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ line.debit | currency:'PHP':'symbol':'1.2-2' }}</td>
+                                <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ line.credit | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              </tr>
+                            } @empty {
+                              <tr>
+                                <td colspan="4" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">No journal lines found.</td>
+                              </tr>
+                            }
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  } @else {
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Journal No.</label>
+                        <input [(ngModel)]="editingGeneralJournalForm.journalNumber" readonly class="h-10 w-full rounded-lg border border-gray-300 bg-gray-100 px-3 text-sm dark:border-gray-700 dark:bg-gray-800" />
+                      </div>
+                      <div>
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Journal Date</label>
+                        <input type="date" [(ngModel)]="editingGeneralJournalForm.journalDate" class="h-10 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                      </div>
+                    </div>
+                    <div>
+                      <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Description</label>
+                      <textarea [(ngModel)]="editingGeneralJournalForm.description" rows="3" class="w-full rounded-lg border border-gray-300 bg-transparent px-3 py-2 text-sm dark:border-gray-700"></textarea>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                      <div class="mb-3 flex items-center justify-between">
+                        <h6 class="text-sm font-semibold text-gray-800 dark:text-white/90">Sundries</h6>
+                        <button type="button" (click)="addEditingGeneralJournalSundry()" class="rounded-md border border-gray-300 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Add Sundry</button>
+                      </div>
+                      <div class="space-y-3">
+                        @for (sundry of editingGeneralJournalForm.sundries; track $index) {
+                          <div class="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1.5fr_120px_120px_auto]">
+                            <input [(ngModel)]="sundry.accountNumber" placeholder="Account no." class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input [(ngModel)]="sundry.description" placeholder="Description" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="number" [(ngModel)]="sundry.debit" placeholder="Debit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <input type="number" [(ngModel)]="sundry.credit" placeholder="Credit" class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm dark:border-gray-700" />
+                            <button type="button" (click)="removeEditingGeneralJournalSundry($index)" class="rounded-md border border-error-300 px-3 py-1 text-xs font-medium text-error-600">Remove</button>
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  }
+
+                  <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Debits</p>
+                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ (isEditingGeneralJournalView ? editingGeneralJournalDebitTotal : viewingGeneralJournal.totalDebit) | currency:'PHP':'symbol':'1.2-2' }}</p>
+                    </div>
+                    <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                      <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Credits</p>
+                      <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">{{ (isEditingGeneralJournalView ? editingGeneralJournalCreditTotal : viewingGeneralJournal.totalCredit) | currency:'PHP':'symbol':'1.2-2' }}</p>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            }
+
+            @if (isGeneralJournalPrintSettingsDrawerOpen) {
+              <div class="fixed inset-0 z-100032 bg-gray-900/40" (click)="closeGeneralJournalPrintSettingsDrawer()"></div>
+              <aside class="fixed right-0 top-0 z-100033 h-screen w-full max-w-3xl overflow-y-auto border-l border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+                <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white/95 px-6 py-4 backdrop-blur dark:border-gray-700 dark:bg-gray-900/95">
+                  <div>
+                    <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">General Journal Print Settings</h5>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Customize this report layout before printing.</p>
+                  </div>
+                  <button type="button" (click)="closeGeneralJournalPrintSettingsDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+                </div>
+
+                <div class="space-y-4 px-6 py-5">
+                  <div class="grid grid-cols-2 gap-3">
+                    <label class="inline-flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                      <span>Show header block</span>
+                      <input type="checkbox" [(ngModel)]="generalJournalPrintSettings.showHeader" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-700" />
+                    </label>
+                    <label class="inline-flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                      <span>Show logo</span>
+                      <input type="checkbox" [(ngModel)]="generalJournalPrintSettings.showLogo" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-700" />
+                    </label>
+                    <label class="inline-flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300 col-span-2">
+                      <span>Show contact & address lines</span>
+                      <input type="checkbox" [(ngModel)]="generalJournalPrintSettings.showAddress" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-700" />
+                    </label>
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-3">
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Paper Size</span>
+                      <select [(ngModel)]="generalJournalPrintSettings.paperSize" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                        <option value="A4">A4</option>
+                        <option value="LETTER">Letter</option>
+                        <option value="LEGAL">Legal</option>
+                        <option value="CUSTOM">Custom</option>
+                      </select>
+                    </label>
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Orientation</span>
+                      <select [(ngModel)]="generalJournalPrintSettings.orientation" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                        <option value="portrait">Portrait</option>
+                        <option value="landscape">Landscape</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  @if (generalJournalPrintSettings.paperSize === 'CUSTOM') {
+                    <div class="grid grid-cols-2 gap-3">
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">Width (mm)</span>
+                        <input type="number" min="10" max="1200" step="0.5" [(ngModel)]="generalJournalPrintSettings.customWidthMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                      </label>
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">Height (mm)</span>
+                        <input type="number" min="10" max="1200" step="0.5" [(ngModel)]="generalJournalPrintSettings.customHeightMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                      </label>
+                    </div>
+                  }
+
+                  <p class="mt-1 mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Margins (mm)</p>
+                  <div class="grid grid-cols-2 gap-3">
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Top</span>
+                      <input type="number" min="0" max="50" step="0.5" [(ngModel)]="generalJournalPrintSettings.marginTopMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                    </label>
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Right</span>
+                      <input type="number" min="0" max="50" step="0.5" [(ngModel)]="generalJournalPrintSettings.marginRightMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                    </label>
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Bottom</span>
+                      <input type="number" min="0" max="50" step="0.5" [(ngModel)]="generalJournalPrintSettings.marginBottomMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                    </label>
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Left</span>
+                      <input type="number" min="0" max="50" step="0.5" [(ngModel)]="generalJournalPrintSettings.marginLeftMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                    </label>
+                  </div>
+
+                  <p class="mt-1 mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Footer Notes</p>
+                  <div class="space-y-2">
+                    <input type="text" [(ngModel)]="generalJournalPrintSettings.footerLeft" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Left" />
+                    <input type="text" [(ngModel)]="generalJournalPrintSettings.footerCenter" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Center" />
+                    <input type="text" [(ngModel)]="generalJournalPrintSettings.footerRight" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Right" />
+                  </div>
+
+                  <div class="mt-4 border-t border-gray-200 pt-4 dark:border-gray-700">
+                    <div class="mb-2 flex items-center justify-between">
+                      <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Signatories</p>
+                      <button type="button" (click)="addGeneralJournalSignatory()"
+                        class="rounded-md border border-brand-300 px-2.5 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">
+                        Add Signatory
+                      </button>
+                    </div>
+
+                    <div class="space-y-3">
+                      @for (signatory of generalJournalPrintSettings.signatories; track signatory.id; let i = $index) {
+                        <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                          <div class="mb-2 grid grid-cols-1 gap-2 md:grid-cols-2">
+                            <input type="text" [(ngModel)]="signatory.label"
+                              class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200"
+                              placeholder="Signatory Label (e.g., Prepared by)" />
+                            <input type="text" [(ngModel)]="signatory.customValue"
+                              class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200"
+                              placeholder="Signatory name" />
+                          </div>
+                          <div class="flex items-center justify-between gap-2">
+                            <select [(ngModel)]="signatory.signatureSource"
+                              class="h-9 flex-1 rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                              <option value="none">No signature image</option>
+                              <option value="preparedBy">Prepared By signature asset</option>
+                              <option value="checkedBy">Checked By signature asset</option>
+                              <option value="approvedBy">Approved By signature asset</option>
+                            </select>
+                            <button type="button" (click)="removeGeneralJournalSignatory(i)"
+                              [disabled]="generalJournalPrintSettings.signatories.length <= 1"
+                              class="rounded-md border border-error-300 px-2.5 py-1 text-xs font-medium text-error-600 hover:bg-error-50 disabled:opacity-60 dark:border-error-500/40 dark:text-error-400 dark:hover:bg-error-500/10">
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      }
+                    </div>
+                  </div>
+
+                  <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
+                    <div class="mb-2 flex items-center justify-between gap-2">
+                      <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Live Preview</p>
+                      <button type="button" (click)="openGeneralJournalPrintPreview()" class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">Open Full Preview</button>
+                    </div>
+
+                    <div class="rounded-lg border border-dashed border-gray-300 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+                      @if (generalJournalPrintSettings.showHeader) {
+                        <div class="mb-2 flex items-start justify-between gap-3 border-b border-gray-200 pb-2 dark:border-gray-700">
+                          <div class="min-w-0">
+                            @if (generalJournalPrintSettings.showLogo && getGeneralJournalPrintLogoSrc()) {
+                              <img [src]="getGeneralJournalPrintLogoSrc()" alt="Business Logo" class="h-8 object-contain" />
+                            }
+                          </div>
+                          <div class="text-right text-[10px] leading-4 text-gray-500 dark:text-gray-400">
+                            @if (generalJournalPrintSettings.showAddress) {
+                              @for (line of getGeneralJournalHeaderLines(); track line + '_' + $index) {
+                                <p>{{ line }}</p>
+                              }
+                            }
+                          </div>
+                        </div>
+                      }
+
+                      <div class="mb-2 text-right">
+                        <p class="text-sm font-semibold text-gray-800 dark:text-white/90">GENERAL JOURNAL REGISTER</p>
+                        <p class="text-[10px] text-gray-500 dark:text-gray-400">{{ generalJournalForm.journalNo || 'Draft' }}</p>
+                      </div>
+
+                      <div class="overflow-hidden rounded border border-gray-200 dark:border-gray-700">
+                        <table class="min-w-full text-[10px]">
+                          <thead class="bg-gray-100 dark:bg-gray-800/70">
+                            <tr>
+                              <th class="px-2 py-1 text-left font-semibold text-gray-600 dark:text-gray-300">Acct No.</th>
+                              <th class="px-2 py-1 text-left font-semibold text-gray-600 dark:text-gray-300">Description</th>
+                              <th class="px-2 py-1 text-right font-semibold text-gray-600 dark:text-gray-300">Debit</th>
+                              <th class="px-2 py-1 text-right font-semibold text-gray-600 dark:text-gray-300">Credit</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            @for (row of generalJournalForm.sundries.slice(0, 3); track row.accountNumber + '_' + $index) {
+                              <tr class="border-t border-gray-200 dark:border-gray-700">
+                                <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.accountNumber || '-' }}</td>
+                                <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.description || '-' }}</td>
+                                <td class="px-2 py-1 text-right text-gray-700 dark:text-gray-300">{{ (row.debit || 0) | currency:'PHP':'symbol':'1.2-2' }}</td>
+                                <td class="px-2 py-1 text-right text-gray-700 dark:text-gray-300">{{ (row.credit || 0) | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              </tr>
+                            } @empty {
+                              <tr>
+                                <td colspan="4" class="px-2 py-2 text-center text-gray-500 dark:text-gray-400">No rows yet.</td>
+                              </tr>
+                            }
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="rounded-lg border border-dashed border-gray-300 px-3 py-2 text-[11px] text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                    <p>Paper: {{ generalJournalPrintSettings.paperSize === 'CUSTOM' ? (generalJournalPrintSettings.customWidthMm + '×' + generalJournalPrintSettings.customHeightMm + ' mm') : generalJournalPrintSettings.paperSize }} ({{ generalJournalPrintSettings.orientation }})</p>
+                    <p>
+                      Margins (mm):
+                      T {{ generalJournalPrintSettings.marginTopMm }},
+                      R {{ generalJournalPrintSettings.marginRightMm }},
+                      B {{ generalJournalPrintSettings.marginBottomMm }},
+                      L {{ generalJournalPrintSettings.marginLeftMm }}
+                    </p>
+                  </div>
+
+                  @if (generalJournalPrintSettingsNotice) {
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ generalJournalPrintSettingsNotice }}</p>
+                  }
+
+                  <div class="flex items-center justify-end gap-2">
+                    <button type="button" (click)="resetGeneralJournalPrintSettings()" [disabled]="isSavingGeneralJournalPrintSettings" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Reset</button>
+                    <button type="button" (click)="saveGeneralJournalPrintSettings()" [disabled]="isSavingGeneralJournalPrintSettings" class="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">
+                      {{ isSavingGeneralJournalPrintSettings ? 'Saving...' : 'Save' }}
+                    </button>
+                  </div>
+                </div>
+              </aside>
+            }
+
+            @if (isGeneralJournalPrintPreviewOpen) {
+              <div class="fixed inset-0 z-100040 bg-gray-900/40" (click)="closeGeneralJournalPrintPreview()"></div>
+              <aside class="fixed inset-x-4 top-6 z-100041 mx-auto h-[90vh] max-w-6xl overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+                <div class="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
+                  <div>
+                    <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">General Journal Full Print Preview</h5>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Review layout before printing.</p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button type="button" (click)="executeGeneralJournalPrintFromPreview()" class="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600">Print</button>
+                    <button type="button" (click)="closeGeneralJournalPrintPreview()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+                  </div>
+                </div>
+
+                <div class="h-[calc(90vh-64px)] overflow-auto bg-gray-100 p-4 dark:bg-gray-950/40">
+                  <div class="mx-auto w-full max-w-210 rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+                    @if (generalJournalPrintSettings.showHeader) {
+                      <div class="mb-4 flex items-start justify-between gap-4 border-b border-gray-200 pb-3 dark:border-gray-700">
+                        <div class="min-w-0">
+                          @if (generalJournalPrintSettings.showLogo && getGeneralJournalPrintLogoSrc()) {
+                            <img [src]="getGeneralJournalPrintLogoSrc()" alt="Business Logo" class="h-10 object-contain" />
+                          }
+                        </div>
+                        <div class="text-right text-xs leading-5 text-gray-500 dark:text-gray-400">
+                          @if (generalJournalPrintSettings.showAddress) {
+                            @for (line of getGeneralJournalHeaderLines(); track line + '_' + $index) {
+                              <p>{{ line }}</p>
+                            }
+                          }
+                        </div>
+                      </div>
+                    }
+
+                    <div class="mb-4 text-right">
+                      <p class="text-base font-semibold text-gray-800 dark:text-white/90">GENERAL JOURNAL REGISTER</p>
+                      <p class="text-xs text-gray-500 dark:text-gray-400">Journal No: {{ generalJournalForm.journalNo || '-' }} · Date: {{ formatDateOnly(generalJournalForm.journalDate) || '-' }}</p>
+                    </div>
+
+                    <div class="mb-3 text-xs text-gray-700 dark:text-gray-300"><span class="font-semibold">Description:</span> {{ generalJournalForm.description || '-' }}</div>
+
+                    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                      <table class="min-w-full text-xs">
+                        <thead class="bg-gray-50 text-gray-600 dark:bg-gray-800/70 dark:text-gray-300">
+                          <tr>
+                            <th class="px-3 py-2 text-left">Account Number</th>
+                            <th class="px-3 py-2 text-left">Description</th>
+                            <th class="px-3 py-2 text-right">Debit</th>
+                            <th class="px-3 py-2 text-right">Credit</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          @for (row of generalJournalForm.sundries; track row.accountNumber + '_' + $index) {
+                            <tr class="border-t border-gray-200 dark:border-gray-700">
+                              <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.accountNumber || '-' }}</td>
+                              <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.description || '-' }}</td>
+                              <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ (row.debit || 0) | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ (row.credit || 0) | currency:'PHP':'symbol':'1.2-2' }}</td>
+                            </tr>
+                          } @empty {
+                            <tr>
+                              <td colspan="4" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">No sundry lines entered yet.</td>
+                            </tr>
+                          }
+
+                          @if (generalJournalForm.sundries.length > 0) {
+                            <tr class="border-t-2 border-gray-300 bg-gray-50 font-semibold dark:border-gray-600 dark:bg-gray-800/70">
+                              <td colspan="2" class="px-3 py-2 text-gray-800 dark:text-white/90">Grand Total</td>
+                              <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ generalJournalDebitTotal | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ generalJournalCreditTotal | currency:'PHP':'symbol':'1.2-2' }}</td>
+                            </tr>
+                          }
+                        </tbody>
+                      </table>
+                    </div>
+
+                    @if (generalJournalPrintSettings.footerLeft || generalJournalPrintSettings.footerCenter || generalJournalPrintSettings.footerRight) {
+                      <div class="mt-4 grid grid-cols-3 gap-2 border-t border-dashed border-gray-300 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                        <p>{{ generalJournalPrintSettings.footerLeft || '' }}</p>
+                        <p class="text-center">{{ generalJournalPrintSettings.footerCenter || '' }}</p>
+                        <p class="text-right">{{ generalJournalPrintSettings.footerRight || '' }}</p>
+                      </div>
+                    }
+                  </div>
+                </div>
+              </aside>
+            }
           </div>
         }
 
         @if (report.key === 'disbursement-register') {
           <div class="mt-5 space-y-4">
-            <div class="rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-600 dark:border-gray-700 dark:text-gray-300">
-              This register is generated from released cheque vouchers.
+
+            <!-- Month Filter + Actions -->
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="flex flex-col gap-1">
+                <label class="text-xs font-medium text-gray-600 dark:text-gray-400">Select Month</label>
+                <input type="month" [(ngModel)]="disbursementRegisterMonth"
+                  class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+              </div>
+              <button type="button" (click)="loadDisbursementRegister()" [disabled]="isLoadingDisbursementRegister"
+                class="h-9 rounded-lg bg-brand-500 px-4 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">
+                {{ isLoadingDisbursementRegister ? 'Loading...' : 'Load' }}
+              </button>
             </div>
 
+            @if (disbursementRegisterError) {
+              <p class="text-sm text-error-600 dark:text-error-400">{{ disbursementRegisterError }}</p>
+            }
+            @if (disbursementRegisterMonth && !isLoadingDisbursementRegister) {
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                Showing disbursements for <strong>{{ getDisbursementMonthLabel() }}</strong>
+                — {{ disbursementRegisterData.length }} voucher(s) loaded.
+              </p>
+            }
+
+            <!-- Main Wide Table -->
             <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
               <div class="overflow-x-auto">
-                <table class="min-w-full text-left text-sm">
-                  <thead class="bg-gray-50 text-xs uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                <table class="min-w-full text-left text-xs">
+                  <thead class="bg-gray-50 text-[11px] font-semibold uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
                     <tr>
-                      <th class="px-3 py-2">CV No.</th>
-                      <th class="px-3 py-2">Voucher Date</th>
-                      <th class="px-3 py-2">Payee</th>
-                      <th class="px-3 py-2">Invoice No.</th>
-                      <th class="px-3 py-2">Invoice Date</th>
-                      <th class="px-3 py-2">Description</th>
-                      <th class="px-3 py-2 text-right">Amount</th>
+                      @for (baseColumn of getDisbursementBaseColumns(); track baseColumn.id) {
+                        <th class="whitespace-nowrap px-3 py-2">{{ baseColumn.label || 'Column' }}</th>
+                      }
+                      @for (col of disbursementRegisterPrintSettings.defaultColumns; track col.id) {
+                        @if (col.accountNumber) {
+                          <th class="whitespace-nowrap px-3 py-2 text-right">
+                            {{ col.accountNumber }}<br />
+                            <span class="text-[10px] font-normal normal-case">{{ col.label }}</span><br />
+                            {{ col.side }}.
+                          </th>
+                        }
+                      }
+                      <th class="whitespace-nowrap px-3 py-2">Sundry Acct #</th>
+                      <th class="px-3 py-2">Sundry Account Title</th>
+                      <th class="whitespace-nowrap px-3 py-2 text-right">Dr.</th>
+                      <th class="whitespace-nowrap px-3 py-2 text-right">Cr.</th>
                     </tr>
                   </thead>
                   <tbody>
-                    @for (row of disbursementRegisterRows; track row.cvNo + '_' + row.invoiceNo + '_' + $index) {
-                      <tr class="border-t border-gray-200 dark:border-gray-700">
-                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.cvNo || '-' }}</td>
-                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ formatDateOnly(row.voucherDate) }}</td>
-                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.payee || '-' }}</td>
-                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.invoiceNo || '-' }}</td>
-                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ formatDateOnly(row.invoiceDate) }}</td>
-                        <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.description || '-' }}</td>
-                        <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.amount | currency:'PHP':'symbol':'1.2-2' }}</td>
-                      </tr>
-                    } @empty {
+                    @if (isLoadingDisbursementRegister) {
                       <tr>
-                        <td colspan="7" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">
-                          No disbursement rows yet. Release cheque vouchers to populate this register.
+                        <td class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
+                          [attr.colspan]="getDisbursementBaseColumns().length + disbursementRegisterPrintSettings.defaultColumns.length + 4">
+                          Loading disbursement data&hellip;
                         </td>
                       </tr>
+                    } @else {
+                      @for (cv of disbursementRegisterData; track cv.cvNo + '_' + cv.voucherDate) {
+                        <!-- First (or only) row per CV -->
+                        <tr class="border-t border-gray-200 dark:border-gray-700">
+                          @for (baseColumn of getDisbursementBaseColumns(); track baseColumn.id) {
+                            <td class="px-3 py-1.5 text-gray-700 dark:text-gray-300">{{ getDisbursementBaseColumnValue(cv, baseColumn) }}</td>
+                          }
+                          @for (col of disbursementRegisterPrintSettings.defaultColumns; track col.id) {
+                            @if (col.accountNumber) {
+                              <td class="px-3 py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">
+                                {{ getDisbursementColumnAmountForCV(cv, col) > 0 ? (getDisbursementColumnAmountForCV(cv, col) | number:'1.2-2') : '' }}
+                              </td>
+                            }
+                          }
+                          @if (getDisbursementSundryRowsForCV(cv).length > 0) {
+                            <td class="px-3 py-1.5 font-mono text-gray-700 dark:text-gray-300">{{ getDisbursementSundryRowsForCV(cv)[0].accountNumber }}</td>
+                            <td class="px-3 py-1.5 text-gray-700 dark:text-gray-300">{{ getDisbursementSundryRowsForCV(cv)[0].description }}</td>
+                            <td class="px-3 py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{{ (+getDisbursementSundryRowsForCV(cv)[0].debit > 0) ? (getDisbursementSundryRowsForCV(cv)[0].debit | number:'1.2-2') : '' }}</td>
+                            <td class="px-3 py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{{ (+getDisbursementSundryRowsForCV(cv)[0].credit > 0) ? (getDisbursementSundryRowsForCV(cv)[0].credit | number:'1.2-2') : '' }}</td>
+                          } @else {
+                            <td class="px-3 py-1.5"></td><td class="px-3 py-1.5"></td><td class="px-3 py-1.5"></td><td class="px-3 py-1.5"></td>
+                          }
+                        </tr>
+                        <!-- Additional sundry sub-rows -->
+                        @for (sundry of getDisbursementSundryRowsForCV(cv).slice(1); track sundry.accountNumber + '_' + $index) {
+                          <tr class="border-t border-gray-100 bg-gray-50/40 dark:border-gray-800 dark:bg-gray-900/20">
+                            @for (baseColumn of getDisbursementBaseColumns(); track baseColumn.id) {
+                              <td class="px-3 py-0.5"></td>
+                            }
+                            @for (col of disbursementRegisterPrintSettings.defaultColumns; track col.id) {
+                              @if (col.accountNumber) { <td class="px-3 py-0.5"></td> }
+                            }
+                            <td class="px-3 py-0.5 font-mono text-gray-600 dark:text-gray-400">{{ sundry.accountNumber }}</td>
+                            <td class="px-3 py-0.5 text-gray-600 dark:text-gray-400">{{ sundry.description }}</td>
+                            <td class="px-3 py-0.5 text-right tabular-nums text-gray-600 dark:text-gray-400">{{ (+sundry.debit > 0) ? (sundry.debit | number:'1.2-2') : '' }}</td>
+                            <td class="px-3 py-0.5 text-right tabular-nums text-gray-600 dark:text-gray-400">{{ (+sundry.credit > 0) ? (sundry.credit | number:'1.2-2') : '' }}</td>
+                          </tr>
+                        }
+                      } @empty {
+                        <tr>
+                          <td class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
+                            [attr.colspan]="getDisbursementBaseColumns().length + disbursementRegisterPrintSettings.defaultColumns.length + 4">
+                            No disbursement records for {{ getDisbursementMonthLabel() || 'the selected period' }}.
+                          </td>
+                        </tr>
+                      }
                     }
                   </tbody>
+                  @if (!isLoadingDisbursementRegister && disbursementRegisterData.length > 0) {
+                    <tfoot class="border-t-2 border-gray-400 dark:border-gray-600">
+                      <tr class="bg-gray-100 text-xs font-semibold dark:bg-gray-800/60">
+                        <td class="px-3 py-2 font-bold"
+                          [attr.colspan]="getDisbursementBaseColumns().length">
+                          TOTAL
+                        </td>
+                        @for (total of getDisbursementRegisterColTotals(); track $index) {
+                          <td class="px-3 py-2 text-right tabular-nums font-semibold text-gray-800 dark:text-white/90">
+                            {{ total > 0 ? (total | number:'1.2-2') : '' }}
+                          </td>
+                        }
+                        <td class="px-3 py-2"></td>
+                        <td class="px-3 py-2"></td>
+                        <td class="px-3 py-2 text-right tabular-nums font-semibold text-gray-800 dark:text-white/90">
+                          {{ getDisbursementSundryRegisterTotals().dr > 0 ? (getDisbursementSundryRegisterTotals().dr | number:'1.2-2') : '' }}
+                        </td>
+                        <td class="px-3 py-2 text-right tabular-nums font-semibold text-gray-800 dark:text-white/90">
+                          {{ getDisbursementSundryRegisterTotals().cr > 0 ? (getDisbursementSundryRegisterTotals().cr | number:'1.2-2') : '' }}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  }
                 </table>
               </div>
             </div>
+
+            <!-- Summary of Sundries -->
+            @if (!isLoadingDisbursementRegister) {
+              <div class="rounded-lg border border-gray-200 dark:border-gray-700">
+                <div class="border-b border-gray-200 px-4 py-2.5 dark:border-gray-700">
+                  <p class="text-sm font-semibold text-gray-800 dark:text-white/90">Summary of Sundries</p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">For the Month of {{ getDisbursementMonthLabel() }}</p>
+                </div>
+                <div class="overflow-x-auto">
+                  <table class="min-w-full text-left text-xs">
+                    <thead class="bg-gray-50 text-[11px] font-semibold uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                      <tr>
+                        <th class="px-4 py-2">Account #</th>
+                        <th class="px-4 py-2">Account Description</th>
+                        <th class="px-4 py-2 text-right">Dr</th>
+                        <th class="px-4 py-2 text-right">Cr</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (row of getDisbursementSundryAccountSummary(); track row.accountNumber) {
+                        <tr class="border-t border-gray-200 dark:border-gray-700">
+                          <td class="px-4 py-1.5 font-mono text-gray-700 dark:text-gray-300">{{ row.accountNumber || '-' }}</td>
+                          <td class="px-4 py-1.5 text-gray-700 dark:text-gray-300">{{ row.description }}</td>
+                          <td class="px-4 py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{{ row.dr > 0 ? (row.dr | number:'1.2-2') : '' }}</td>
+                          <td class="px-4 py-1.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{{ row.cr > 0 ? (row.cr | number:'1.2-2') : '' }}</td>
+                        </tr>
+                      } @empty {
+                        <tr>
+                          <td colspan="4" class="px-4 py-4 text-center text-xs text-gray-500 dark:text-gray-400">
+                            No sundry entries for this period.
+                          </td>
+                        </tr>
+                      }
+                    </tbody>
+                    <tfoot class="border-t-2 border-gray-400 dark:border-gray-600">
+                      <tr class="bg-gray-100 text-xs font-semibold dark:bg-gray-800/60">
+                        <td class="px-4 py-2 font-bold" colspan="2">Total</td>
+                        <td class="px-4 py-2 text-right tabular-nums font-bold text-gray-800 dark:text-white/90">
+                          {{ getDisbursementSundryRegisterTotals().dr | number:'1.2-2' }}
+                        </td>
+                        <td class="px-4 py-2 text-right tabular-nums font-bold text-gray-800 dark:text-white/90">
+                          {{ getDisbursementSundryRegisterTotals().cr | number:'1.2-2' }}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            }
+
           </div>
+
+          <!-- Disbursement Register Print Preview Modal -->
+          @if (isDisbursementRegisterPrintPreviewOpen) {
+            <div class="fixed inset-0 z-100040 bg-gray-900/40" (click)="closeDisbursementRegisterPrintPreview()"></div>
+            <aside class="fixed inset-x-4 top-6 z-100041 mx-auto h-[90vh] max-w-7xl overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+              <div class="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
+                <div>
+                  <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">Disbursement Register Full Print Preview</h5>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">For the Month of {{ getDisbursementMonthLabel() }} · {{ disbursementRegisterData.length }} voucher(s)</p>
+                </div>
+                <div class="flex items-center gap-2">
+                  <button type="button" (click)="executeDisbursementRegisterPrintFromPreview()"
+                    class="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600">
+                    Print
+                  </button>
+                  <button type="button" (click)="closeDisbursementRegisterPrintPreview()"
+                    class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              <div class="h-[calc(90vh-64px)] overflow-auto bg-gray-100 p-4 dark:bg-gray-950/40">
+                <div class="mx-auto w-full max-w-none rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+                  @if (disbursementRegisterPrintSettings.showHeader) {
+                    <div class="mb-4 flex items-start justify-between gap-4 border-b border-gray-200 pb-3 dark:border-gray-700">
+                      <div class="min-w-0">
+                        @if (disbursementRegisterPrintSettings.showLogo && getDisbursementRegisterPrintLogoSrc()) {
+                          <img [src]="getDisbursementRegisterPrintLogoSrc()" alt="Business Logo" class="h-10 object-contain" />
+                        }
+                      </div>
+                      <div class="text-right text-xs leading-5 text-gray-500 dark:text-gray-400">
+                        @if (disbursementRegisterPrintSettings.showAddress) {
+                          @for (line of getDisbursementRegisterHeaderLines(); track line + '_' + $index) {
+                            <p>{{ line }}</p>
+                          }
+                        }
+                      </div>
+                    </div>
+                  }
+
+                  <p class="text-sm font-bold uppercase text-gray-800 dark:text-white/90">Disbursement Register</p>
+                  <p class="mb-4 text-xs text-gray-500 dark:text-gray-400">For the Month of {{ getDisbursementMonthLabel() }}</p>
+
+                  <div class="overflow-x-auto">
+                    <table class="min-w-full text-left text-[11px]">
+                      <thead class="bg-gray-50 text-[10px] font-semibold uppercase text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                        <tr>
+                          @for (baseColumn of getDisbursementBaseColumns(); track baseColumn.id) {
+                            <th class="whitespace-nowrap px-2 py-1.5">{{ baseColumn.label || 'Column' }}</th>
+                          }
+                          @for (col of disbursementRegisterPrintSettings.defaultColumns; track col.id) {
+                            @if (col.accountNumber) {
+                              <th class="whitespace-nowrap px-2 py-1.5 text-right">
+                                {{ col.accountNumber }}<br />
+                                <span class="font-normal normal-case">{{ col.label }}</span><br />
+                                {{ col.side }}.
+                              </th>
+                            }
+                          }
+                          <th class="whitespace-nowrap px-2 py-1.5">Sundry Acct #</th>
+                          <th class="px-2 py-1.5">Sundry Title</th>
+                          <th class="whitespace-nowrap px-2 py-1.5 text-right">Dr.</th>
+                          <th class="whitespace-nowrap px-2 py-1.5 text-right">Cr.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        @for (cv of disbursementRegisterData; track cv.cvNo + '_' + cv.voucherDate) {
+                          <tr class="border-t border-gray-200 dark:border-gray-700">
+                            @for (baseColumn of getDisbursementBaseColumns(); track baseColumn.id) {
+                              <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ getDisbursementBaseColumnValue(cv, baseColumn) }}</td>
+                            }
+                            @for (col of disbursementRegisterPrintSettings.defaultColumns; track col.id) {
+                              @if (col.accountNumber) {
+                                <td class="px-2 py-1 text-right tabular-nums text-gray-700 dark:text-gray-300">
+                                  {{ getDisbursementColumnAmountForCV(cv, col) > 0 ? (getDisbursementColumnAmountForCV(cv, col) | number:'1.2-2') : '' }}
+                                </td>
+                              }
+                            }
+                            @if (getDisbursementSundryRowsForCV(cv).length > 0) {
+                              <td class="px-2 py-1 font-mono text-gray-700 dark:text-gray-300">{{ getDisbursementSundryRowsForCV(cv)[0].accountNumber }}</td>
+                              <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ getDisbursementSundryRowsForCV(cv)[0].description }}</td>
+                              <td class="px-2 py-1 text-right tabular-nums text-gray-700 dark:text-gray-300">{{ (+getDisbursementSundryRowsForCV(cv)[0].debit > 0) ? (getDisbursementSundryRowsForCV(cv)[0].debit | number:'1.2-2') : '' }}</td>
+                              <td class="px-2 py-1 text-right tabular-nums text-gray-700 dark:text-gray-300">{{ (+getDisbursementSundryRowsForCV(cv)[0].credit > 0) ? (getDisbursementSundryRowsForCV(cv)[0].credit | number:'1.2-2') : '' }}</td>
+                            } @else {
+                              <td class="px-2 py-1"></td><td class="px-2 py-1"></td><td class="px-2 py-1"></td><td class="px-2 py-1"></td>
+                            }
+                          </tr>
+                          @for (sundry of getDisbursementSundryRowsForCV(cv).slice(1); track sundry.accountNumber + '_' + $index) {
+                            <tr class="border-t border-gray-100 bg-gray-50/40 dark:border-gray-800 dark:bg-gray-900/20">
+                              @for (baseColumn of getDisbursementBaseColumns(); track baseColumn.id) {
+                                <td class="px-2 py-0.5"></td>
+                              }
+                              @for (col of disbursementRegisterPrintSettings.defaultColumns; track col.id) {
+                                @if (col.accountNumber) { <td class="px-2 py-0.5"></td> }
+                              }
+                              <td class="px-2 py-0.5 font-mono text-gray-600 dark:text-gray-400">{{ sundry.accountNumber }}</td>
+                              <td class="px-2 py-0.5 text-gray-600 dark:text-gray-400">{{ sundry.description }}</td>
+                              <td class="px-2 py-0.5 text-right tabular-nums text-gray-600 dark:text-gray-400">{{ (+sundry.debit > 0) ? (sundry.debit | number:'1.2-2') : '' }}</td>
+                              <td class="px-2 py-0.5 text-right tabular-nums text-gray-600 dark:text-gray-400">{{ (+sundry.credit > 0) ? (sundry.credit | number:'1.2-2') : '' }}</td>
+                            </tr>
+                          }
+                        } @empty {
+                          <tr>
+                            <td class="px-2 py-6 text-center text-sm text-gray-500 dark:text-gray-400"
+                              [attr.colspan]="getDisbursementBaseColumns().length + disbursementRegisterPrintSettings.defaultColumns.length + 4">
+                              No disbursement records for {{ getDisbursementMonthLabel() || 'the selected period' }}.
+                            </td>
+                          </tr>
+                        }
+                      </tbody>
+                      <tfoot class="border-t-2 border-gray-400 dark:border-gray-600">
+                        <tr class="bg-gray-100 text-[11px] font-semibold dark:bg-gray-800/60">
+                          <td class="px-2 py-1.5 font-bold"
+                            [attr.colspan]="getDisbursementBaseColumns().length">
+                            TOTAL
+                          </td>
+                          @for (total of getDisbursementRegisterColTotals(); track $index) {
+                            <td class="px-2 py-1.5 text-right tabular-nums font-semibold text-gray-800 dark:text-white/90">
+                              {{ total > 0 ? (total | number:'1.2-2') : '' }}
+                            </td>
+                          }
+                          <td class="px-2 py-1.5"></td><td class="px-2 py-1.5"></td>
+                          <td class="px-2 py-1.5 text-right tabular-nums font-semibold text-gray-800 dark:text-white/90">
+                            {{ getDisbursementSundryRegisterTotals().dr > 0 ? (getDisbursementSundryRegisterTotals().dr | number:'1.2-2') : '' }}
+                          </td>
+                          <td class="px-2 py-1.5 text-right tabular-nums font-semibold text-gray-800 dark:text-white/90">
+                            {{ getDisbursementSundryRegisterTotals().cr > 0 ? (getDisbursementSundryRegisterTotals().cr | number:'1.2-2') : '' }}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  <div class="mt-6">
+                    <p class="text-xs font-bold uppercase text-gray-800 dark:text-white/90">Summary of Sundries</p>
+                    <p class="mb-2 text-[10px] text-gray-500 dark:text-gray-400">For the Month of {{ getDisbursementMonthLabel() }}</p>
+                    <table class="w-[55%] min-w-0 text-left text-[11px]">
+                      <thead class="bg-gray-50 text-[10px] font-semibold text-gray-600 dark:bg-gray-900/60 dark:text-gray-300">
+                        <tr>
+                          <th class="px-2 py-1.5">Account #</th>
+                          <th class="px-2 py-1.5">Description</th>
+                          <th class="px-2 py-1.5 text-right">Dr</th>
+                          <th class="px-2 py-1.5 text-right">Cr</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        @for (row of getDisbursementSundryAccountSummary(); track row.accountNumber) {
+                          <tr class="border-t border-gray-200 dark:border-gray-700">
+                            <td class="px-2 py-1 font-mono text-gray-700 dark:text-gray-300">{{ row.accountNumber || '-' }}</td>
+                            <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.description }}</td>
+                            <td class="px-2 py-1 text-right tabular-nums text-gray-700 dark:text-gray-300">{{ row.dr > 0 ? (row.dr | number:'1.2-2') : '' }}</td>
+                            <td class="px-2 py-1 text-right tabular-nums text-gray-700 dark:text-gray-300">{{ row.cr > 0 ? (row.cr | number:'1.2-2') : '' }}</td>
+                          </tr>
+                        } @empty {
+                          <tr>
+                            <td colspan="4" class="px-2 py-4 text-center text-xs text-gray-500 dark:text-gray-400">
+                              No sundry entries for this period.
+                            </td>
+                          </tr>
+                        }
+                      </tbody>
+                      <tfoot class="border-t-2 border-gray-400 dark:border-gray-600">
+                        <tr class="bg-gray-100 font-semibold dark:bg-gray-800/60">
+                          <td class="px-2 py-1.5 font-bold" colspan="2">Total</td>
+                          <td class="px-2 py-1.5 text-right tabular-nums font-bold text-gray-800 dark:text-white/90">
+                            {{ getDisbursementSundryRegisterTotals().dr | number:'1.2-2' }}
+                          </td>
+                          <td class="px-2 py-1.5 text-right tabular-nums font-bold text-gray-800 dark:text-white/90">
+                            {{ getDisbursementSundryRegisterTotals().cr | number:'1.2-2' }}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  @if (disbursementRegisterPrintSettings.footerLeft || disbursementRegisterPrintSettings.footerCenter || disbursementRegisterPrintSettings.footerRight) {
+                    <div class="mt-4 grid grid-cols-3 gap-2 border-t border-dashed border-gray-300 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                      <p>{{ disbursementRegisterPrintSettings.footerLeft || '' }}</p>
+                      <p class="text-center">{{ disbursementRegisterPrintSettings.footerCenter || '' }}</p>
+                      <p class="text-right">{{ disbursementRegisterPrintSettings.footerRight || '' }}</p>
+                    </div>
+                  }
+                </div>
+              </div>
+            </aside>
+          }
+
+          <!-- Disbursement Register Print Settings Drawer -->
+          @if (isDisbursementRegisterPrintSettingsDrawerOpen) {
+            <div class="fixed inset-0 z-100032 bg-gray-900/40" (click)="closeDisbursementRegisterPrintSettingsDrawer()"></div>
+            <aside class="fixed right-0 top-0 z-100033 h-screen w-full max-w-3xl overflow-y-auto border-l border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+              <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white/95 px-6 py-4 backdrop-blur dark:border-gray-700 dark:bg-gray-900/95">
+                <div>
+                  <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">Disbursement Register Print Settings</h5>
+                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Configure header, default account columns, and paper settings.</p>
+                </div>
+                <button type="button" (click)="closeDisbursementRegisterPrintSettingsDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+              </div>
+
+              <div class="divide-y divide-gray-100 px-6 pb-10 dark:divide-gray-800">
+
+                <!-- Header options -->
+                <div class="py-5">
+                  <p class="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Header</p>
+                  <div class="space-y-2">
+                    <label class="flex cursor-pointer items-center gap-3 text-sm text-gray-700 dark:text-gray-300">
+                      <input type="checkbox" [(ngModel)]="disbursementRegisterPrintSettings.showHeader" class="rounded" />
+                      Show header block
+                    </label>
+                    @if (disbursementRegisterPrintSettings.showHeader) {
+                      <label class="ml-5 flex cursor-pointer items-center gap-3 text-sm text-gray-700 dark:text-gray-300">
+                        <input type="checkbox" [(ngModel)]="disbursementRegisterPrintSettings.showLogo" class="rounded" />
+                        Show logo
+                      </label>
+                      <label class="ml-5 flex cursor-pointer items-center gap-3 text-sm text-gray-700 dark:text-gray-300">
+                        <input type="checkbox" [(ngModel)]="disbursementRegisterPrintSettings.showAddress" class="rounded" />
+                        Show address / contact info
+                      </label>
+                    }
+                  </div>
+                </div>
+
+                <div class="py-5">
+                  <div class="mb-3 flex items-center justify-between">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Base Columns</p>
+                    <button type="button" (click)="addDisbursementBaseColumn()"
+                      [disabled]="disbursementRegisterPrintSettings.baseColumns.length >= 10"
+                      class="rounded-lg border border-brand-300 px-3 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">
+                      + Add Base Column
+                    </button>
+                  </div>
+                  <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+                    Choose which base columns appear before account columns, rename labels, and reorder them.
+                  </p>
+                  @for (baseColumn of disbursementRegisterPrintSettings.baseColumns; track baseColumn.id; let i = $index) {
+                    <div class="mb-2 grid grid-cols-12 gap-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                      <div class="col-span-5 flex flex-col gap-1">
+                        <label class="text-[10px] font-medium text-gray-500 dark:text-gray-400">Source Field</label>
+                        <select [(ngModel)]="baseColumn.key"
+                          class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                          @for (option of getDisbursementBaseColumnOptions(); track option.key) {
+                            <option [value]="option.key">{{ option.label }}</option>
+                          }
+                        </select>
+                      </div>
+                      <div class="col-span-5 flex flex-col gap-1">
+                        <label class="text-[10px] font-medium text-gray-500 dark:text-gray-400">Column Label</label>
+                        <input type="text" [(ngModel)]="baseColumn.label" placeholder="Column label"
+                          class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                      </div>
+                      <div class="col-span-2 flex items-end justify-end gap-1 pb-0.5">
+                        <button type="button" (click)="moveDisbursementBaseColumn(i, 'up')" [disabled]="i === 0"
+                          class="rounded-md border border-gray-300 px-2 py-1 text-[10px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">↑</button>
+                        <button type="button" (click)="moveDisbursementBaseColumn(i, 'down')" [disabled]="i === disbursementRegisterPrintSettings.baseColumns.length - 1"
+                          class="rounded-md border border-gray-300 px-2 py-1 text-[10px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">↓</button>
+                        <button type="button" (click)="removeDisbursementBaseColumn(i)" [disabled]="disbursementRegisterPrintSettings.baseColumns.length <= 1"
+                          class="rounded-md border border-error-300 px-2 py-1 text-[10px] text-error-600 hover:bg-error-50 disabled:opacity-50 dark:border-error-700 dark:text-error-400 dark:hover:bg-error-900/20">✕</button>
+                      </div>
+                    </div>
+                  }
+                </div>
+
+                <!-- Default Columns -->
+                <div class="py-5">
+                  <div class="mb-3 flex items-center justify-between">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Default Account Columns</p>
+                    <button type="button" (click)="addDisbursementDefaultColumn()"
+                      [disabled]="disbursementRegisterPrintSettings.defaultColumns.length >= 12"
+                      class="rounded-lg border border-brand-300 px-3 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">
+                      + Add Column
+                    </button>
+                  </div>
+                  <p class="mb-3 text-xs text-gray-500 dark:text-gray-400">
+                    Each column represents a fixed account that appears as its own column in the report.
+                    Accounts not listed here appear in the SUNDRIES columns. Maximum 12 columns.
+                  </p>
+                  @if (disbursementRegisterPrintSettings.defaultColumns.length === 0) {
+                    <p class="rounded-lg border border-dashed border-gray-300 p-4 text-center text-xs text-gray-400 dark:border-gray-700 dark:text-gray-500">
+                      No default columns configured. All account entries will appear in SUNDRIES.
+                    </p>
+                  }
+                  @for (col of disbursementRegisterPrintSettings.defaultColumns; track col.id; let i = $index) {
+                    <div class="mb-2 grid grid-cols-12 gap-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                      <div class="col-span-3 flex flex-col gap-1">
+                        <label class="text-[10px] font-medium text-gray-500 dark:text-gray-400">Account #</label>
+                        <input type="text" [(ngModel)]="col.accountNumber" placeholder="e.g. 11001"
+                          class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                      </div>
+                      <div class="col-span-5 flex flex-col gap-1">
+                        <label class="text-[10px] font-medium text-gray-500 dark:text-gray-400">Column Label</label>
+                        <input type="text" [(ngModel)]="col.label" placeholder="e.g. Cash In Bank"
+                          class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                      </div>
+                      <div class="col-span-2 flex flex-col gap-1">
+                        <label class="text-[10px] font-medium text-gray-500 dark:text-gray-400">Dr / Cr</label>
+                        <select [(ngModel)]="col.side"
+                          class="h-8 rounded-md border border-gray-300 bg-transparent px-2 text-xs text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                          <option value="DR">DR</option>
+                          <option value="CR">CR</option>
+                        </select>
+                      </div>
+                      <div class="col-span-2 flex items-end justify-end pb-0.5">
+                        <button type="button" (click)="removeDisbursementDefaultColumn(i)"
+                          class="rounded-md border border-error-300 px-2 py-1.5 text-[10px] text-error-600 hover:bg-error-50 dark:border-error-700 dark:text-error-400 dark:hover:bg-error-900/20">
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  }
+                </div>
+
+                <!-- Paper -->
+                <div class="py-5">
+                  <p class="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Paper &amp; Layout</p>
+                  <div class="grid grid-cols-2 gap-4">
+                    <div class="flex flex-col gap-1">
+                      <label class="text-xs text-gray-600 dark:text-gray-400">Paper Size</label>
+                      <select [(ngModel)]="disbursementRegisterPrintSettings.paperSize"
+                        class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                        <option value="A4">A4</option>
+                        <option value="LETTER">Letter</option>
+                        <option value="LEGAL">Legal</option>
+                        <option value="CUSTOM">Custom</option>
+                      </select>
+                    </div>
+                    <div class="flex flex-col gap-1">
+                      <label class="text-xs text-gray-600 dark:text-gray-400">Orientation</label>
+                      <select [(ngModel)]="disbursementRegisterPrintSettings.orientation"
+                        class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                        <option value="portrait">Portrait</option>
+                        <option value="landscape">Landscape</option>
+                      </select>
+                    </div>
+                    @if (disbursementRegisterPrintSettings.paperSize === 'CUSTOM') {
+                      <div class="flex flex-col gap-1">
+                        <label class="text-xs text-gray-600 dark:text-gray-400">Width (mm)</label>
+                        <input type="number" [(ngModel)]="disbursementRegisterPrintSettings.customWidthMm" min="50" max="1000"
+                          class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                      </div>
+                      <div class="flex flex-col gap-1">
+                        <label class="text-xs text-gray-600 dark:text-gray-400">Height (mm)</label>
+                        <input type="number" [(ngModel)]="disbursementRegisterPrintSettings.customHeightMm" min="50" max="1000"
+                          class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                      </div>
+                    }
+                  </div>
+                </div>
+
+                <!-- Margins -->
+                <div class="py-5">
+                  <p class="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Margins (mm)</p>
+                  <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+                    <div class="flex flex-col gap-1">
+                      <label class="text-xs text-gray-600 dark:text-gray-400">Top</label>
+                      <input type="number" [(ngModel)]="disbursementRegisterPrintSettings.marginTopMm" min="0" max="50"
+                        class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                    </div>
+                    <div class="flex flex-col gap-1">
+                      <label class="text-xs text-gray-600 dark:text-gray-400">Right</label>
+                      <input type="number" [(ngModel)]="disbursementRegisterPrintSettings.marginRightMm" min="0" max="50"
+                        class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                    </div>
+                    <div class="flex flex-col gap-1">
+                      <label class="text-xs text-gray-600 dark:text-gray-400">Bottom</label>
+                      <input type="number" [(ngModel)]="disbursementRegisterPrintSettings.marginBottomMm" min="0" max="50"
+                        class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                    </div>
+                    <div class="flex flex-col gap-1">
+                      <label class="text-xs text-gray-600 dark:text-gray-400">Left</label>
+                      <input type="number" [(ngModel)]="disbursementRegisterPrintSettings.marginLeftMm" min="0" max="50"
+                        class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Footer Notes -->
+                <div class="py-5">
+                  <p class="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Footer Notes</p>
+                  <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div class="flex flex-col gap-1">
+                      <label class="text-xs text-gray-600 dark:text-gray-400">Left</label>
+                      <input type="text" [(ngModel)]="disbursementRegisterPrintSettings.footerLeft" placeholder="e.g. Prepared by"
+                        class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                    </div>
+                    <div class="flex flex-col gap-1">
+                      <label class="text-xs text-gray-600 dark:text-gray-400">Center</label>
+                      <input type="text" [(ngModel)]="disbursementRegisterPrintSettings.footerCenter" placeholder="e.g. Checked by"
+                        class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                    </div>
+                    <div class="flex flex-col gap-1">
+                      <label class="text-xs text-gray-600 dark:text-gray-400">Right</label>
+                      <input type="text" [(ngModel)]="disbursementRegisterPrintSettings.footerRight" placeholder="e.g. Approved by"
+                        class="h-9 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Notice -->
+                @if (disbursementRegisterPrintSettingsNotice) {
+                  <p class="rounded-lg border px-4 py-2 text-sm"
+                    [class]="disbursementRegisterPrintSettingsNotice.toLowerCase().includes('saved') ? 'border-success-300 bg-success-50 text-success-700 dark:border-success-700 dark:bg-success-900/20 dark:text-success-400' : 'border-error-300 bg-error-50 text-error-700 dark:border-error-700 dark:bg-error-900/20 dark:text-error-400'">
+                    {{ disbursementRegisterPrintSettingsNotice }}
+                  </p>
+                }
+
+                <!-- Live Preview -->
+                <div class="py-5">
+                  <div class="mb-2 flex items-center justify-between gap-2">
+                    <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Live Preview</p>
+                    <button type="button" (click)="openDisbursementRegisterPrintPreview()" [disabled]="disbursementRegisterData.length === 0"
+                      class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">
+                      Open Full Preview
+                    </button>
+                  </div>
+
+                  <div class="rounded-lg border border-dashed border-gray-300 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+                    @if (disbursementRegisterPrintSettings.showHeader) {
+                      <div class="mb-2 flex items-start justify-between gap-3 border-b border-gray-200 pb-2 dark:border-gray-700">
+                        <div class="min-w-0">
+                          @if (disbursementRegisterPrintSettings.showLogo && getDisbursementRegisterPrintLogoSrc()) {
+                            <img [src]="getDisbursementRegisterPrintLogoSrc()" alt="Business Logo" class="h-8 object-contain" />
+                          }
+                        </div>
+                        <div class="text-right text-[10px] leading-4 text-gray-500 dark:text-gray-400">
+                          @if (disbursementRegisterPrintSettings.showAddress) {
+                            @for (line of getDisbursementRegisterHeaderLines(); track line + '_' + $index) {
+                              <p>{{ line }}</p>
+                            }
+                          }
+                        </div>
+                      </div>
+                    }
+
+                    <p class="text-xs font-bold uppercase text-gray-800 dark:text-white/90">Disbursement Register</p>
+                    <p class="mb-2 text-[10px] text-gray-500 dark:text-gray-400">For the Month of {{ getDisbursementMonthLabel() || '—' }}</p>
+
+                    <div class="overflow-x-auto">
+                      <table class="min-w-full text-[9px]">
+                        <thead class="bg-gray-100 dark:bg-gray-800/60">
+                          <tr>
+                            @for (baseColumn of getDisbursementBaseColumns(); track baseColumn.id) {
+                              <th class="px-1.5 py-1 text-left font-semibold">{{ baseColumn.label || 'Column' }}</th>
+                            }
+                            @for (col of disbursementRegisterPrintSettings.defaultColumns; track col.id) {
+                              @if (col.accountNumber) {
+                                <th class="px-1.5 py-1 text-right font-semibold">{{ col.accountNumber }}</th>
+                              }
+                            }
+                            <th class="px-1.5 py-1 text-left font-semibold">Acct #</th>
+                            <th class="px-1.5 py-1 text-left font-semibold">Sundry</th>
+                            <th class="px-1.5 py-1 text-right font-semibold">Dr</th>
+                            <th class="px-1.5 py-1 text-right font-semibold">Cr</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          @if (disbursementRegisterData.length === 0) {
+                            <tr>
+                              <td [attr.colspan]="getDisbursementBaseColumns().length + disbursementRegisterPrintSettings.defaultColumns.length + 4"
+                                class="px-2 py-3 text-center text-gray-400 dark:text-gray-600">
+                                Load data to preview
+                              </td>
+                            </tr>
+                          } @else {
+                            @for (cv of disbursementRegisterData.slice(0, 3); track cv.cvNo) {
+                              <tr class="border-t border-gray-200 dark:border-gray-700">
+                                @for (baseColumn of getDisbursementBaseColumns(); track baseColumn.id) {
+                                  <td class="max-w-24 truncate px-1.5 py-0.5 text-gray-600 dark:text-gray-400">{{ getDisbursementBaseColumnValue(cv, baseColumn) }}</td>
+                                }
+                                @for (col of disbursementRegisterPrintSettings.defaultColumns; track col.id) {
+                                  @if (col.accountNumber) {
+                                    <td class="px-1.5 py-0.5 text-right text-gray-600 dark:text-gray-400">
+                                      {{ getDisbursementColumnAmountForCV(cv, col) > 0 ? (getDisbursementColumnAmountForCV(cv, col) | number:'1.2-2') : '' }}
+                                    </td>
+                                  }
+                                }
+                                @if (getDisbursementSundryRowsForCV(cv).length > 0) {
+                                  <td class="px-1.5 py-0.5 text-gray-500 dark:text-gray-500">{{ getDisbursementSundryRowsForCV(cv)[0].accountNumber }}</td>
+                                  <td class="max-w-16 truncate px-1.5 py-0.5 text-gray-500 dark:text-gray-500">{{ getDisbursementSundryRowsForCV(cv)[0].description }}</td>
+                                  <td class="px-1.5 py-0.5 text-right text-gray-500 dark:text-gray-500">{{ (+getDisbursementSundryRowsForCV(cv)[0].debit > 0) ? (getDisbursementSundryRowsForCV(cv)[0].debit | number:'1.2-2') : '' }}</td>
+                                  <td class="px-1.5 py-0.5 text-right text-gray-500 dark:text-gray-500">{{ (+getDisbursementSundryRowsForCV(cv)[0].credit > 0) ? (getDisbursementSundryRowsForCV(cv)[0].credit | number:'1.2-2') : '' }}</td>
+                                } @else {
+                                  <td></td><td></td><td></td><td></td>
+                                }
+                              </tr>
+                            }
+                            @if (disbursementRegisterData.length > 3) {
+                              <tr class="border-t border-gray-200 dark:border-gray-700">
+                                <td [attr.colspan]="getDisbursementBaseColumns().length + disbursementRegisterPrintSettings.defaultColumns.length + 4"
+                                  class="px-2 py-1 text-center text-gray-400 dark:text-gray-600">
+                                  … {{ disbursementRegisterData.length - 3 }} more row(s) — open full preview to see all
+                                </td>
+                              </tr>
+                            }
+                          }
+                        </tbody>
+                      </table>
+                    </div>
+
+                    @if (disbursementRegisterPrintSettings.footerLeft || disbursementRegisterPrintSettings.footerCenter || disbursementRegisterPrintSettings.footerRight) {
+                      <div class="mt-3 grid grid-cols-3 gap-2 border-t border-dashed border-gray-300 pt-2 text-[10px] text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                        <p>{{ disbursementRegisterPrintSettings.footerLeft }}</p>
+                        <p class="text-center">{{ disbursementRegisterPrintSettings.footerCenter }}</p>
+                        <p class="text-right">{{ disbursementRegisterPrintSettings.footerRight }}</p>
+                      </div>
+                    }
+                  </div>
+                </div>
+
+                <div class="flex items-center gap-3 pb-6 pt-5">
+                  <button type="button" (click)="saveDisbursementRegisterPrintSettings()" [disabled]="isSavingDisbursementRegisterPrintSettings"
+                    class="rounded-lg bg-brand-500 px-5 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">
+                    {{ isSavingDisbursementRegisterPrintSettings ? 'Saving...' : 'Save Settings' }}
+                  </button>
+                  <button type="button" (click)="resetDisbursementRegisterPrintSettings()"
+                    class="rounded-lg border border-gray-300 px-5 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Reset to Defaults
+                  </button>
+                  <button type="button" (click)="closeDisbursementRegisterPrintSettingsDrawer()"
+                    class="ml-auto rounded-lg border border-gray-300 px-5 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                    Close
+                  </button>
+                </div>
+
+              </div>
+            </aside>
+          }
         }
 
         @if (report.key === 'sales-register') {
@@ -1236,6 +2835,270 @@
                 </table>
               </div>
             </div>
+
+            @if (isTax2307PrintSettingsDrawerOpen) {
+              <div class="fixed inset-0 z-100032 bg-gray-900/40" (click)="closeTax2307PrintSettingsDrawer()"></div>
+              <aside class="fixed right-0 top-0 z-100033 h-screen w-full max-w-3xl overflow-y-auto border-l border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+                <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white/95 px-6 py-4 backdrop-blur dark:border-gray-700 dark:bg-gray-900/95">
+                  <div>
+                    <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">2307 Print Settings</h5>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Customize this report layout before printing.</p>
+                  </div>
+                  <button type="button" (click)="closeTax2307PrintSettingsDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+                </div>
+
+                <div class="space-y-4 px-6 py-5">
+                  <div class="grid grid-cols-2 gap-3">
+                    <label class="inline-flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                      <span>Show header block</span>
+                      <input type="checkbox" [(ngModel)]="tax2307PrintSettings.showHeader" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-700" />
+                    </label>
+                    <label class="inline-flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                      <span>Show logo</span>
+                      <input type="checkbox" [(ngModel)]="tax2307PrintSettings.showLogo" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-700" />
+                    </label>
+                    <label class="inline-flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300 col-span-2">
+                      <span>Show contact & address lines</span>
+                      <input type="checkbox" [(ngModel)]="tax2307PrintSettings.showAddress" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-300 dark:border-gray-700" />
+                    </label>
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-3">
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Paper Size</span>
+                      <select [(ngModel)]="tax2307PrintSettings.paperSize" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                        <option value="A4">A4</option>
+                        <option value="LETTER">Letter</option>
+                        <option value="LEGAL">Legal</option>
+                        <option value="CUSTOM">Custom</option>
+                      </select>
+                    </label>
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Orientation</span>
+                      <select [(ngModel)]="tax2307PrintSettings.orientation" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200">
+                        <option value="portrait">Portrait</option>
+                        <option value="landscape">Landscape</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  @if (tax2307PrintSettings.paperSize === 'CUSTOM') {
+                    <div class="grid grid-cols-2 gap-3">
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">Width (mm)</span>
+                        <input type="number" min="10" max="1200" step="0.5" [(ngModel)]="tax2307PrintSettings.customWidthMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                      </label>
+                      <label class="text-xs text-gray-500 dark:text-gray-400">
+                        <span class="mb-1 block">Height (mm)</span>
+                        <input type="number" min="10" max="1200" step="0.5" [(ngModel)]="tax2307PrintSettings.customHeightMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                      </label>
+                    </div>
+                  }
+
+                  <p class="mt-1 mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Margins (mm)</p>
+                  <div class="grid grid-cols-2 gap-3">
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Top</span>
+                      <input type="number" min="0" max="50" step="0.5" [(ngModel)]="tax2307PrintSettings.marginTopMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                    </label>
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Right</span>
+                      <input type="number" min="0" max="50" step="0.5" [(ngModel)]="tax2307PrintSettings.marginRightMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                    </label>
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Bottom</span>
+                      <input type="number" min="0" max="50" step="0.5" [(ngModel)]="tax2307PrintSettings.marginBottomMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                    </label>
+                    <label class="text-xs text-gray-500 dark:text-gray-400">
+                      <span class="mb-1 block">Left</span>
+                      <input type="number" min="0" max="50" step="0.5" [(ngModel)]="tax2307PrintSettings.marginLeftMm" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" />
+                    </label>
+                  </div>
+
+                  <p class="mt-1 mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Footer Notes</p>
+                  <div class="space-y-2">
+                    <input type="text" [(ngModel)]="tax2307PrintSettings.footerLeft" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Left" />
+                    <input type="text" [(ngModel)]="tax2307PrintSettings.footerCenter" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Center" />
+                    <input type="text" [(ngModel)]="tax2307PrintSettings.footerRight" class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-200" placeholder="Footer Right" />
+                  </div>
+
+                  <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-950/30">
+                    <div class="mb-2 flex items-center justify-between gap-2">
+                      <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Live Preview</p>
+                      <button type="button" (click)="openTax2307PrintPreview()" class="rounded-md border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">Open Full Preview</button>
+                    </div>
+
+                    <div class="rounded-lg border border-dashed border-gray-300 bg-white p-3 dark:border-gray-700 dark:bg-gray-900">
+                      @if (tax2307PrintSettings.showHeader) {
+                        <div class="mb-2 flex items-start justify-between gap-3 border-b border-gray-200 pb-2 dark:border-gray-700">
+                          <div class="min-w-0">
+                            @if (tax2307PrintSettings.showLogo && getTax2307PrintLogoSrc()) {
+                              <img [src]="getTax2307PrintLogoSrc()" alt="Business Logo" class="h-8 object-contain" />
+                            }
+                          </div>
+                          <div class="text-right text-[10px] leading-4 text-gray-500 dark:text-gray-400">
+                            @if (tax2307PrintSettings.showAddress) {
+                              @for (line of getTax2307HeaderLines(); track line + '_' + $index) {
+                                <p>{{ line }}</p>
+                              }
+                            }
+                          </div>
+                        </div>
+                      }
+
+                      <div class="mb-2 text-right">
+                        <p class="text-sm font-semibold text-gray-800 dark:text-white/90">2307 TAX REPORT</p>
+                        <p class="text-[10px] text-gray-500 dark:text-gray-400">For the Month of {{ tax2307MonthLabel }}</p>
+                      </div>
+
+                      <div class="overflow-hidden rounded border border-gray-200 dark:border-gray-700">
+                        <table class="min-w-full text-[10px]">
+                          <thead class="bg-gray-100 dark:bg-gray-800/70">
+                            <tr>
+                              <th class="px-2 py-1 text-left font-semibold text-gray-600 dark:text-gray-300">CV No.</th>
+                              <th class="px-2 py-1 text-left font-semibold text-gray-600 dark:text-gray-300">TIN</th>
+                              <th class="px-2 py-1 text-left font-semibold text-gray-600 dark:text-gray-300">Supplier</th>
+                              <th class="px-2 py-1 text-right font-semibold text-gray-600 dark:text-gray-300">Tax</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            @for (row of withholdingTaxRows.slice(0, 3); track row.referenceNo + '_' + $index) {
+                              <tr class="border-t border-gray-200 dark:border-gray-700">
+                                <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.referenceNo || '-' }}</td>
+                                <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.tin || '-' }}</td>
+                                <td class="px-2 py-1 text-gray-700 dark:text-gray-300">{{ row.supplierName || '-' }}</td>
+                                <td class="px-2 py-1 text-right text-gray-700 dark:text-gray-300">{{ row.taxWithheld | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              </tr>
+                            } @empty {
+                              <tr>
+                                <td colspan="4" class="px-2 py-2 text-center text-gray-500 dark:text-gray-400">No rows yet.</td>
+                              </tr>
+                            }
+                          </tbody>
+                        </table>
+                      </div>
+
+                      @if (tax2307PrintSettings.footerLeft || tax2307PrintSettings.footerCenter || tax2307PrintSettings.footerRight) {
+                        <div class="mt-2 grid grid-cols-3 gap-2 border-t border-dashed border-gray-300 pt-2 text-[10px] text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                          <p class="truncate">{{ tax2307PrintSettings.footerLeft || '-' }}</p>
+                          <p class="truncate text-center">{{ tax2307PrintSettings.footerCenter || '-' }}</p>
+                          <p class="truncate text-right">{{ tax2307PrintSettings.footerRight || '-' }}</p>
+                        </div>
+                      }
+                    </div>
+                  </div>
+
+                  <div class="rounded-lg border border-dashed border-gray-300 px-3 py-2 text-[11px] text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                    <p>Paper: {{ tax2307PrintSettings.paperSize === 'CUSTOM' ? (tax2307PrintSettings.customWidthMm + '×' + tax2307PrintSettings.customHeightMm + ' mm') : tax2307PrintSettings.paperSize }} ({{ tax2307PrintSettings.orientation }})</p>
+                    <p>
+                      Margins (mm):
+                      T {{ tax2307PrintSettings.marginTopMm }},
+                      R {{ tax2307PrintSettings.marginRightMm }},
+                      B {{ tax2307PrintSettings.marginBottomMm }},
+                      L {{ tax2307PrintSettings.marginLeftMm }}
+                    </p>
+                  </div>
+
+                  @if (tax2307PrintSettingsNotice) {
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ tax2307PrintSettingsNotice }}</p>
+                  }
+
+                  <div class="flex items-center justify-end gap-2">
+                    <button type="button" (click)="resetTax2307PrintSettings()" [disabled]="isSavingTax2307PrintSettings" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Reset</button>
+                    <button type="button" (click)="saveTax2307PrintSettings()" [disabled]="isSavingTax2307PrintSettings" class="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">
+                      {{ isSavingTax2307PrintSettings ? 'Saving...' : 'Save' }}
+                    </button>
+                  </div>
+                </div>
+              </aside>
+            }
+
+            @if (isTax2307PrintPreviewOpen) {
+              <div class="fixed inset-0 z-100040 bg-gray-900/40" (click)="closeTax2307PrintPreview()"></div>
+              <aside class="fixed inset-x-4 top-6 z-100041 mx-auto h-[90vh] max-w-6xl overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+                <div class="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
+                  <div>
+                    <h5 class="text-base font-semibold text-gray-800 dark:text-white/90">2307 Full Print Preview</h5>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Address details format: Address Details, Number, Email</p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <button type="button" (click)="executeTax2307PrintFromPreview()" class="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600">Print</button>
+                    <button type="button" (click)="closeTax2307PrintPreview()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+                  </div>
+                </div>
+
+                <div class="h-[calc(90vh-64px)] overflow-auto bg-gray-100 p-4 dark:bg-gray-950/40">
+                  <div class="mx-auto w-full max-w-210 rounded-lg border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+                    @if (tax2307PrintSettings.showHeader) {
+                      <div class="mb-4 flex items-start justify-between gap-4 border-b border-gray-200 pb-3 dark:border-gray-700">
+                        <div class="min-w-0">
+                          @if (tax2307PrintSettings.showLogo && getTax2307PrintLogoSrc()) {
+                            <img [src]="getTax2307PrintLogoSrc()" alt="Business Logo" class="h-10 object-contain" />
+                          }
+                        </div>
+                        <div class="text-right text-xs leading-5 text-gray-500 dark:text-gray-400">
+                          @if (tax2307PrintSettings.showAddress) {
+                            @for (line of getTax2307HeaderLines(); track line + '_' + $index) {
+                              <p>{{ line }}</p>
+                            }
+                          }
+                        </div>
+                      </div>
+                    }
+
+                    <div class="mb-4 text-right">
+                      <p class="text-base font-semibold text-gray-800 dark:text-white/90">2307 TAX REPORT</p>
+                      <p class="text-xs text-gray-500 dark:text-gray-400">For the Month of {{ tax2307MonthLabel }}</p>
+                    </div>
+
+                    <div class="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+                      <table class="min-w-full text-xs">
+                        <thead class="bg-gray-50 text-gray-600 dark:bg-gray-800/70 dark:text-gray-300">
+                          <tr>
+                            <th class="px-3 py-2 text-left">Reference No. (CV No.)</th>
+                            <th class="px-3 py-2 text-left">TIN</th>
+                            <th class="px-3 py-2 text-left">Supplier Name</th>
+                            <th class="px-3 py-2 text-right">Vatable Amount</th>
+                            <th class="px-3 py-2 text-right">Tax Withheld</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          @for (row of withholdingTaxRows; track row.referenceNo + '_' + row.tin + '_' + $index) {
+                            <tr class="border-t border-gray-200 dark:border-gray-700">
+                              <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.referenceNo || '-' }}</td>
+                              <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.tin || '-' }}</td>
+                              <td class="px-3 py-2 text-gray-700 dark:text-gray-300">{{ row.supplierName || '-' }}</td>
+                              <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.vatableAmount | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              <td class="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{{ row.taxWithheld | currency:'PHP':'symbol':'1.2-2' }}</td>
+                            </tr>
+                          } @empty {
+                            <tr>
+                              <td colspan="5" class="px-3 py-6 text-center text-sm text-gray-500 dark:text-gray-400">No 2307 tax lines for the selected date range.</td>
+                            </tr>
+                          }
+
+                          @if (withholdingTaxRows.length > 0) {
+                            <tr class="border-t-2 border-gray-300 bg-gray-50 font-semibold dark:border-gray-600 dark:bg-gray-800/70">
+                              <td colspan="3" class="px-3 py-2 text-gray-800 dark:text-white/90">Grand Total</td>
+                              <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ withholdingVatableTotal | currency:'PHP':'symbol':'1.2-2' }}</td>
+                              <td class="px-3 py-2 text-right text-gray-800 dark:text-white/90">{{ withholdingTaxTotal | currency:'PHP':'symbol':'1.2-2' }}</td>
+                            </tr>
+                          }
+                        </tbody>
+                      </table>
+                    </div>
+
+                    @if (tax2307PrintSettings.footerLeft || tax2307PrintSettings.footerCenter || tax2307PrintSettings.footerRight) {
+                      <div class="mt-4 grid grid-cols-3 gap-2 border-t border-dashed border-gray-300 pt-2 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                        <p>{{ tax2307PrintSettings.footerLeft || '' }}</p>
+                        <p class="text-center">{{ tax2307PrintSettings.footerCenter || '' }}</p>
+                        <p class="text-right">{{ tax2307PrintSettings.footerRight || '' }}</p>
+                      </div>
+                    }
+                  </div>
+                </div>
+              </aside>
+            }
           </div>
         }
       } @else {

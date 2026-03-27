@@ -15,6 +15,7 @@ import {
   UserManagementService,
 } from '../../shared/services/user-management.service';
 import axios from 'axios';
+import { apiClient } from '../../shared/services/api-client';
 
 type SettingsTab = 'system' | 'branches' | 'print-settings' | 'rbac-configs';
 
@@ -44,6 +45,14 @@ export class SettingsComponent implements OnInit {
   isRemovingLightLogo = false;
   isRemovingDarkLogo = false;
   isUploadingDrTemplate = false;
+  isSavingPrint = false;
+  isLoadingCvNextNumber = false;
+  cvNextNumber = '';
+  isLoadingGjNextNumber = false;
+  gjNextNumber = '';
+  isUploadingPreparedBySignature = false;
+  isUploadingCheckedBySignature = false;
+  isUploadingApprovedBySignature = false;
 
   uiMessage = '';
   uiError = '';
@@ -78,12 +87,16 @@ export class SettingsComponent implements OnInit {
   };
 
   form: {
+    websiteTabName: string;
+    routingTabName: string;
     businessName: string;
     businessAddress: string;
     businessContact: string;
     businessEmail: string;
     businessOwner: string;
   } = {
+    websiteTabName: '',
+    routingTabName: '{route}',
     businessName: '',
     businessAddress: '',
     businessContact: '',
@@ -95,10 +108,62 @@ export class SettingsComponent implements OnInit {
     businessLogoLight: string | null;
     businessLogoDark: string | null;
     drTemplatePdf: string | null;
+    printSignaturePreparedBy: string | null;
+    printSignatureCheckedBy: string | null;
+    printSignatureApprovedBy: string | null;
   } = {
     businessLogoLight: null,
     businessLogoDark: null,
     drTemplatePdf: null,
+    printSignaturePreparedBy: null,
+    printSignatureCheckedBy: null,
+    printSignatureApprovedBy: null,
+  };
+
+  printForm: {
+    paperSize: string;
+    showLogo: boolean;
+    logoVariant: string;
+    footerText: string;
+    quoteHeaderColor: string;
+    quoteShowTerms: boolean;
+    quoteShowMisc: boolean;
+    quoteShowValidity: boolean;
+    soShowDiscount: boolean;
+    soShowPaymentTerms: boolean;
+    soShowSerials: boolean;
+    drShowSerials: boolean;
+    drShowSignature: boolean;
+    addressDetails: string;
+    addressShowSoInvoice: boolean;
+    addressShowQuotation: boolean;
+    addressShowDr: boolean;
+    cvNumberPrefix: string;
+    cvNumberSuffix: string;
+    gjNumberPrefix: string;
+    gjNumberSuffix: string;
+  } = {
+    paperSize: 'A4',
+    showLogo: true,
+    logoVariant: 'light',
+    footerText: '',
+    quoteHeaderColor: '#0f9cdf',
+    quoteShowTerms: true,
+    quoteShowMisc: false,
+    quoteShowValidity: true,
+    soShowDiscount: false,
+    soShowPaymentTerms: true,
+    soShowSerials: true,
+    drShowSerials: true,
+    drShowSignature: true,
+    addressDetails: '',
+    addressShowSoInvoice: true,
+    addressShowQuotation: true,
+    addressShowDr: true,
+    cvNumberPrefix: 'CV',
+    cvNumberSuffix: '',
+    gjNumberPrefix: 'GJ',
+    gjNumberSuffix: '',
   };
 
   constructor(
@@ -112,6 +177,8 @@ export class SettingsComponent implements OnInit {
     void this.loadBusinessProfile();
     void this.loadBranches();
     void this.loadRbacConfig();
+    void this.loadCvNextNumber();
+    void this.loadGjNextNumber();
   }
 
   readonly tabs: Array<{ key: SettingsTab; label: string; disabled?: boolean }> = [
@@ -535,6 +602,8 @@ export class SettingsComponent implements OnInit {
 
     try {
       const response = await this.businessSettingsService.updateBusinessProfile({
+        websiteTabName: this.toNullable(this.form.websiteTabName),
+        routingTabName: this.toNullable(this.form.routingTabName),
         businessName: this.toNullable(this.form.businessName),
         businessAddress: this.toNullable(this.form.businessAddress),
         businessContact: this.toNullable(this.form.businessContact),
@@ -678,8 +747,64 @@ export class SettingsComponent implements OnInit {
     }
   }
 
+  async onUploadSignatorySignature(
+    role: 'prepared-by' | 'checked-by' | 'approved-by',
+    event: Event,
+  ): Promise<void> {
+    if (!this.canUpdateSettings) {
+      this.uiError = 'You do not have permission to upload signatures.';
+      return;
+    }
+
+    const file = this.readSelectedFile(event);
+    if (!file) {
+      return;
+    }
+
+    if (!file.type.startsWith('image/')) {
+      this.uiError = 'Please upload an image file for signatory signature.';
+      return;
+    }
+
+    if (role === 'prepared-by') {
+      this.isUploadingPreparedBySignature = true;
+    } else if (role === 'checked-by') {
+      this.isUploadingCheckedBySignature = true;
+    } else {
+      this.isUploadingApprovedBySignature = true;
+    }
+
+    this.uiError = '';
+    this.uiMessage = '';
+
+    try {
+      const response = await this.businessSettingsService.uploadSignatorySignature(role, file);
+      if (!response.success) {
+        this.uiError = response.message ?? 'Failed to upload signatory signature.';
+        return;
+      }
+
+      this.applyBusinessProfile(response.item ?? null);
+      this.uiMessage = 'Signatory signature uploaded successfully.';
+    } catch (error: unknown) {
+      this.uiError = this.resolveErrorMessage(error, 'Failed to upload signatory signature.');
+    } finally {
+      if (role === 'prepared-by') {
+        this.isUploadingPreparedBySignature = false;
+      } else if (role === 'checked-by') {
+        this.isUploadingCheckedBySignature = false;
+      } else {
+        this.isUploadingApprovedBySignature = false;
+      }
+
+      this.resetFileInput(event);
+    }
+  }
+
   private applyBusinessProfile(item: BusinessProfileSettings | null): void {
     this.form = {
+      websiteTabName: item?.websiteTabName ?? item?.businessName ?? 'HVAC Warehouse and Sales',
+      routingTabName: item?.routingTabName ?? '{route}',
       businessName: item?.businessName ?? '',
       businessAddress: item?.businessAddress ?? '',
       businessContact: item?.businessContact ?? '',
@@ -691,7 +816,122 @@ export class SettingsComponent implements OnInit {
       businessLogoLight: item?.businessLogoLight ?? item?.businessLogo ?? this.defaultBusinessLogoLight,
       businessLogoDark: item?.businessLogoDark ?? item?.businessLogo ?? this.defaultBusinessLogoDark,
       drTemplatePdf: item?.drTemplatePdf ?? this.defaultDrTemplatePdf,
+      printSignaturePreparedBy: item?.printSignaturePreparedBy ?? null,
+      printSignatureCheckedBy: item?.printSignatureCheckedBy ?? null,
+      printSignatureApprovedBy: item?.printSignatureApprovedBy ?? null,
     };
+
+    this.printForm = {
+      paperSize: item?.printPaperSize ?? 'A4',
+      showLogo: this.parsePrintBool(item?.printShowLogo, true),
+      logoVariant: item?.printLogoVariant ?? 'light',
+      footerText: item?.printFooterText ?? '',
+      quoteHeaderColor: item?.printQuoteHeaderColor ?? '#0f9cdf',
+      quoteShowTerms: this.parsePrintBool(item?.printQuoteShowTerms, true),
+      quoteShowMisc: this.parsePrintBool(item?.printQuoteShowMisc, false),
+      quoteShowValidity: this.parsePrintBool(item?.printQuoteShowValidity, true),
+      soShowDiscount: this.parsePrintBool(item?.printSoShowDiscount, false),
+      soShowPaymentTerms: this.parsePrintBool(item?.printSoShowPaymentTerms, true),
+      soShowSerials: this.parsePrintBool(item?.printSoShowSerials, true),
+      drShowSerials: this.parsePrintBool(item?.printDrShowSerials, true),
+      drShowSignature: this.parsePrintBool(item?.printDrShowSignature, true),
+      addressDetails: item?.printAddressDetails ?? '',
+      addressShowSoInvoice: this.parsePrintBool(item?.printAddressShowSoInvoice, true),
+      addressShowQuotation: this.parsePrintBool(item?.printAddressShowQuotation, true),
+      addressShowDr: this.parsePrintBool(item?.printAddressShowDr, true),
+      cvNumberPrefix: item?.cvNumberPrefix ?? 'CV',
+      cvNumberSuffix: item?.cvNumberSuffix ?? '',
+      gjNumberPrefix: item?.gjNumberPrefix ?? 'GJ',
+      gjNumberSuffix: item?.gjNumberSuffix ?? '',
+    };
+  }
+
+  async savePrintSettings(): Promise<void> {
+    if (!this.canUpdateSettings) {
+      this.uiError = 'You do not have permission to update settings.';
+      return;
+    }
+
+    this.isSavingPrint = true;
+    this.uiError = '';
+    this.uiMessage = '';
+
+    try {
+      const response = await this.businessSettingsService.updateBusinessProfile({
+        printPaperSize: this.printForm.paperSize || 'A4',
+        printShowLogo: String(this.printForm.showLogo),
+        printLogoVariant: this.printForm.logoVariant || 'light',
+        printFooterText: this.toNullable(this.printForm.footerText),
+        printQuoteHeaderColor: this.printForm.quoteHeaderColor || '#0f9cdf',
+        printQuoteShowTerms: String(this.printForm.quoteShowTerms),
+        printQuoteShowMisc: String(this.printForm.quoteShowMisc),
+        printQuoteShowValidity: String(this.printForm.quoteShowValidity),
+        printSoShowDiscount: String(this.printForm.soShowDiscount),
+        printSoShowPaymentTerms: String(this.printForm.soShowPaymentTerms),
+        printSoShowSerials: String(this.printForm.soShowSerials),
+        printDrShowSerials: String(this.printForm.drShowSerials),
+        printDrShowSignature: String(this.printForm.drShowSignature),
+        printAddressDetails: this.toNullable(this.printForm.addressDetails),
+        printAddressShowSoInvoice: String(this.printForm.addressShowSoInvoice),
+        printAddressShowQuotation: String(this.printForm.addressShowQuotation),
+        printAddressShowDr: String(this.printForm.addressShowDr),
+        cvNumberPrefix: this.printForm.cvNumberPrefix.trim() || 'CV',
+        cvNumberSuffix: this.printForm.cvNumberSuffix.trim(),
+        gjNumberPrefix: this.printForm.gjNumberPrefix.trim() || 'GJ',
+        gjNumberSuffix: this.printForm.gjNumberSuffix.trim(),
+      });
+
+      if (!response.success) {
+        this.uiError = response.message ?? 'Failed to save print settings.';
+        return;
+      }
+
+      this.applyBusinessProfile(response.item ?? null);
+      this.uiMessage = 'Print settings saved successfully.';
+      void this.loadCvNextNumber();
+      void this.loadGjNextNumber();
+    } catch (error: unknown) {
+      this.uiError = this.resolveErrorMessage(error, 'Failed to save print settings.');
+    } finally {
+      this.isSavingPrint = false;
+    }
+  }
+
+  async loadCvNextNumber(): Promise<void> {
+    this.isLoadingCvNextNumber = true;
+    try {
+      const response = await apiClient.get<{ success: boolean; data?: { cvNo?: string } }>(
+        '/accounting/cheque-vouchers/next-number',
+      );
+      this.cvNextNumber = String(response.data?.data?.cvNo ?? '').trim();
+    } catch {
+      this.cvNextNumber = '';
+    } finally {
+      this.isLoadingCvNextNumber = false;
+    }
+  }
+
+  async loadGjNextNumber(): Promise<void> {
+    this.isLoadingGjNextNumber = true;
+    try {
+      const response = await apiClient.get<{ success: boolean; data?: { journalNo?: string } }>(
+        '/accounting/general-journals/next-number',
+      );
+
+      this.gjNextNumber = String(response.data?.data?.journalNo ?? '').trim();
+    } catch {
+      this.gjNextNumber = '';
+    } finally {
+      this.isLoadingGjNextNumber = false;
+    }
+  }
+
+  private parsePrintBool(value: string | null | undefined, defaultValue: boolean): boolean {
+    if (value === null || value === undefined) {
+      return defaultValue;
+    }
+
+    return String(value).trim().toLowerCase() === 'true';
   }
 
   private mapRole(item: RoleApiItem): { id: number; name: string } {

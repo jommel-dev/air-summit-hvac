@@ -25,5 +25,17 @@ export class AppComponent implements OnInit {
     void this.rbacService.syncEffectivePermissions();
   }
 
+  get isIdlePromptVisible(): boolean {
+    return this.idleSessionService.idlePromptVisible;
+  }
+
+  continueIdleSession(): void {
+    this.idleSessionService.respondToIdlePrompt(true);
+  }
+
+  endIdleSession(): void {
+    this.idleSessionService.respondToIdlePrompt(false);
+  }
+
   title = 'Angular Ecommerce Dashboard | TailAdmin';
 }

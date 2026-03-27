@@ -742,10 +742,7 @@ export class SalesOrderService {
         LOWER(COALESCE(base.sales_type, '')) IN (
           'distribution',
           'transfer',
-          'transfers',
-          'sub-dealer',
-          'sub dealer',
-          'sub_dealer'
+          'transfers'
         )
         OR EXISTS (SELECT 1 FROM tbltransfer_details td WHERE td.sales_id = base.id)
       )`);
@@ -753,14 +750,15 @@ export class SalesOrderService {
       whereParts.push(`COALESCE(base.remaining_amount, 0) > 0`);
       whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN (
         'approved', 'released', 'delivered', 'partial', 'remitted'
-      )`);
+      ) OR LOWER(COALESCE(base.original_status, '')) = 'remitted'`);
     } else if (mode === 'remitted-sales') {
       whereParts.push(`(
         LOWER(COALESCE(base.original_status, '')) IN ('complete', 'completed')
+        OR LOWER(COALESCE(base.original_status, '')) = 'completed'
         OR (
           COALESCE(base.remaining_amount, 0) <= 0
           AND LOWER(COALESCE(base.original_status, '')) IN (
-            'approved', 'released', 'delivered', 'partial', 'paid', 'remitted'
+            'approved', 'released', 'delivered', 'partial', 'paid', 'remitted', 'completed'
           )
         )
       )`);
@@ -781,6 +779,7 @@ export class SalesOrderService {
         OR LOWER(COALESCE(base.customer_name, '')) LIKE $${searchIndex}
         OR LOWER(COALESCE(base.computed_status, '')) LIKE $${searchIndex}
         OR LOWER(COALESCE(base.sales_type, '')) LIKE $${searchIndex}
+        OR LOWER(COALESCE(base.payment_method, '')) LIKE $${searchIndex}
       )`);
     }
 
@@ -818,6 +817,13 @@ export class SalesOrderService {
             to_jsonb(sp)->>'so_id',
             to_jsonb(sp)->>'soId'
           ) AS so_id,
+          COALESCE(
+            STRING_AGG(
+              DISTINCT NULLIF(COALESCE(to_jsonb(sp)->>'method', ''), ''),
+              ', ' ORDER BY NULLIF(COALESCE(to_jsonb(sp)->>'method', ''), '')
+            ),
+            '-'
+          ) AS payment_method,
           COALESCE(
             SUM(
               COALESCE(
@@ -888,6 +894,7 @@ export class SalesOrderService {
             ''
           ) AS project_code,
           COALESCE(sc.serial_count, 0)::int AS serial_count,
+          COALESCE(pt.payment_method, '-') AS payment_method,
           COALESCE(pt.paid_amount, 0) AS paid_amount,
           GREATEST(
             COALESCE(
@@ -945,6 +952,7 @@ export class SalesOrderService {
         base.sales_type AS "salesType",
         base.project_name AS "projectName",
         base.project_code AS "projectCode",
+        base.payment_method AS "paymentMethod",
         base.schedule_date AS "scheduleDate",
         base.created_at AS "createdAt",
         base.serial_count AS "serialCount"
@@ -965,6 +973,7 @@ export class SalesOrderService {
       salesType: string | null;
       projectName: string | null;
       projectCode: string | null;
+      paymentMethod: string | null;
       scheduleDate: string | null;
       createdAt: string | null;
       serialCount: number;
@@ -982,6 +991,7 @@ export class SalesOrderService {
         salesType: row.salesType ?? '',
         projectName: row.projectName ?? '',
         projectCode: row.projectCode ?? '',
+        paymentMethod: row.paymentMethod ?? '-',
         scheduleDate: row.scheduleDate,
         createdAt: row.createdAt,
         serialCount: Number(row.serialCount ?? 0),

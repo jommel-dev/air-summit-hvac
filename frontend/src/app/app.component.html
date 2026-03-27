@@ -1,2 +1,31 @@
 <router-outlet></router-outlet>
 <app-notification-toast></app-notification-toast>
+
+@if (isIdlePromptVisible) {
+	<div class="fixed inset-0 z-[100050] bg-black/45 backdrop-blur-sm"></div>
+	<div class="fixed inset-0 z-[100051] flex items-center justify-center p-4">
+		<div class="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-5 shadow-2xl dark:border-gray-700 dark:bg-gray-900">
+			<h3 class="text-lg font-semibold text-gray-900 dark:text-white">Session Idle</h3>
+			<p class="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
+				Your session has been idle. Continue to refresh your session, or end the session now.
+			</p>
+
+			<div class="mt-5 flex items-center justify-end gap-3">
+				<button
+					type="button"
+					(click)="endIdleSession()"
+					class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+				>
+					End Session
+				</button>
+				<button
+					type="button"
+					(click)="continueIdleSession()"
+					class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
+				>
+					Continue
+				</button>
+			</div>
+		</div>
+	</div>
+}

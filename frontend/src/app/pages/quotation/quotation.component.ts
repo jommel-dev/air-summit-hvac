@@ -6,6 +6,10 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import { ProductOption, SalesCustomerOption } from '../../shared/services/sales-order.service';
 import {
+  BusinessProfileSettings,
+  BusinessSettingsService,
+} from '../../shared/services/business-settings.service';
+import {
   QuotationDetailItem,
   QuotationListItem,
   QuotationPayload,
@@ -69,6 +73,14 @@ interface QuotationPreviewPdfData {
   miscRows: QuotationPreviewMiscRow[];
 }
 
+interface QuotationHeaderProfile {
+  businessName: string;
+  addressDetails: string;
+  contactDetails: string;
+  emailDetails: string;
+  logoSrc: string | null;
+}
+
 @Component({
   selector: 'app-quotation',
   imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
@@ -77,9 +89,12 @@ interface QuotationPreviewPdfData {
 export class QuotationComponent implements OnInit, OnDestroy {
   constructor(
     private readonly quotationService: QuotationService,
+    private readonly businessSettingsService: BusinessSettingsService,
     private readonly rbacService: RbacService,
     private readonly sanitizer: DomSanitizer,
   ) {}
+
+  private businessProfileSettings: BusinessProfileSettings | null = null;
 
   activeTab: QuotationTab = 'all';
   search = '';
@@ -189,6 +204,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
     void this.loadQuotations();
     void this.loadReferenceData();
     void this.loadCustomerOptions();
+    void this.loadBusinessProfileSettings();
   }
 
   ngOnDestroy(): void {
@@ -999,7 +1015,8 @@ export class QuotationComponent implements OnInit, OnDestroy {
       })
       .join('');
 
-    const logoSrc = await this.loadLogoPreviewSrc();
+    const businessProfile = await this.loadBusinessProfileSettings();
+    const headerProfile = await this.buildQuotationHeaderProfile(businessProfile);
     const miscTableRowsHtml = miscRows.length > 0
       ? miscRows
           .map((row) => `
@@ -1024,8 +1041,12 @@ export class QuotationComponent implements OnInit, OnDestroy {
       customerContactPerson: detail.customerContactPerson,
       customerContactNumber: detail.customerContactNumber,
       customerAddress: detail.customerAddress,
+      headerBusinessName: headerProfile.businessName,
+      headerAddress: headerProfile.addressDetails,
+      headerContact: headerProfile.contactDetails,
+      headerEmail: headerProfile.emailDetails,
       totalAmount,
-      logoSrc,
+      logoSrc: headerProfile.logoSrc,
       tableRowsHtml,
       miscTableRowsHtml,
       termsConditions: detail.termsConditions,
@@ -1183,7 +1204,8 @@ export class QuotationComponent implements OnInit, OnDestroy {
       })
       .join('');
 
-    const logoSrc = await this.loadLogoPreviewSrc();
+    const businessProfile = await this.loadBusinessProfileSettings();
+    const headerProfile = await this.buildQuotationHeaderProfile(businessProfile);
     const miscTableRowsHtml = miscRows.length > 0
       ? miscRows
           .map((row) => `
@@ -1206,8 +1228,12 @@ export class QuotationComponent implements OnInit, OnDestroy {
       customerContactPerson: this.form.customer.contact_person,
       customerContactNumber: this.form.customer.contact_number,
       customerAddress: this.form.customer.address,
+      headerBusinessName: headerProfile.businessName,
+      headerAddress: headerProfile.addressDetails,
+      headerContact: headerProfile.contactDetails,
+      headerEmail: headerProfile.emailDetails,
       totalAmount: this.form.totalAmount,
-      logoSrc,
+      logoSrc: headerProfile.logoSrc,
       tableRowsHtml,
       miscTableRowsHtml,
       termsConditions: this.form.termsConditions,
@@ -1256,6 +1282,10 @@ export class QuotationComponent implements OnInit, OnDestroy {
     customerContactPerson: string;
     customerContactNumber: string;
     customerAddress: string;
+    headerBusinessName: string;
+    headerAddress: string;
+    headerContact: string;
+    headerEmail: string;
     totalAmount: number;
     logoSrc: string | null;
     tableRowsHtml: string;
@@ -1273,8 +1303,14 @@ export class QuotationComponent implements OnInit, OnDestroy {
     const toHtmlLines = (text: string) =>
       text.split('\n').map((line) => this.escapeHtml(line)).join('<br/>');
 
-    const logoSrc = this.escapeHtml(this.resolveAssetUrl(payload.logoSrc || '/images/air-summit-logo.png'));
+    const logoSrc = payload.logoSrc
+      ? this.escapeHtml(this.resolveAssetUrl(payload.logoSrc))
+      : '';
     const signatorySrc = this.escapeHtml(this.resolveAssetUrl('/images/van-esign.png'));
+    const headerBusinessName = this.escapeHtml(String(payload.headerBusinessName || '').trim());
+    const headerAddress = this.escapeHtml(String(payload.headerAddress || '').trim());
+    const headerContact = this.escapeHtml(String(payload.headerContact || '').trim());
+    const headerEmail = this.escapeHtml(String(payload.headerEmail || '').trim());
 
     return `
       <html>
@@ -1283,9 +1319,11 @@ export class QuotationComponent implements OnInit, OnDestroy {
           <style>
             body { font-family: Arial, sans-serif; margin: 20px; color: #111; font-size: 12px; }
             html, body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
-            .top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+            .top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+            .brand-block { width: 180px; display: flex; align-items: flex-start; }
             .logo { width: 150px; }
-            .contacts { color: #1f3f9a; font-size: 12px; line-height: 1.3; font-weight: 600; text-align: left; }
+            .brand-name-fallback { color: #1f3f9a; font-size: 20px; font-weight: 700; line-height: 1.15; }
+            .contacts { color: #1f3f9a; font-size: 12px; line-height: 1.45; font-weight: 600; text-align: left; max-width: 290px; margin-left: auto; padding-top: 6px; }
             .customer-contract { display: flex; justify-content: space-between; margin-bottom: 8px; }
             .customer-lines { width: 60%; line-height: 1.45; }
             .customer-lines .label { display: inline-block; width: 110px; }
@@ -1325,14 +1363,13 @@ export class QuotationComponent implements OnInit, OnDestroy {
         </head>
         <body>
           <div class="top">
-            <div>
-              <img src="${logoSrc}" class="logo" alt="Air Summit" />
+            <div class="brand-block">
+              ${logoSrc ? `<img src="${logoSrc}" class="logo" alt="${headerBusinessName || 'Business Logo'}" />` : `<div class="brand-name-fallback">${headerBusinessName || 'HVAC Warehouse & Sales'}</div>`}
             </div>
             <div class="contacts">
-              <div>Contact Us: 0917-137-8744 / 0908-811-2850</div>
-              <div>Email: airsummit2022@gmail.com</div>
-              <div>Main Office: Lot 15, Blk 14, Bulaon Resettlement, City Of San Fernando Pampanga</div>
-              <div>Warehouse: Tramo Mesulo, Arayat Pampanga</div>
+              ${headerAddress ? `<div>Address: ${headerAddress}</div>` : ''}
+              ${headerContact ? `<div>Contact Us: ${headerContact}</div>` : ''}
+              ${headerEmail ? `<div>Email Us: ${headerEmail}</div>` : ''}
             </div>
           </div>
 
@@ -1472,7 +1509,13 @@ export class QuotationComponent implements OnInit, OnDestroy {
     const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
     const { width, height } = page.getSize();
 
-    const logoBytes = await this.loadLogoPngBytes(['/images/air-summit-logo.png', '/images/logo/logo.svg']);
+    const businessProfile = await this.loadBusinessProfileSettings();
+    const headerProfile = await this.buildQuotationHeaderProfile(businessProfile);
+    const logoSources = headerProfile.logoSrc
+      ? [headerProfile.logoSrc, '/images/air-summit-logo.png', '/images/logo/logo.svg']
+      : ['/images/air-summit-logo.png', '/images/logo/logo.svg'];
+
+    const logoBytes = await this.loadLogoPngBytes(logoSources);
     if (logoBytes) {
       const logo = await pdfDoc.embedPng(logoBytes);
       const logoWidth = 120;
@@ -1485,7 +1528,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
         height: logoHeight,
       });
     } else {
-      page.drawText('AIR SUMMIT', {
+      page.drawText(headerProfile.businessName || 'AIR SUMMIT', {
         x: 50,
         y: height - 50,
         size: 20,
@@ -1495,17 +1538,46 @@ export class QuotationComponent implements OnInit, OnDestroy {
     }
 
     const contacts = [
-      'Contact Us: 0917-137-8744 / 0908-811-2850',
-      'Email: airsummit2022@gmail.com',
-      'Main Office: Lot 15, Blk 14, Bulaon Resettlement, City Of San Fernando Pampanga',
-      'Warehouse: Tramo Mesulo, Arayat Pampanga',
-    ];
+      headerProfile.addressDetails ? `Address: ${headerProfile.addressDetails}` : '',
+      headerProfile.contactDetails ? `Contact Us: ${headerProfile.contactDetails}` : '',
+      headerProfile.emailDetails ? `Email Us: ${headerProfile.emailDetails}` : '',
+    ].filter((line) => String(line || '').trim().length > 0);
 
-    contacts.forEach((line, index) => {
+    const wrapHeaderLine = (text: string, maxWidth: number): string[] => {
+      const words = String(text || '').trim().split(/\s+/).filter((word) => word.length > 0);
+      if (words.length === 0) {
+        return [];
+      }
+
+      const lines: string[] = [];
+      let currentLine = '';
+
+      for (const word of words) {
+        const candidate = currentLine ? `${currentLine} ${word}` : word;
+        if (font.widthOfTextAtSize(candidate, 9) <= maxWidth) {
+          currentLine = candidate;
+          continue;
+        }
+
+        if (currentLine) {
+          lines.push(currentLine);
+        }
+        currentLine = word;
+      }
+
+      if (currentLine) {
+        lines.push(currentLine);
+      }
+
+      return lines;
+    };
+
+    const headerLines = contacts.flatMap((line) => wrapHeaderLine(line, 255)).slice(0, 6);
+    headerLines.forEach((line, index) => {
       page.drawText(line, {
-        x: width - 390,
-        y: height - 32 - index * 14,
-        size: 10,
+        x: width - 305,
+        y: height - 52 - index * 12,
+        size: 9,
         font,
         color: rgb(0.1, 0.24, 0.6),
       });
@@ -1680,8 +1752,21 @@ export class QuotationComponent implements OnInit, OnDestroy {
     }
   }
 
-  private async loadLogoPreviewSrc(): Promise<string | null> {
-    const candidates = ['/images/air-summit-logo.png', '/images/logo/logo.svg'];
+  private async loadLogoPreviewSrc(businessProfile?: BusinessProfileSettings | null): Promise<string | null> {
+    const showLogo = this.parsePrintBool(businessProfile?.printShowLogo, true);
+    if (!showLogo) {
+      return null;
+    }
+
+    const preferredLogo = String(
+      (businessProfile?.printLogoVariant ?? 'light') === 'dark'
+        ? (businessProfile?.businessLogoDark ?? businessProfile?.businessLogo ?? '')
+        : (businessProfile?.businessLogoLight ?? businessProfile?.businessLogo ?? ''),
+    ).trim();
+
+    const candidates = [preferredLogo, '/images/air-summit-logo.png', '/images/logo/logo.svg'].filter(
+      (path) => String(path || '').trim().length > 0,
+    );
 
     for (const path of candidates) {
       try {
@@ -1698,6 +1783,49 @@ export class QuotationComponent implements OnInit, OnDestroy {
     }
 
     return null;
+  }
+
+  private async buildQuotationHeaderProfile(
+    businessProfile: BusinessProfileSettings | null,
+  ): Promise<QuotationHeaderProfile> {
+    const businessName = String(businessProfile?.businessName ?? '').trim() || 'HVAC Warehouse & Sales';
+    const showAddress = this.parsePrintBool(businessProfile?.printAddressShowQuotation, true);
+    const addressDetails = showAddress
+      ? String(businessProfile?.printAddressDetails ?? businessProfile?.businessAddress ?? '').trim()
+      : '';
+
+    const contactDetails = String(businessProfile?.businessContact ?? '').trim();
+    const emailDetails = String(businessProfile?.businessEmail ?? '').trim();
+    const logoSrc = await this.loadLogoPreviewSrc(businessProfile);
+
+    return {
+      businessName,
+      addressDetails,
+      contactDetails,
+      emailDetails,
+      logoSrc,
+    };
+  }
+
+  private async loadBusinessProfileSettings(): Promise<BusinessProfileSettings | null> {
+    if (this.businessProfileSettings) {
+      return this.businessProfileSettings;
+    }
+
+    try {
+      this.businessProfileSettings = await this.businessSettingsService.getBusinessProfile();
+      return this.businessProfileSettings;
+    } catch {
+      return null;
+    }
+  }
+
+  private parsePrintBool(value: string | null | undefined, defaultValue: boolean): boolean {
+    if (value === null || value === undefined) {
+      return defaultValue;
+    }
+
+    return String(value).trim().toLowerCase() === 'true';
   }
 
   private resolveAssetUrl(path: string): string {

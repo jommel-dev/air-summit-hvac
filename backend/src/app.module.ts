@@ -19,6 +19,7 @@ import { MaterialsModule } from './inventory/materials/materials.module';
 import { MaterialTransactionsModule } from './inventory/material-transactions/material-transactions.module';
 import { SettingsModule } from './settings/settings.module';
 import { AccountingModule } from './accounting/accounting.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { AccountingModule } from './accounting/accounting.module';
     QuotationModule,
     SettingsModule,
     AccountingModule,
+    AuditLogModule,
   ],
   controllers: [AppController],
   providers: [AppService],

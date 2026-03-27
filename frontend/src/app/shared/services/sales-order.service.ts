@@ -127,6 +127,7 @@ export interface SalesOrderListItem {
   customerId: string | null;
   customerName: string;
   totalAmount: number;
+  paymentMethod: string;
   status: string;
   salesType?: string;
   projectName?: string;
