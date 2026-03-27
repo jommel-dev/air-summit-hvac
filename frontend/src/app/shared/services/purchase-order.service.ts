@@ -194,6 +194,11 @@ export interface CreatePurchaseResponse {
 export type UpdatePurchaseResponse = CreatePurchaseResponse;
 export type PurchaseActionResponse = CreatePurchaseResponse;
 
+export interface DeletePurchaseAuthPayload {
+  password: string;
+  authUsername?: string;
+}
+
 export interface VendorOption {
   id: string;
   name: string;
@@ -333,6 +338,22 @@ export class PurchaseOrderService {
       payload,
     );
 
+    return response.data;
+  }
+
+  async cancelPurchase(id: number): Promise<PurchaseActionResponse> {
+    const response = await apiClient.patch<PurchaseActionResponse>(`/purchase/${id}/cancel`, {});
+    return response.data;
+  }
+
+  async deletePurchase(
+    id: number,
+    payload: DeletePurchaseAuthPayload,
+  ): Promise<PurchaseActionResponse> {
+    const response = await apiClient.post<PurchaseActionResponse>(
+      `/purchase/${id}/delete-authorized`,
+      payload,
+    );
     return response.data;
   }
 }

@@ -10,6 +10,11 @@ export class IdleSessionService implements OnDestroy {
   private readonly activityEvents = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart'];
   private started = false;
   private isPromptOpen = false;
+  private promptDecisionResolver: ((decision: boolean) => void) | null = null;
+
+  get idlePromptVisible(): boolean {
+    return this.isPromptOpen;
+  }
 
   constructor(
     private readonly authService: AuthService,
@@ -78,14 +83,11 @@ export class IdleSessionService implements OnDestroy {
     }
 
     this.isPromptOpen = true;
-    const shouldContinue = window.confirm(
-      'Your session is idle. Do you want to continue and refresh your session?',
-    );
+    const shouldContinue = await this.waitForPromptDecision();
 
     if (!shouldContinue) {
       this.authService.logout();
       await this.router.navigateByUrl('/');
-      this.isPromptOpen = false;
       return;
     }
 
@@ -99,8 +101,25 @@ export class IdleSessionService implements OnDestroy {
       this.authService.logout();
       await this.router.navigateByUrl('/');
     } finally {
-      this.isPromptOpen = false;
       this.resetIdleTimer();
     }
+  }
+
+  respondToIdlePrompt(shouldContinue: boolean): void {
+    if (!this.isPromptOpen || !this.promptDecisionResolver) {
+      return;
+    }
+
+    const resolver = this.promptDecisionResolver;
+    this.promptDecisionResolver = null;
+    this.isPromptOpen = false;
+
+    resolver(shouldContinue);
+  }
+
+  private waitForPromptDecision(): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      this.promptDecisionResolver = resolve;
+    });
   }
 }

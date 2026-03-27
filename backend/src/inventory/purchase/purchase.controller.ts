@@ -5,7 +5,6 @@ import {
   Body,
   Patch,
   Param,
-  Delete,
   Query,
   Req,
 } from '@nestjs/common';
@@ -15,6 +14,7 @@ import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { ListPurchaseQueryDto } from './dto/list-purchase-query.dto';
+import { DeletePurchaseWithAuthDto } from './dto/delete-purchase-with-auth.dto';
 
 @Controller('purchase')
 @UseGuards(JwtAuthGuard)
@@ -188,8 +188,51 @@ export class PurchaseController {
     );
   }
 
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.purchaseService.remove(+id);
+  @Patch(':id/cancel')
+  cancelPurchase(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    const username = String(request.user?.username ?? '').trim();
+    const roleName = String(
+      request.user?.roleName ?? request.user?.role_name ?? '',
+    ).trim();
+    const branchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+
+    return this.purchaseService.cancelPurchase(+id, {
+      userId: Number.isFinite(userId) ? userId : undefined,
+      username: username || undefined,
+      roleName: roleName || undefined,
+      branchId: Number.isFinite(branchId) ? branchId : undefined,
+    });
+  }
+
+  @Post(':id/delete-authorized')
+  removeWithAuth(
+    @Param('id') id: string,
+    @Body() body: DeletePurchaseWithAuthDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    const roleName = String(
+      request.user?.roleName ?? request.user?.role_name ?? '',
+    ).trim();
+    const username = String(request.user?.username ?? '').trim();
+    const branchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+
+    return this.purchaseService.deletePurchaseWithAuth(
+      +id,
+      Number.isFinite(userId) ? userId : 0,
+      roleName,
+      username,
+      String(body?.password ?? ''),
+      String(body?.authUsername ?? '').trim() || undefined,
+      Number.isFinite(branchId) ? branchId : undefined,
+    );
   }
 }

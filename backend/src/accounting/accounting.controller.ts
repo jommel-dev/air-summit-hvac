@@ -1,11 +1,23 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
-import type { CreateChequeVoucherPayload, UpdateChequeVoucherPayload, UpsertAccountTitlePayload } from './accounting.service';
+import type {
+  AccountingReportPrintSettingsPayload,
+  CreateChequeVoucherPayload,
+  CreateGeneralJournalPayload,
+  UpdateGeneralJournalPayload,
+  UpdateChequeVoucherPayload,
+  UpsertAccountTitlePayload,
+} from './accounting.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
 @Controller('accounting')
 export class AccountingController {
   constructor(private readonly accountingService: AccountingService) {}
+
+  private toPositiveNumber(value: unknown): number | undefined {
+    const normalized = Number(value);
+    return Number.isFinite(normalized) && normalized > 0 ? normalized : undefined;
+  }
 
   @Get('account-titles')
   async getAccountTitles(): Promise<{ success: boolean; data: unknown }> {
@@ -34,12 +46,91 @@ export class AccountingController {
     };
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('report-print-settings/:reportKey')
+  async getReportPrintSettings(
+    @Param('reportKey') reportKey: string,
+    @Req() request: { user?: Record<string, unknown> },
+  ): Promise<{ success: boolean; data: unknown }> {
+    const branchId = this.toPositiveNumber(request.user?.branchId ?? request.user?.branch_id);
+    const data = await this.accountingService.getReportPrintSettings(reportKey, branchId);
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('report-print-settings/:reportKey')
+  async upsertReportPrintSettings(
+    @Param('reportKey') reportKey: string,
+    @Body() payload: AccountingReportPrintSettingsPayload,
+    @Req() request: { user?: Record<string, unknown> },
+  ): Promise<{ success: boolean; data: unknown }> {
+    const branchId = this.toPositiveNumber(request.user?.branchId ?? request.user?.branch_id);
+    const userId = this.toPositiveNumber(request.user?.sub);
+    const data = await this.accountingService.upsertReportPrintSettings(reportKey, payload, {
+      branchId,
+      userId,
+    });
+    return {
+      success: true,
+      data,
+    };
+  }
+
   @Get('cheque-vouchers')
   async listChequeVouchers(
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
   ): Promise<{ success: boolean; data: unknown }> {
     const data = await this.accountingService.listChequeVouchers({ dateFrom, dateTo });
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @Get('general-journals')
+  async listGeneralJournals(
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ): Promise<{ success: boolean; data: unknown }> {
+    const data = await this.accountingService.listGeneralJournals({ dateFrom, dateTo });
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @Get('general-journals/next-number')
+  async getNextGeneralJournalNumber() {
+    const journalNo = await this.accountingService.getNextGeneralJournalNumber();
+    return {
+      success: true,
+      data: { journalNo },
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('general-journals/post')
+  async postGeneralJournal(
+    @Body() payload: CreateGeneralJournalPayload,
+  ): Promise<{ success: boolean; data: unknown }> {
+    const data = await this.accountingService.postGeneralJournal(payload);
+    return {
+      success: true,
+      data,
+    };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('general-journals/:journalNumber')
+  async updateGeneralJournal(
+    @Param('journalNumber') journalNumber: string,
+    @Body() payload: UpdateGeneralJournalPayload,
+  ): Promise<{ success: boolean; data: unknown }> {
+    const data = await this.accountingService.updateGeneralJournal(journalNumber, payload);
     return {
       success: true,
       data,

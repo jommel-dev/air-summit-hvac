@@ -31,7 +31,7 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         pathMatch: 'full',
-        title: 'Air Summit Aircon Services | Dashboard',
+        title: 'Dashboard',
       },
       {
         path: 'sales-order',
@@ -41,7 +41,7 @@ export const routes: Routes = [
           menu: 'sales_order',
           permission: 'canRead',
         },
-        title: 'Air Summit Aircon Services | Sales Order',
+        title: 'Sales Order',
       },
       {
         path: 'customers',
@@ -51,7 +51,7 @@ export const routes: Routes = [
           menu: 'customers',
           permission: 'canRead',
         },
-        title: 'Air Summit Aircon Services | Customers',
+        title: 'Customers',
       },
       {
         path: 'schedule-today-sales-order',
@@ -61,7 +61,7 @@ export const routes: Routes = [
           menu: 'today_schedule',
           permission: 'canRead',
         },
-        title: 'Air Summit Aircon Services | Schedule Today Sales Order',
+        title: 'Schedule Today Sales Order',
       },
       {
         path: 'purchase-order',
@@ -71,7 +71,7 @@ export const routes: Routes = [
           menu: 'purchase_order',
           permission: 'canRead',
         },
-        title: 'Air Summit Aircon Services | Purchase Order',
+        title: 'Purchase Order',
       },
       {
         path: 'inventory',
@@ -81,7 +81,7 @@ export const routes: Routes = [
           menu: 'inventory',
           permission: 'canRead',
         },
-        title: 'Air Summit Aircon Services | Inventory',
+        title: 'Inventory',
       },
       {
         path: 'material-inventory',
@@ -91,7 +91,7 @@ export const routes: Routes = [
           menu: 'material_inventory',
           permission: 'canRead',
         },
-        title: 'Air Summit Aircon Services | Material Inventory',
+        title: 'Material Inventory',
       },
       {
         path: 'accounting',
@@ -101,7 +101,7 @@ export const routes: Routes = [
           menu: 'accounting',
           permission: 'canRead',
         },
-        title: 'Air Summit Aircon Services | Accounting',
+        title: 'Accounting',
       },
       {
         path: 'sales-order-materials',
@@ -111,7 +111,7 @@ export const routes: Routes = [
           menu: 'sales_order_materials',
           permission: 'canRead',
         },
-        title: 'Air Summit Aircon Services | Sales Order Materials',
+        title: 'Sales Order Materials',
       },
       {
         path: 'quotation',
@@ -121,7 +121,7 @@ export const routes: Routes = [
           menu: 'quotation',
           permission: 'canRead',
         },
-        title: 'Air Summit Aircon Services | Quotation',
+        title: 'Quotation',
       },
       {
         path: 'user-management',
@@ -131,7 +131,7 @@ export const routes: Routes = [
           menu: 'user_management',
           permission: 'canRead',
         },
-        title: 'Air Summit Aircon Services | User Management',
+        title: 'User Management',
       },
       {
         path: 'settings',
@@ -141,7 +141,7 @@ export const routes: Routes = [
           menu: 'settings',
           permission: 'canRead',
         },
-        title: 'Air Summit Aircon Services | Settings',
+        title: 'Settings',
       },
     ]
   },
@@ -151,12 +151,12 @@ export const routes: Routes = [
     component:SignInComponent,
     canActivate: [guestOnlyGuard],
     canMatch: [guestOnlyMatchGuard],
-    title:'Air Summit Aircon Services | Login'
+    title:'Login'
   },
   // error pages
   {
     path:'**',
     component:NotFoundComponent,
-    title:'Air Summit Aircon Services | Not Found'
+    title:'Not Found'
   },
 ];

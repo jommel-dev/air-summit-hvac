@@ -136,6 +136,18 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
 
     this.isDetailOpen = false;
     this.closeGuardDialog();
+
+    // After closing, reload the SO detail to ensure latest serials are in state
+    if (this.selectedOrderId) {
+      setTimeout(() => {
+        this.salesOrderService.getSalesOrderById(this.selectedOrderId!).then((detail) => {
+          if (detail) {
+            this.selectedOrderDetail = detail;
+            this.detailProductItems = this.mapDetailProducts(detail);
+          }
+        });
+      }, 300);
+    }
   }
 
   requestCloseDetail(): void {

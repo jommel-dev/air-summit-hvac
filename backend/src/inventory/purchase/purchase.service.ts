@@ -6,8 +6,9 @@ import { PurchaseTabItemDto } from './dto/purchase-tab-item.dto';
 import { ListPurchaseQueryDto } from './dto/list-purchase-query.dto';
 import { PurchaseListResponseDto } from './dto/purchase-list-response.dto';
 import { PoolClient } from 'pg';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
+import { AuditLogService } from 'src/audit-log/audit-log.service';
 
 type PurchaseRow = {
   id: number;
@@ -105,6 +106,7 @@ export class PurchaseService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly materialStockService: MaterialStockService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   private async getTableColumns(
@@ -2566,6 +2568,236 @@ export class PurchaseService {
 
   remove(id: number) {
     return `This action removes a #${id} purchase`;
+  }
+
+  async cancelPurchase(
+    id: number,
+    context?: { userId?: number; username?: string; roleName?: string; branchId?: number },
+  ): Promise<{ success: boolean; message: string }> {
+    try {
+      const result = await this.databaseService.withTransaction(async (client) => {
+        const poResult = await client.query<{ status: string | null }>(
+          `SELECT status FROM tblpurchase_orders WHERE id = $1 LIMIT 1`,
+          [id],
+        );
+
+        if (poResult.rows.length === 0) {
+          throw new Error('Purchase order not found');
+        }
+
+        const currentStatus = String(poResult.rows[0].status ?? '').trim().toLowerCase();
+        const nonCancellable = ['approved', 'completed', 'cancelled'];
+        if (nonCancellable.includes(currentStatus)) {
+          throw new Error(
+            `Cannot cancel a purchase order with status '${currentStatus}'`,
+          );
+        }
+
+        const serialColumns = await this.getTableColumns(client, 'tblserial_numbers');
+        const serialPurchaseIdColumn = this.pickColumn(serialColumns, [
+          'purchaseId',
+          'purchase_id',
+        ]);
+
+        if (serialPurchaseIdColumn) {
+          await client.query(
+            `DELETE FROM tblserial_numbers WHERE "${serialPurchaseIdColumn}" = $1`,
+            [id],
+          );
+        }
+
+        await client.query(
+          `UPDATE tblpurchase_orders SET status = 'cancelled' WHERE id = $1`,
+          [id],
+        );
+
+        return { id };
+      });
+
+      this.auditLogService.log({
+        action: 'PURCHASE_CANCEL',
+        entityType: 'purchase_order',
+        entityId: String(result.id),
+        userId: context?.userId,
+        username: context?.username,
+        roleName: context?.roleName,
+        branchId: context?.branchId,
+        metadata: { poId: result.id },
+      });
+
+      return {
+        success: true,
+        message: `Purchase order #${result.id} has been cancelled`,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to cancel purchase order',
+      };
+    }
+  }
+
+  async deletePurchaseWithAuth(
+    id: number,
+    userId: number,
+    roleName: string,
+    username: string,
+    password: string,
+    authUsername?: string,
+    branchId?: number,
+  ): Promise<{ success: boolean; message: string }> {
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: 'Invalid purchase order id' };
+    }
+
+    const normalizedPassword = String(password ?? '').trim();
+    if (!normalizedPassword) {
+      return { success: false, message: 'Password is required to delete a purchase order' };
+    }
+
+    const normalizedRole = String(roleName ?? '').trim().toLowerCase();
+    const isAdmin =
+      normalizedRole.includes('admin') ||
+      normalizedRole.includes('super') ||
+      normalizedRole.includes('owner');
+
+    const passwordSha1 = createHash('sha1').update(normalizedPassword).digest('hex');
+
+    if (isAdmin) {
+      const effectiveUserId = Number(userId);
+      if (!Number.isFinite(effectiveUserId) || effectiveUserId <= 0) {
+        return { success: false, message: 'Invalid current user' };
+      }
+
+      const adminCheck = await this.databaseService.query<{ id: number }>(
+        `SELECT u.id
+         FROM tblusers u
+         WHERE u.id = $1
+           AND u.password = $2
+         LIMIT 1`,
+        [effectiveUserId, passwordSha1],
+      );
+
+      if (adminCheck.rowCount === 0) {
+        return { success: false, message: 'Incorrect password. Please try again.' };
+      }
+    } else {
+      const normalizedAuthUsername = String(authUsername ?? '').trim();
+      if (!normalizedAuthUsername) {
+        return { success: false, message: 'Admin username is required to authorize this deletion' };
+      }
+
+      const adminCheck = await this.databaseService.query<{ id: number }>(
+        `SELECT u.id
+         FROM tblusers u
+         LEFT JOIN tblrbac r
+           ON r.id::text = COALESCE(
+             to_jsonb(u)->>'roleId',
+             to_jsonb(u)->>'roleid',
+             to_jsonb(u)->>'role_id'
+           )
+         WHERE LOWER(TRIM(COALESCE(to_jsonb(u)->>'username', ''))) = LOWER(TRIM($1))
+           AND u.password = $2
+           AND (
+             LOWER(COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename', '')) LIKE '%admin%'
+             OR LOWER(COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename', '')) LIKE '%super%'
+             OR LOWER(COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename', '')) LIKE '%owner%'
+           )
+         LIMIT 1`,
+        [normalizedAuthUsername, passwordSha1],
+      );
+
+      if (adminCheck.rowCount === 0) {
+        return { success: false, message: 'Invalid admin credentials. Authorization denied.' };
+      }
+    }
+
+    const result = await this.deletePurchase(id);
+
+    if (result.success) {
+      this.auditLogService.log({
+        action: 'PURCHASE_DELETE',
+        entityType: 'purchase_order',
+        entityId: String(id),
+        userId,
+        username,
+        roleName,
+        branchId,
+        metadata: {
+          poId: id,
+          authorizedBy: isAdmin ? username : String(authUsername ?? '').trim(),
+          authMethod: isAdmin ? 'self' : 'admin_delegate',
+        },
+      });
+    }
+
+    return result;
+  }
+
+  async deletePurchase(id: number): Promise<{ success: boolean; message: string }> {
+    try {
+      const result = await this.databaseService.withTransaction(async (client) => {
+        const poResult = await client.query<{ status: string | null; po_number: string | null }>(
+          `SELECT status, po_number FROM tblpurchase_orders WHERE id = $1 LIMIT 1`,
+          [id],
+        );
+
+        if (poResult.rows.length === 0) {
+          throw new Error('Purchase order not found');
+        }
+
+        const currentStatus = String(poResult.rows[0].status ?? '').trim().toLowerCase();
+        const nonDeletable = ['approved', 'completed'];
+        if (nonDeletable.includes(currentStatus)) {
+          throw new Error(
+            `Cannot delete a purchase order with status '${currentStatus}'. Only pending, in-progress, for-approval, or cancelled POs can be deleted.`,
+          );
+        }
+
+        const poNumber = poResult.rows[0].po_number ?? String(id);
+
+        const serialColumns = await this.getTableColumns(client, 'tblserial_numbers');
+        const serialPurchaseIdColumn = this.pickColumn(serialColumns, [
+          'purchaseId',
+          'purchase_id',
+        ]);
+
+        if (serialPurchaseIdColumn) {
+          await client.query(
+            `DELETE FROM tblserial_numbers WHERE "${serialPurchaseIdColumn}" = $1`,
+            [id],
+          );
+        }
+
+        const transItemColumns = await this.getTableColumns(client, 'tbltransaction_product_items');
+        const itemPurchaseIdColumn = this.pickColumn(transItemColumns, [
+          'purchaseId',
+          'purchase_id',
+        ]);
+
+        if (itemPurchaseIdColumn) {
+          await client.query(
+            `DELETE FROM tbltransaction_product_items WHERE "${itemPurchaseIdColumn}" = $1`,
+            [id],
+          );
+        }
+
+        await client.query(`DELETE FROM tblpo_payments WHERE po_id = $1`, [id]);
+        await client.query(`DELETE FROM tblpurchase_orders WHERE id = $1`, [id]);
+
+        return { id, poNumber };
+      });
+
+      return {
+        success: true,
+        message: `Purchase order ${result.poNumber} has been permanently deleted`,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to delete purchase order',
+      };
+    }
   }
 
   private async fetchByMode(

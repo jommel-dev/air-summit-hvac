@@ -28,12 +28,32 @@
         (click)="setActiveTab(tab.key)"
       >
         {{ tab.label }}
-        <span *ngIf="tab.key === 'print-settings'" class="ml-1 text-[10px] uppercase opacity-80">Coming Soon</span>
       </button>
     </div>
 
     <div *ngIf="activeTab === 'system'" class="space-y-6">
       <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div>
+          <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Website Tab Name</label>
+          <input
+            class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+            [(ngModel)]="form.websiteTabName"
+            [disabled]="isLoading || isSaving"
+            placeholder="Enter website tab name"
+          />
+        </div>
+
+        <div>
+          <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Routing Tab Name</label>
+          <input
+            class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+            [(ngModel)]="form.routingTabName"
+            [disabled]="isLoading || isSaving"
+            placeholder="Use {route} to include current page title"
+          />
+          <p class="mt-1 text-[11px] text-gray-500 dark:text-gray-400">Example: <span class="font-semibold">{{ '{route}' }}</span> or <span class="font-semibold">Portal • {{ '{route}' }}</span></p>
+        </div>
+
         <div>
           <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Business Name</label>
           <input
@@ -311,13 +331,418 @@
       </div>
     </div>
 
-    <div *ngIf="activeTab === 'print-settings'" class="space-y-4">
-      <div class="rounded-xl border border-dashed border-amber-300 bg-amber-50 p-6 dark:border-amber-700 dark:bg-amber-950/30">
-        <h3 class="text-base font-semibold text-amber-900 dark:text-amber-200">Print Settings</h3>
-        <p class="mt-2 text-sm text-amber-800 dark:text-amber-300">
-          Coming soon. This tab is reserved for DR, quotation, invoice, and document print preferences.
-        </p>
+    <div *ngIf="activeTab === 'print-settings'" class="space-y-6">
+
+      <!-- General Print Settings -->
+      <div class="rounded-xl border border-gray-200 p-5 dark:border-gray-700">
+        <h3 class="mb-4 text-sm font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">General</h3>
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+
+          <div>
+            <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Default Paper Size</label>
+            <select
+              class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              [(ngModel)]="printForm.paperSize"
+              [disabled]="!canUpdateSettings || isSavingPrint"
+            >
+              <option value="A4">A4</option>
+              <option value="Letter">Letter (US)</option>
+              <option value="Legal">Legal</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Footer Text</label>
+            <input
+              class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              [(ngModel)]="printForm.footerText"
+              [disabled]="!canUpdateSettings || isSavingPrint"
+              placeholder="e.g. Thank you for your business!"
+            />
+          </div>
+
+          <div class="md:col-span-2">
+            <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Address Details (Print Header)</label>
+            <textarea
+              class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              [(ngModel)]="printForm.addressDetails"
+              [disabled]="!canUpdateSettings || isSavingPrint"
+              rows="3"
+              placeholder="Optional custom address block for printed documents"
+            ></textarea>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <label class="relative inline-flex cursor-pointer items-center">
+              <input
+                type="checkbox"
+                class="peer sr-only"
+                [(ngModel)]="printForm.showLogo"
+                [disabled]="!canUpdateSettings || isSavingPrint"
+              />
+              <div class="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700"></div>
+            </label>
+            <span class="text-sm text-gray-700 dark:text-gray-200">Show company logo on documents</span>
+          </div>
+
+          <div class="md:col-span-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+            <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Address Details Visibility</div>
+            <div class="grid grid-cols-1 gap-2 md:grid-cols-2">
+              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                <input type="checkbox" [(ngModel)]="printForm.addressShowSoInvoice" [disabled]="!canUpdateSettings || isSavingPrint" />
+                Show on Sales Order / Invoice
+              </label>
+              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                <input type="checkbox" [(ngModel)]="printForm.addressShowQuotation" [disabled]="!canUpdateSettings || isSavingPrint" />
+                Show on Quotation
+              </label>
+              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                <input type="checkbox" [(ngModel)]="printForm.addressShowDr" [disabled]="!canUpdateSettings || isSavingPrint" />
+                Show on Delivery Receipt (DR)
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Logo Variant</label>
+            <select
+              class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              [(ngModel)]="printForm.logoVariant"
+              [disabled]="!canUpdateSettings || isSavingPrint || !printForm.showLogo"
+            >
+              <option value="light">Light Mode Logo</option>
+              <option value="dark">Dark Mode Logo</option>
+            </select>
+            <p class="mt-1 text-xs text-gray-400">Which logo asset to use on printed documents</p>
+          </div>
+
+        </div>
       </div>
+
+      <!-- Quotation Print Settings -->
+      <div class="rounded-xl border border-gray-200 p-5 dark:border-gray-700">
+        <h3 class="mb-4 text-sm font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Quotation</h3>
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+
+          <div>
+            <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Table Header Color</label>
+            <div class="flex items-center gap-3">
+              <input
+                type="color"
+                class="h-9 w-14 cursor-pointer rounded border border-gray-200 bg-white p-0.5 disabled:cursor-not-allowed dark:border-gray-700 dark:bg-gray-800"
+                [(ngModel)]="printForm.quoteHeaderColor"
+                [disabled]="!canUpdateSettings || isSavingPrint"
+              />
+              <input
+                class="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-mono uppercase focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                [(ngModel)]="printForm.quoteHeaderColor"
+                [disabled]="!canUpdateSettings || isSavingPrint"
+                placeholder="#0f9cdf"
+                maxlength="7"
+              />
+            </div>
+            <p class="mt-1 text-xs text-gray-400">Used for SALES CONTRACT, PAYMENT DETAILS, and TERMS &amp; CONDITIONS headers</p>
+          </div>
+
+          <div class="space-y-3 pt-1">
+            <div class="flex items-center gap-3">
+              <label class="relative inline-flex cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  class="peer sr-only"
+                  [(ngModel)]="printForm.quoteShowTerms"
+                  [disabled]="!canUpdateSettings || isSavingPrint"
+                />
+                <div class="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700"></div>
+              </label>
+              <span class="text-sm text-gray-700 dark:text-gray-200">Show Terms &amp; Conditions section</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <label class="relative inline-flex cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  class="peer sr-only"
+                  [(ngModel)]="printForm.quoteShowMisc"
+                  [disabled]="!canUpdateSettings || isSavingPrint"
+                />
+                <div class="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700"></div>
+              </label>
+              <span class="text-sm text-gray-700 dark:text-gray-200">Show Misc column in item table</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <label class="relative inline-flex cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  class="peer sr-only"
+                  [(ngModel)]="printForm.quoteShowValidity"
+                  [disabled]="!canUpdateSettings || isSavingPrint"
+                />
+                <div class="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700"></div>
+              </label>
+              <span class="text-sm text-gray-700 dark:text-gray-200">Show validity / expiry date</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Sales Order / Invoice Print Settings -->
+      <div class="rounded-xl border border-gray-200 p-5 dark:border-gray-700">
+        <h3 class="mb-4 text-sm font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Sales Order / Invoice</h3>
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+
+          <div class="flex items-center gap-3">
+            <label class="relative inline-flex cursor-pointer items-center">
+              <input
+                type="checkbox"
+                class="peer sr-only"
+                [(ngModel)]="printForm.soShowDiscount"
+                [disabled]="!canUpdateSettings || isSavingPrint"
+              />
+              <div class="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700"></div>
+            </label>
+            <span class="text-sm text-gray-700 dark:text-gray-200">Show discount row</span>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <label class="relative inline-flex cursor-pointer items-center">
+              <input
+                type="checkbox"
+                class="peer sr-only"
+                [(ngModel)]="printForm.soShowPaymentTerms"
+                [disabled]="!canUpdateSettings || isSavingPrint"
+              />
+              <div class="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700"></div>
+            </label>
+            <span class="text-sm text-gray-700 dark:text-gray-200">Show payment terms</span>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <label class="relative inline-flex cursor-pointer items-center">
+              <input
+                type="checkbox"
+                class="peer sr-only"
+                [(ngModel)]="printForm.soShowSerials"
+                [disabled]="!canUpdateSettings || isSavingPrint"
+              />
+              <div class="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700"></div>
+            </label>
+            <span class="text-sm text-gray-700 dark:text-gray-200">Show serial numbers</span>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- DR Print Settings -->
+      <div class="rounded-xl border border-gray-200 p-5 dark:border-gray-700">
+        <h3 class="mb-4 text-sm font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Delivery Receipt (DR)</h3>
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+
+          <div class="flex items-center gap-3">
+            <label class="relative inline-flex cursor-pointer items-center">
+              <input
+                type="checkbox"
+                class="peer sr-only"
+                [(ngModel)]="printForm.drShowSerials"
+                [disabled]="!canUpdateSettings || isSavingPrint"
+              />
+              <div class="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700"></div>
+            </label>
+            <span class="text-sm text-gray-700 dark:text-gray-200">Show serial numbers</span>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <label class="relative inline-flex cursor-pointer items-center">
+              <input
+                type="checkbox"
+                class="peer sr-only"
+                [(ngModel)]="printForm.drShowSignature"
+                [disabled]="!canUpdateSettings || isSavingPrint"
+              />
+              <div class="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700"></div>
+            </label>
+            <span class="text-sm text-gray-700 dark:text-gray-200">Show customer signature line</span>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Document Numbering -->
+      <div class="rounded-xl border border-gray-200 p-5 dark:border-gray-700">
+        <h3 class="mb-1 text-sm font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Document Numbering</h3>
+        <p class="mb-4 text-xs text-gray-400 dark:text-gray-500">Configure the prefix and optional suffix for each document number series. Changes take effect on the next issued document.</p>
+
+        <div class="space-y-4">
+          <div>
+            <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Cheque Voucher</h4>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div>
+                <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Prefix</label>
+                <input
+                  type="text"
+                  class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  [(ngModel)]="printForm.cvNumberPrefix"
+                  [disabled]="!canUpdateSettings || isSavingPrint"
+                  placeholder="CV"
+                  maxlength="20"
+                />
+                <p class="mt-1 text-xs text-gray-400">Text before the sequence number</p>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Suffix</label>
+                <input
+                  type="text"
+                  class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  [(ngModel)]="printForm.cvNumberSuffix"
+                  [disabled]="!canUpdateSettings || isSavingPrint"
+                  placeholder="(none)"
+                  maxlength="20"
+                />
+                <p class="mt-1 text-xs text-gray-400">Text after the sequence number (optional)</p>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Next Number</label>
+                <div class="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 py-2 text-sm font-mono text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+                  @if (isLoadingCvNextNumber) {
+                    <span class="text-gray-400">Loading...</span>
+                  } @else if (cvNextNumber) {
+                    {{ cvNextNumber }}
+                  } @else {
+                    <span class="text-gray-400">—</span>
+                  }
+                </div>
+                <p class="mt-1 text-xs text-gray-400">The actual next number to be issued</p>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h4 class="mb-3 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">General Journal</h4>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div>
+                <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Prefix</label>
+                <input
+                  type="text"
+                  class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  [(ngModel)]="printForm.gjNumberPrefix"
+                  [disabled]="!canUpdateSettings || isSavingPrint"
+                  placeholder="GJ"
+                  maxlength="20"
+                />
+                <p class="mt-1 text-xs text-gray-400">Text before the sequence number</p>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Suffix</label>
+                <input
+                  type="text"
+                  class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  [(ngModel)]="printForm.gjNumberSuffix"
+                  [disabled]="!canUpdateSettings || isSavingPrint"
+                  placeholder="(none)"
+                  maxlength="20"
+                />
+                <p class="mt-1 text-xs text-gray-400">Text after the sequence number (optional)</p>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Next Number</label>
+                <div class="rounded-lg border border-dashed border-gray-300 bg-gray-50 px-3 py-2 text-sm font-mono text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">
+                  @if (isLoadingGjNextNumber) {
+                    <span class="text-gray-400">Loading...</span>
+                  } @else if (gjNextNumber) {
+                    {{ gjNextNumber }}
+                  } @else {
+                    <span class="text-gray-400">—</span>
+                  }
+                </div>
+                <p class="mt-1 text-xs text-gray-400">The actual next number to be issued</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Shared Signatory Assets -->
+      <div class="rounded-xl border border-gray-200 p-5 dark:border-gray-700">
+        <h3 class="mb-1 text-sm font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Shared Signatory Assets</h3>
+        <p class="mb-4 text-xs text-gray-400 dark:text-gray-500">Cheque Voucher print behavior now lives inside the Accounting module. These uploaded signatures remain shared assets available to report-level print drawers.</p>
+
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+            <h4 class="mb-2 text-sm font-semibold text-gray-800 dark:text-gray-100">Prepared By Signature</h4>
+            <div class="mb-3 flex h-20 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50 dark:border-gray-700 dark:bg-gray-800">
+              <img
+                *ngIf="preview.printSignaturePreparedBy"
+                [src]="preview.printSignaturePreparedBy"
+                alt="Prepared by signature"
+                class="max-h-16 max-w-full object-contain"
+              />
+              <span *ngIf="!preview.printSignaturePreparedBy" class="text-xs text-gray-500 dark:text-gray-400">No signature uploaded</span>
+            </div>
+            <input
+              type="file"
+              accept="image/*"
+              class="block w-full text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-brand-500 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-brand-600 dark:text-gray-300"
+              [disabled]="!canUpdateSettings || isUploadingPreparedBySignature"
+              (change)="onUploadSignatorySignature('prepared-by', $event)"
+            />
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ isUploadingPreparedBySignature ? 'Uploading...' : 'PNG/JPG/SVG' }}</p>
+          </div>
+
+          <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+            <h4 class="mb-2 text-sm font-semibold text-gray-800 dark:text-gray-100">Checked By Signature</h4>
+            <div class="mb-3 flex h-20 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50 dark:border-gray-700 dark:bg-gray-800">
+              <img
+                *ngIf="preview.printSignatureCheckedBy"
+                [src]="preview.printSignatureCheckedBy"
+                alt="Checked by signature"
+                class="max-h-16 max-w-full object-contain"
+              />
+              <span *ngIf="!preview.printSignatureCheckedBy" class="text-xs text-gray-500 dark:text-gray-400">No signature uploaded</span>
+            </div>
+            <input
+              type="file"
+              accept="image/*"
+              class="block w-full text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-brand-500 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-brand-600 dark:text-gray-300"
+              [disabled]="!canUpdateSettings || isUploadingCheckedBySignature"
+              (change)="onUploadSignatorySignature('checked-by', $event)"
+            />
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ isUploadingCheckedBySignature ? 'Uploading...' : 'PNG/JPG/SVG' }}</p>
+          </div>
+
+          <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+            <h4 class="mb-2 text-sm font-semibold text-gray-800 dark:text-gray-100">Approved By Signature</h4>
+            <div class="mb-3 flex h-20 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50 dark:border-gray-700 dark:bg-gray-800">
+              <img
+                *ngIf="preview.printSignatureApprovedBy"
+                [src]="preview.printSignatureApprovedBy"
+                alt="Approved by signature"
+                class="max-h-16 max-w-full object-contain"
+              />
+              <span *ngIf="!preview.printSignatureApprovedBy" class="text-xs text-gray-500 dark:text-gray-400">No signature uploaded</span>
+            </div>
+            <input
+              type="file"
+              accept="image/*"
+              class="block w-full text-xs text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-brand-500 file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white hover:file:bg-brand-600 dark:text-gray-300"
+              [disabled]="!canUpdateSettings || isUploadingApprovedBySignature"
+              (change)="onUploadSignatorySignature('approved-by', $event)"
+            />
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ isUploadingApprovedBySignature ? 'Uploading...' : 'PNG/JPG/SVG' }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Save Button -->
+      <div class="flex items-center justify-end">
+        <button
+          class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-60"
+          [disabled]="!canUpdateSettings || isSavingPrint"
+          (click)="savePrintSettings()"
+        >
+          {{ isSavingPrint ? 'Saving...' : 'Save Print Settings' }}
+        </button>
+      </div>
+
     </div>
 
     <div *ngIf="activeTab === 'rbac-configs'" class="space-y-4">

@@ -5,22 +5,46 @@
         <p class="text-xs uppercase tracking-wider text-white/80">HVAC Operations Command</p>
         <h1 class="mt-2 text-2xl font-semibold">Warehouse + Sales Hybrid Dashboard</h1>
         <p class="mt-1 text-sm text-white/85">Logistics-first view with CRM, sales, and profitability checkpoints.</p>
+        <p class="mt-2 text-xs text-white/80">Last updated: {{ lastUpdatedLabel }}</p>
       </div>
-      <div class="rounded-xl border border-white/30 bg-white/10 px-4 py-3 text-sm">
-        <p class="text-white/80">Today Focus</p>
-        <p class="mt-1 font-semibold">{{ todayFocus }}</p>
+      <div class="flex items-end gap-3">
+        <div class="rounded-xl border border-white/30 bg-white/10 px-4 py-3 text-sm">
+          <p class="text-white/80">Today Focus</p>
+          <p class="mt-1 font-semibold">{{ todayFocus }}</p>
+        </div>
+        <button
+          type="button"
+          (click)="refreshDashboard()"
+          [disabled]="isLoadingDashboard"
+          class="rounded-xl border border-white/40 bg-white/10 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {{ isLoadingDashboard ? 'Refreshing…' : 'Refresh' }}
+        </button>
       </div>
     </div>
   </section>
 
   @if (isLoadingDashboard || dashboardError) {
     <section class="rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm dark:border-gray-800 dark:bg-white/[0.03]">
-      @if (isLoadingDashboard) {
-        <p class="text-gray-600 dark:text-gray-300">Refreshing dashboard data...</p>
-      }
-      @if (dashboardError) {
-        <p class="text-error-600 dark:text-error-400">{{ dashboardError }}</p>
-      }
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          @if (isLoadingDashboard) {
+            <p class="text-gray-600 dark:text-gray-300">Refreshing dashboard data...</p>
+          }
+          @if (dashboardError) {
+            <p class="text-error-600 dark:text-error-400">{{ dashboardError }}</p>
+          }
+        </div>
+        @if (dashboardError && !isLoadingDashboard) {
+          <button
+            type="button"
+            (click)="refreshDashboard()"
+            class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+          >
+            Retry
+          </button>
+        }
+      </div>
     </section>
   }
 
@@ -43,12 +67,24 @@
         <span class="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">Logistics Core</span>
       </div>
       <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-        @for (item of operations; track item.label) {
-          <div class="rounded-xl border p-3" [class]="getOpsLevelClass(item.level)">
-            <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ item.label }}</p>
-            <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ item.value }}</p>
-            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ item.hint }}</p>
-          </div>
+        @for (item of operations; track item.label; let operationIndex = $index) {
+          <button
+            type="button"
+            (click)="openOperationDetail(getOperationMode(operationIndex))"
+            class="group rounded-xl border p-3 text-left transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-sm dark:hover:border-brand-500/40"
+            [class]="getOpsLevelClass(item.level)"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ item.label }}</p>
+                <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ item.value }}</p>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ item.hint }}</p>
+              </div>
+              <svg class="mt-1 h-5 w-5 shrink-0 text-gray-400 transition group-hover:text-brand-500 dark:text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7"></path>
+              </svg>
+            </div>
+          </button>
         }
       </div>
     </article>
@@ -72,20 +108,88 @@
   <section class="grid grid-cols-1 gap-4 xl:grid-cols-12">
     <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03] xl:col-span-8">
       <div class="flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Sales and Customer Health</h2>
-        <span class="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">CRM + Ecommerce</span>
+        <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Sales Summary</h2>
+        <span class="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">Click to expand</span>
       </div>
 
       <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-        @for (metric of salesSummary; track metric.label) {
-          <div class="rounded-xl border border-gray-200 bg-gray-50/60 p-3 dark:border-gray-700 dark:bg-gray-800/30">
-            <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ metric.label }}</p>
-            <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ metric.value }}</p>
-            <span class="mt-2 inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getTrendClass(metric.trend)">
-              {{ metric.change }}
-            </span>
+        <button
+          type="button"
+          (click)="openSalesSummaryDetail('sales')"
+          class="group/card rounded-xl border border-gray-200 bg-gray-50/60 p-3 text-left transition-all hover:border-brand-300 hover:bg-brand-50/40 dark:border-gray-700 dark:bg-gray-800/30 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/10"
+        >
+          <div class="flex items-start justify-between">
+            <div class="flex-1">
+              <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Collected Sales</p>
+              <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ salesSummary[0]?.value }}</p>
+              <span class="mt-2 inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getTrendClass(salesSummary[0]?.trend ?? 'up')">
+                {{ salesSummary[0]?.change }}
+              </span>
+            </div>
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 4H4m0 0v4m0-4 5 5m7-5h4m0 0v4m0-4-5 5M8 20H4m0 0v-4m0 4 5-5m7 5h4m0 0v-4m0 4-5-5"/>
+            </svg>
+
           </div>
-        }
+        </button>
+
+        <button
+          type="button"
+          (click)="openSalesSummaryDetail('unpaid')"
+          class="group/card rounded-xl border border-gray-200 bg-gray-50/60 p-3 text-left transition-all hover:border-brand-300 hover:bg-brand-50/40 dark:border-gray-700 dark:bg-gray-800/30 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/10"
+        >
+          <div class="flex items-start justify-between">
+            <div class="flex-1">
+              <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Unpaid S.O.</p>
+              <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ salesSummary[1]?.value }}</p>
+              <span class="mt-2 inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getTrendClass(salesSummary[1]?.trend ?? 'up')">
+                {{ salesSummary[1]?.change }}
+              </span>
+            </div>
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 4H4m0 0v4m0-4 5 5m7-5h4m0 0v4m0-4-5 5M8 20H4m0 0v-4m0 4 5-5m7 5h4m0 0v-4m0 4-5-5"/>
+            </svg>
+
+          </div>
+        </button>
+
+        <button
+          type="button"
+          (click)="openSalesSummaryDetail('overdues')"
+          class="group/card rounded-xl border border-gray-200 bg-gray-50/60 p-3 text-left transition-all hover:border-brand-300 hover:bg-brand-50/40 dark:border-gray-700 dark:bg-gray-800/30 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/10"
+        >
+          <div class="flex items-start justify-between">
+            <div class="flex-1">
+              <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Overdues</p>
+              <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ salesSummary[2]?.value }}</p>
+              <span class="mt-2 inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getTrendClass(salesSummary[2]?.trend ?? 'up')">
+                {{ salesSummary[2]?.change }}
+              </span>
+            </div>
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 4H4m0 0v4m0-4 5 5m7-5h4m0 0v4m0-4-5 5M8 20H4m0 0v-4m0 4 5-5m7 5h4m0 0v-4m0 4-5-5"/>
+            </svg>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          (click)="openSalesSummaryDetail('cheques')"
+          class="group/card rounded-xl border border-gray-200 bg-gray-50/60 p-3 text-left transition-all hover:border-brand-300 hover:bg-brand-50/40 dark:border-gray-700 dark:bg-gray-800/30 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/10"
+        >
+          <div class="flex items-start justify-between">
+            <div class="flex-1">
+              <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Cheque & Card Receivables</p>
+              <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ salesSummary[3]?.value }}</p>
+              <span class="mt-2 inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getTrendClass(salesSummary[3]?.trend ?? 'up')">
+                {{ salesSummary[3]?.change }}
+              </span>
+            </div>
+            <svg class="w-6 h-6 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
+              <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 4H4m0 0v4m0-4 5 5m7-5h4m0 0v4m0-4-5 5M8 20H4m0 0v-4m0 4 5-5m7 5h4m0 0v-4m0 4-5-5"/>
+            </svg>
+          </div>
+        </button>
       </div>
 
       <div class="mt-4 overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
@@ -171,3 +275,420 @@
     </article>
   </section>
 </div>
+
+<!-- Sales Summary Details Modal -->
+@if (expandedSalesSummaryMode) {
+  <div
+    class="fixed inset-0 z-[100040] bg-black/50 transition-opacity backdrop-blur-sm dark:bg-black/70"
+    (click)="closeSalesSummaryDetail()"
+  ></div>
+
+  <div class="fixed inset-4 z-[100041] overflow-hidden rounded-2xl bg-white dark:bg-gray-900 md:inset-12 lg:inset-16">
+    <!-- Header -->
+    <div class="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-brand-50 to-brand-100/50 px-6 py-4 dark:border-gray-800 dark:from-gray-800 dark:to-gray-900">
+      <div>
+        <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">
+          @if (expandedSalesSummaryMode === 'sales') {
+            Collected Sales Details
+          }
+          @if (expandedSalesSummaryMode === 'unpaid') {
+            Unpaid Sales Orders
+          }
+          @if (expandedSalesSummaryMode === 'overdues') {
+            Overdue Sales Orders
+          }
+          @if (expandedSalesSummaryMode === 'cheques') {
+            Cheque & Credit Card Receivables
+          }
+        </h3>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Expanded transaction details</p>
+      </div>
+      <button
+        type="button"
+        (click)="closeSalesSummaryDetail()"
+        class="rounded-lg bg-white p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:bg-gray-800 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+      >
+        <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Content -->
+    <div class="overflow-y-auto p-6" [style.max-height]="'calc(100% - 80px)'">
+      @if (salesSummaryLoading) {
+        <div class="flex items-center justify-center py-8">
+          <div class="flex flex-col items-center gap-2">
+            <div class="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-brand-500 dark:border-gray-700 dark:border-t-brand-400"></div>
+            <p class="text-sm text-gray-500 dark:text-gray-400">Loading transaction details...</p>
+          </div>
+        </div>
+      } @else if (salesSummaryDetailItems && salesSummaryDetailItems.length > 0) {
+        <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+          <table class="w-full">
+            <thead>
+              <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+                @if (expandedSalesSummaryMode === 'sales') {
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">SO Number</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Customer</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Amount</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Status</th>
+                   <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Method</th>
+                   <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Date</th>
+                }
+                @if (expandedSalesSummaryMode === 'unpaid' || expandedSalesSummaryMode === 'overdues') {
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">SO Number</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Customer</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Total Amount</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Paid</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Balance</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Method</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Due Date</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Action</th>
+                }
+                @if (expandedSalesSummaryMode === 'cheques') {
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">SO Number</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Customer</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Method</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Reference No.</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Amount</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Bank / Provider</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Postdated</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Status</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Action</th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (item of salesSummaryDetailItems; track trackSalesSummaryDetailRow($index, item)) {
+                <tr class="border-b border-gray-100 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800/50">
+                  @if (expandedSalesSummaryMode === 'sales') {
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['soNumber']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['customer']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm font-medium text-gray-800 dark:text-white/90">{{ formatCurrencyValue(item['amount']) }}</td>
+                    <td class="px-4 py-3"><span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getSalesStatusClass(item['status'])">{{ formatTextValue(item['status']) }}</span></td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['method']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatDateValue(item['date']) }}</td>
+                  }
+                  @if (expandedSalesSummaryMode === 'unpaid' || expandedSalesSummaryMode === 'overdues') {
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['soNumber']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['customer']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm font-medium text-gray-800 dark:text-white/90">{{ formatCurrencyValue(item['totalAmount']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm text-success-600 dark:text-success-400">{{ formatCurrencyValue(item['paidAmount']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm font-medium text-error-600 dark:text-error-400">{{ formatCurrencyValue(item['balance']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['method']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatDateValue(item['dueDate']) }}</td>
+                    <td class="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        (click)="openSettlementModal(item)"
+                        class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                      >
+                        Settle
+                      </button>
+                    </td>
+                  }
+                  @if (expandedSalesSummaryMode === 'cheques') {
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['soNumber']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['customer']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['method']) }}</td>
+                    <td class="px-4 py-3 text-sm font-medium text-gray-800 dark:text-white/90">{{ formatTextValue(item['referenceNo']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm font-medium text-gray-800 dark:text-white/90">{{ formatCurrencyValue(item['amount']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatTextValue(item['bank']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatDateValue(item['postDated']) }}</td>
+                    <td class="px-4 py-3">
+                      <span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getSalesStatusClass(item['status'])">
+                        {{ formatTextValue(item['status']) }}
+                      </span>
+                    </td>
+                    <td class="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        (click)="verifyReceivable(item)"
+                        [disabled]="verifyingReceivableId === item['paymentId'] || !canVerifyReceivable(item)"
+                        class="rounded-lg border border-success-300 px-3 py-1.5 text-xs font-medium text-success-700 transition hover:bg-success-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-success-500/40 dark:text-success-300 dark:hover:bg-success-500/10"
+                      >
+                        {{ getReceivableVerifyLabel(item) }}
+                      </button>
+                    </td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      } @else {
+        <div class="flex flex-col items-center justify-center py-12">
+          <svg class="h-12 w-12 text-gray-300 dark:text-gray-700" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M9 12h6m-6 4h6M9 8h6M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+          </svg>
+          <p class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">No transaction data available for this period</p>
+        </div>
+      }
+    </div>
+  </div>
+}
+
+@if (settlementTarget) {
+  <div
+    class="fixed inset-0 z-[100050] bg-black/50 transition-opacity backdrop-blur-sm dark:bg-black/70"
+    (click)="closeSettlementModal()"
+  ></div>
+
+  <div class="fixed inset-x-4 top-1/2 z-[100051] mx-auto w-full max-w-2xl -translate-y-1/2 overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+    <div class="flex items-center justify-between border-b border-gray-200 bg-linear-to-r from-brand-50 to-brand-100/50 px-6 py-4 dark:border-gray-800 dark:from-gray-800 dark:to-gray-900">
+      <div>
+        <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Settle Sales Order</h3>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          {{ settlementTarget.soNumber }} • {{ settlementTarget.customer }} • Balance {{ formatCurrencyValue(settlementTarget.balance) }}
+        </p>
+      </div>
+      <button
+        type="button"
+        (click)="closeSettlementModal()"
+        class="rounded-lg bg-white p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:bg-gray-800 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+      >
+        <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+
+    <div class="space-y-5 p-6">
+      <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <button type="button" (click)="setSettlementMode('partial')" class="rounded-xl border px-4 py-3 text-left" [class]="getSettlementActionClass('partial')">
+          <p class="text-sm font-semibold">Partial</p>
+          <p class="mt-1 text-xs opacity-80">Record a received partial payment.</p>
+        </button>
+        <button type="button" (click)="setSettlementMode('full')" class="rounded-xl border px-4 py-3 text-left" [class]="getSettlementActionClass('full')">
+          <p class="text-sm font-semibold">Full</p>
+          <p class="mt-1 text-xs opacity-80">Close the entire remaining balance now.</p>
+        </button>
+        <button type="button" (click)="setSettlementMode('cheque')" class="rounded-xl border px-4 py-3 text-left" [class]="getSettlementActionClass('cheque')">
+          <p class="text-sm font-semibold">Pay with Cheque</p>
+          <p class="mt-1 text-xs opacity-80">Transfer the remaining balance to cheque receivables.</p>
+        </button>
+        <button type="button" (click)="setSettlementMode('split')" class="rounded-xl border px-4 py-3 text-left" [class]="getSettlementActionClass('split')">
+          <p class="text-sm font-semibold">Split Payment</p>
+          <p class="mt-1 text-xs opacity-80">Split the balance between bank transfer and cheque.</p>
+        </button>
+      </div>
+
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <label class="block text-sm">
+          <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Amount</span>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            [value]="settlementAmount"
+            (input)="settlementAmount = $any($event.target).value"
+            [disabled]="settlementMode !== 'partial'"
+            class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-gray-800 outline-none transition focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90 disabled:cursor-not-allowed disabled:opacity-60"
+          />
+        </label>
+
+        <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
+          <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Remaining Balance</p>
+          <p class="mt-2 text-xl font-semibold text-gray-800 dark:text-white/90">{{ formatCurrencyValue(settlementTarget.balance) }}</p>
+        </div>
+      </div>
+
+      @if (settlementMode === 'split') {
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <label class="block text-sm">
+            <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Bank Transfer Amount</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              [value]="splitBankAmount"
+              (input)="updateSplitBankAmount($any($event.target).value)"
+              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-gray-800 outline-none transition focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90"
+            />
+          </label>
+          <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
+            <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Cheque Amount</p>
+            <p class="mt-2 text-xl font-semibold text-gray-800 dark:text-white/90">{{ formatCurrencyValue(splitChequeAmount) }}</p>
+          </div>
+          <div class="rounded-xl border border-gray-200 bg-brand-50/60 px-4 py-3 dark:border-brand-500/20 dark:bg-brand-500/10">
+            <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Allocation Check</p>
+            <p class="mt-2 text-sm font-medium text-gray-800 dark:text-white/90">
+              {{ formatCurrencyValue(splitBankAmount || 0) }} bank + {{ formatCurrencyValue(splitChequeAmount || 0) }} cheque
+            </p>
+          </div>
+        </div>
+      }
+
+      @if (settlementMode === 'cheque' || settlementMode === 'split') {
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <label class="block text-sm">
+            <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Bank Name</span>
+            <input
+              type="text"
+              [value]="settlementBankName"
+              (input)="settlementBankName = $any($event.target).value"
+              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-gray-800 outline-none transition focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90"
+            />
+          </label>
+          <label class="block text-sm">
+            <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Cheque No.</span>
+            <input
+              type="text"
+              [value]="settlementCheckNo"
+              (input)="settlementCheckNo = $any($event.target).value"
+              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-gray-800 outline-none transition focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90"
+            />
+          </label>
+          <label class="block text-sm">
+            <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Post Dated</span>
+            <input
+              type="date"
+              [value]="settlementPostDated"
+              (input)="settlementPostDated = $any($event.target).value"
+              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-gray-800 outline-none transition focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90"
+            />
+          </label>
+        </div>
+      }
+
+      @if (settlementError) {
+        <div class="rounded-xl border border-error-200 bg-error-50 px-4 py-3 text-sm text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-300">
+          {{ settlementError }}
+        </div>
+      }
+
+      <div class="flex justify-end gap-3">
+        <button
+          type="button"
+          (click)="closeSettlementModal()"
+          class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          (click)="submitSettlement()"
+          [disabled]="settlementBusy"
+          class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {{ settlementBusy ? 'Saving…' : 'Save Settlement' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Operations Control Details Modal -->
+@if (expandedOperationMode) {
+  <div
+    class="fixed inset-0 z-[100030] bg-black/50 transition-opacity backdrop-blur-sm dark:bg-black/70"
+    (click)="closeOperationDetail()"
+  ></div>
+
+  <div class="fixed inset-4 z-[100031] overflow-hidden rounded-2xl bg-white dark:bg-gray-900 md:inset-12 lg:inset-16">
+    <div class="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-brand-50 to-brand-100/50 px-6 py-4 dark:border-gray-800 dark:from-gray-800 dark:to-gray-900">
+      <div>
+        <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ getOperationModalTitle() }}</h3>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Live queue details for the selected operational lane</p>
+      </div>
+      <button
+        type="button"
+        (click)="closeOperationDetail()"
+        class="rounded-lg bg-white p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:bg-gray-800 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+      >
+        <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+
+    <div class="overflow-y-auto p-6" [style.max-height]="'calc(100% - 80px)'">
+      @if (operationDetailLoading) {
+        <div class="flex items-center justify-center py-8">
+          <div class="flex flex-col items-center gap-2">
+            <div class="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-brand-500 dark:border-gray-700 dark:border-t-brand-400"></div>
+            <p class="text-sm text-gray-500 dark:text-gray-400">Loading operation details...</p>
+          </div>
+        </div>
+      } @else if (operationDetailItems && operationDetailItems.length > 0) {
+        <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+          <table class="w-full">
+            <thead>
+              <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+                @if (expandedOperationMode === 'receiving') {
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">PO Number</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Vendor</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Amount</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Status</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Created</th>
+                }
+                @if (expandedOperationMode === 'dispatch') {
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">SO Number</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Customer</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Amount</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Status</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Schedule</th>
+                }
+                @if (expandedOperationMode === 'installation') {
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">SO Number</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Customer</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Schedule</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Installer</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Status</th>
+                }
+                @if (expandedOperationMode === 'stock-alerts') {
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Product</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Capacity</th>
+                  <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">In Stock</th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (item of operationDetailItems; track trackOperationDetailRow($index, item)) {
+                <tr class="border-b border-gray-100 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-800/50">
+                  @if (expandedOperationMode === 'receiving') {
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['poNumber']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['vendor']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm font-medium text-gray-800 dark:text-white/90">{{ formatCurrencyValue(item['amount']) }}</td>
+                    <td class="px-4 py-3"><span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getOperationStatusClass(item['status'])">{{ formatTextValue(item['status']) }}</span></td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatDateValue(item['createdAt']) }}</td>
+                  }
+                  @if (expandedOperationMode === 'dispatch') {
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['soNumber']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['customer']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm font-medium text-gray-800 dark:text-white/90">{{ formatCurrencyValue(item['amount']) }}</td>
+                    <td class="px-4 py-3"><span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getOperationStatusClass(item['status'])">{{ formatTextValue(item['status']) }}</span></td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatDateValue(item['scheduleDate']) }}</td>
+                  }
+                  @if (expandedOperationMode === 'installation') {
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['soNumber']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['customer']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatDateValue(item['scheduleDate']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['installer']) }}</td>
+                    <td class="px-4 py-3"><span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="getOperationStatusClass(item['status'])">{{ formatTextValue(item['status']) }}</span></td>
+                  }
+                  @if (expandedOperationMode === 'stock-alerts') {
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['product']) }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['capacity']) }}</td>
+                    <td class="px-4 py-3 text-right text-sm font-medium text-error-600 dark:text-error-400">{{ formatTextValue(item['inStock']) }}</td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      } @else {
+        <div class="flex flex-col items-center justify-center py-12">
+          <svg class="h-12 w-12 text-gray-300 dark:text-gray-700" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M9 12h6m-6 4h6M9 8h6M5 20h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z"></path>
+          </svg>
+          <p class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">No operational records available for this queue right now</p>
+        </div>
+      }
+    </div>
+  </div>
+}
