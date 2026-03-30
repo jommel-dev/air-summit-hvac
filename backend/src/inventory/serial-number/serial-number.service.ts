@@ -1471,6 +1471,10 @@ export class SerialNumberService {
         : Number(dto.expectedCapacityId);
     const expectedUnitType = this.normalizeUnitType(dto.expectedUnitType);
 
+    // Pick previousSalesId column if available
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialPreviousSalesIdColumn = this.pickColumn(serialColumns, ['previousSalesId', 'previous_sales_id']);
+
     if (!serialNumber) {
       return { success: false, message: 'serialNumber is required' };
     }
@@ -1481,7 +1485,6 @@ export class SerialNumberService {
       return { success: false, message: 'branchId must be a valid number' };
     }
 
-    const serialColumns = await this.getTableColumns('tblserial_numbers');
     const serialNumberColumn = this.pickColumn(serialColumns, [
       'serialNumber',
       'serial_number',
@@ -1614,6 +1617,7 @@ export class SerialNumberService {
       }
     }
 
+    // If serial is already assigned to a different SO, block
     if (Number.isFinite(currentSalesId) && currentSalesId > 0 && currentSalesId !== salesId) {
       return {
         success: false,
@@ -1629,18 +1633,19 @@ export class SerialNumberService {
       };
     }
 
+    // If serial is being reassigned to a new SO (after transfer), set previousSalesId
     const updateRecord: Record<string, unknown> = {
       [serialSalesIdColumn]: salesId,
     };
-
+    if (serialPreviousSalesIdColumn && Number.isFinite(currentSalesId) && currentSalesId > 0 && currentSalesId !== salesId) {
+      updateRecord[serialPreviousSalesIdColumn] = currentSalesId;
+    }
     if (serialBranchIdColumn && branchId !== null) {
       updateRecord[serialBranchIdColumn] = branchId;
     }
-
     if (serialStatusColumn) {
       updateRecord[serialStatusColumn] = 'reserved';
     }
-
     if (serialCreatedByColumn && userId !== undefined) {
       updateRecord[serialCreatedByColumn] = userId;
     }

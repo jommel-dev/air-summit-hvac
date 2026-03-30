@@ -724,12 +724,26 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     this.loadErrorMessage = '';
 
     try {
-      const response = await this.salesOrderService.getSchedules({
-        page: 1,
-        limit: 200,
+      // Load both regular schedules and transfer/distribution SOs
+      const [schedulesResponse, distributionResponse] = await Promise.all([
+        this.salesOrderService.getSchedules({ page: 1, limit: 200 }),
+        this.salesOrderService.getDistribution({ page: 1, limit: 200 }),
+      ]);
+
+      const allItems = [
+        ...(schedulesResponse.items ?? []),
+        ...(distributionResponse.items ?? []),
+      ];
+
+      // Deduplicate by id in case any overlap
+      const seen = new Set<number>();
+      const deduped = allItems.filter((item) => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
       });
 
-      this.todaySchedules = (response.items ?? []).filter(
+      this.todaySchedules = deduped.filter(
         (item) => this.isToday(item.scheduleDate) && this.isPendingStatus(item.status),
       );
       this.selectedOrderId = this.todaySchedules[0]?.id ?? null;

@@ -52,4 +52,5 @@ export class CreatePurchaseDto {
 	totalAmount?: number;
 	status?: string;
 	purchaseStatus?: string;
+	branchId?: number;
 }

@@ -1,6 +1,6 @@
 <div>
   <app-page-breadcrumb pageTitle="Purchase Order" />
-  <div class="mb-4 rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] xl:p-6">
+  <div class="mb-4 rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/3 xl:p-6">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <div>
         <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">Purchase Orders</h3>
@@ -31,10 +31,10 @@
   </div>
 
   @if (isFormDrawerOpen) {
-    <div class="fixed inset-0 z-[100000] bg-gray-900/40"></div>
+    <div class="fixed inset-0 z-100000 bg-gray-900/40"></div>
   }
 
-  <aside class="fixed right-0 top-0 z-[100001] h-full w-full max-w-2xl transform border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
+  <aside class="fixed right-0 top-0 z-100001 h-full w-full max-w-2xl transform border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 dark:border-gray-800 dark:bg-gray-900"
     [ngClass]="isFormDrawerOpen ? 'translate-x-0' : 'translate-x-full'">
     <form class="relative flex h-full flex-col" (ngSubmit)="submitCreatePurchase()" novalidate>
       @if (isFormDrawerBusy) {
@@ -49,141 +49,151 @@
 
       <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
         <div>
-          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ drawerMode === 'create' ? 'Create Purchase Order' : ((activeTab === 'approvals' || activeTab === 'master-data') ? 'View Purchase Order' : 'Update Purchase Order') }}</h3>
-          <p class="text-sm text-gray-500 dark:text-gray-400">Simple and refined request form based on API body.</p>
-          <p class="mt-1 text-xs text-amber-600 dark:text-amber-300">Idle timeout protection and browser refresh blocking are active while this PO drawer is open.</p>
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">
+            @if (drawerMode === 'create') { Create Purchase Order }
+            @else if (isTransferPOViewOnly) { View Transfer PO }
+            @else if (activeTab === 'approvals' || activeTab === 'master-data') { View Purchase Order }
+            @else { Update Purchase Order }
+          </h3>
+          <p class="text-sm text-gray-500 dark:text-gray-400">
+            @if (isTransferPOViewOnly) { This is a Transfer PO — read-only. Edit via the originating Sales Order. }
+            @else { Simple and refined request form based on API body. }
+          </p>
+          @if (!isTransferPOViewOnly) {
+            <p class="mt-1 text-xs text-amber-600 dark:text-amber-300">Idle timeout protection and browser refresh blocking are active while this PO drawer is open.</p>
+          }
         </div>
         <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
       </div>
 
       <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
-          <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Dealer</h4>
-          <div class="mb-3 flex gap-5 text-sm">
-            <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
-              <input type="radio" name="vendorMode" [value]="'existing'" [(ngModel)]="vendorMode" [disabled]="isMasterDataDrawerMode()" />
-              Existing Dealer
-            </label>
-            <label class="inline-flex items-center gap-2 text-gray-700 dark:text-gray-300">
-              <input type="radio" name="vendorMode" [value]="'new'" [(ngModel)]="vendorMode" [disabled]="isMasterDataDrawerMode()" />
-              New Dealer
-            </label>
+
+        <!-- Transfer PO: originating SO info banner -->
+        @if (isTransferPOViewOnly && originatingSalesOrder) {
+          <div class="rounded-xl border border-brand-200 bg-brand-50 p-4 dark:border-brand-500/30 dark:bg-brand-500/10">
+            <p class="text-xs font-semibold uppercase tracking-wide text-brand-700 dark:text-brand-300 mb-1">Transfer PO — Read Only</p>
+            <p class="text-sm text-brand-800 dark:text-brand-200">
+              Linked to Sales Order: <span class="font-semibold">{{ originatingSalesOrder.soNumber || ('SO #' + originatingSalesOrder.id) }}</span>
+            </p>
+            <p class="mt-1 text-xs text-brand-600 dark:text-brand-400">To update serial numbers or product details, edit the originating Sales Order.</p>
           </div>
+        }
 
-          @if (vendorMode === 'existing') {
-            <div>
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Existing Dealer</label>
-              <div class="relative">
-                <input
-                  type="text"
-                  [ngModel]="vendorSearch"
-                  (ngModelChange)="onVendorSearchChange($event)"
-                  name="vendorSearch"
-                  placeholder="Search and select Dealer"
-                  autocomplete="off"
-                  [readonly]="isMasterDataDrawerMode()"
-                  (focus)="onVendorComboboxFocus()"
-                  (blur)="onVendorComboboxBlur()"
-                  class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                />
-
-                <input type="hidden" [(ngModel)]="createForm.vendorId" name="vendorId" />
-
-                @if (isVendorDropdownOpen && !isMasterDataDrawerMode()) {
-                  <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
-                    @if (getFilteredVendorOptions().length === 0) {
-                      <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No dealers found.</p>
-                    } @else {
-                      @for (vendor of getFilteredVendorOptions(); track vendor.id) {
-                        <button
-                          type="button"
-                          (mousedown)="$event.preventDefault()"
-                          (click)="selectVendor(vendor.id)"
-                          class="flex w-full items-center justify-between px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
-                        >
-                          <span>{{ vendor.name }}</span>
-                        </button>
-                      }
-                    }
-                  </div>
-                }
+        <!-- Transfer Details from tbltransfer_details -->
+        @if (isTransferPOViewOnly && originatingSalesOrder?.transferDetails; as td) {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Transfer Details</h4>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">From Branch</label>
+                <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                  {{ td.fromBranchName || td.fromBranchId || '-' }}
+                </div>
               </div>
-              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Type Dealer name and pick one from the list.</p>
-
-              @if (createForm.vendorId) {
-                <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Dealer Name</label>
-                    <input
-                      type="text"
-                      [(ngModel)]="createForm.vendorName"
-                      name="existingVendorName"
-                      readonly
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
-                    <input
-                      type="text"
-                      [(ngModel)]="createForm.vendorContactPerson"
-                      name="existingVendorContactPerson"
-                      [readonly]="isMasterDataDrawerMode()"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
-                    <input
-                      type="text"
-                      [(ngModel)]="createForm.vendorContactNumber"
-                      name="existingVendorContactNumber"
-                      [readonly]="isMasterDataDrawerMode()"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    />
-                  </div>
-                  <div>
-                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
-                    <input
-                      type="text"
-                      [(ngModel)]="createForm.vendorAddress"
-                      name="existingVendorAddress"
-                      [readonly]="isMasterDataDrawerMode()"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    />
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">To Branch</label>
+                <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                  {{ td.toBranchName || td.toBranchId || '-' }}
+                </div>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">Transfer Date</label>
+                <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                  {{ td.transferDate || '-' }}
+                </div>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">Status</label>
+                <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800">
+                  <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold"
+                    [ngClass]="{
+                      'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-400': (td.transferStatus || '').toLowerCase() === 'delivered',
+                      'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400': (td.transferStatus || '').toLowerCase() === 'in_transit',
+                      'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400': (td.transferStatus || '').toLowerCase() === 'pending',
+                      'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300': !['delivered','in_transit','pending'].includes((td.transferStatus || '').toLowerCase())
+                    }">
+                    {{ td.transferStatus || '-' }}
+                  </span>
+                </div>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">Expected Delivery</label>
+                <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                  {{ td.expectedDeliveryDate || '-' }}
+                </div>
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">Actual Delivery</label>
+                <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                  {{ td.actualDeliveryDate || '-' }}
+                </div>
+              </div>
+              @if (td.transferNotes) {
+                <div class="md:col-span-2">
+                  <label class="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">Transfer Notes</label>
+                  <div class="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                    {{ td.transferNotes }}
                   </div>
                 </div>
               }
             </div>
-          } @else {
-            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Dealer Name</label>
-                <input type="text" [(ngModel)]="createForm.vendorName" name="vendorName" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
-                <input type="text" [(ngModel)]="createForm.vendorContactPerson" name="vendorContactPerson" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
-                <input type="text" [(ngModel)]="createForm.vendorContactNumber" name="vendorContactNumber" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
-                <input type="text" [(ngModel)]="createForm.vendorAddress" name="vendorAddress" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+          </section>
+        }
+        @if (!isTransferPOViewOnly) {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Dealer</h4>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Dealer Name</label>
+              <div class="relative">
+                <input
+                  type="text"
+                  [(ngModel)]="vendorSearch"
+                  name="vendorName"
+                  [readonly]="isMasterDataDrawerMode()"
+                  (focus)="onVendorComboboxFocus()"
+                  (blur)="onVendorComboboxBlur()"
+                  (input)="onVendorSearchChange(vendorSearch)"
+                  autocomplete="off"
+                  class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                  required
+                  placeholder="Type to search dealer..."
+                />
+                <ul *ngIf="isVendorDropdownOpen && getFilteredVendorOptions().length > 0" class="absolute z-50 mt-1 w-full rounded-lg border border-gray-300 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900 max-h-48 overflow-y-auto">
+                  <li
+                    *ngFor="let option of getFilteredVendorOptions()"
+                    (mousedown)="selectVendor(option.id)"
+                    class="cursor-pointer px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+                  >
+                    {{ option.name }}<span *ngIf="option.address" class="ml-2 text-xs text-gray-400">({{ option.address }})</span>
+                  </li>
+                </ul>
               </div>
             </div>
-          }
-        </section>
-
-        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
-          <div class="mb-3 flex items-center justify-between">
-            <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Payment Details (Split Payment)</h4>
-            <button type="button" (click)="addPaymentDetail()" [disabled]="isMasterDataDrawerMode()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300">
-              Add Payment
-            </button>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Person</label>
+              <input type="text" [(ngModel)]="createForm.vendorContactPerson" name="vendorContactPerson" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Contact Number</label>
+              <input type="text" [(ngModel)]="createForm.vendorContactNumber" name="vendorContactNumber" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Address</label>
+              <input type="text" [(ngModel)]="createForm.vendorAddress" name="vendorAddress" [readonly]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            </div>
           </div>
+          </section>
+        }
+
+        @if (!isTransferPOViewOnly) {
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <div class="mb-3 flex items-center justify-between">
+              <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Payment Details (Split Payment)</h4>
+              <button type="button" (click)="addPaymentDetail()" [disabled]="isMasterDataDrawerMode()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300">
+                Add Payment
+              </button>
+            </div>
 
           <div class="space-y-4">
             @for (payment of createForm.paymentDetails; track $index; let pIndex = $index) {
@@ -293,14 +303,17 @@
               </div>
             }
           </div>
-        </section>
+          </section>
+        }
 
         <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
           <div class="mb-3 flex items-center justify-between">
             <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Product Items</h4>
-            <button type="button" (click)="addProductItem()" [disabled]="isMasterDataDrawerMode()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300">
-              Add Product
-            </button>
+            @if (!isTransferPOViewOnly) {
+              <button type="button" (click)="addProductItem()" [disabled]="isMasterDataDrawerMode()" class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300">
+                Add Product
+              </button>
+            }
           </div>
 
           <div class="mb-4 flex flex-wrap gap-2">
@@ -322,15 +335,17 @@
             <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
               <div class="mb-3 flex items-center justify-between">
                 <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Item {{ activeProductTabIndex + 1 }}</p>
-                <button type="button" (click)="removeProductItem(activeProductTabIndex)" [disabled]="createForm.productItems.length === 1 || isMasterDataDrawerMode()" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
-                  Remove
-                </button>
+                @if (!isTransferPOViewOnly) {
+                  <button type="button" (click)="removeProductItem(activeProductTabIndex)" [disabled]="createForm.productItems.length === 1 || isMasterDataDrawerMode()" class="rounded-lg border border-gray-300 px-2 py-1 text-xs text-gray-600 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">
+                    Remove
+                  </button>
+                }
               </div>
 
               <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
                   <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product Name</label>
-                  <select [(ngModel)]="activeItem.productId" [name]="'productId_' + activeProductTabIndex" (ngModelChange)="onProductChanged(activeProductTabIndex)" [disabled]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
+                  <select [(ngModel)]="activeItem.productId" [name]="'productId_' + activeProductTabIndex" (ngModelChange)="onProductChanged(activeProductTabIndex)" [disabled]="isMasterDataDrawerMode() || isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
                     <option value="">Select Product</option>
                     @for (product of catalogProducts; track product.id) {
                       <option [value]="product.id">{{ product.name }}{{ product.brandName ? ' (' + product.brandName + ')' : '' }}</option>
@@ -340,7 +355,7 @@
 
                 <div>
                   <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Capacity</label>
-                  <select [(ngModel)]="activeItem.capacityId" [name]="'capacityId_' + activeProductTabIndex" [disabled]="isMasterDataDrawerMode()" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
+                  <select [(ngModel)]="activeItem.capacityId" [name]="'capacityId_' + activeProductTabIndex" [disabled]="isMasterDataDrawerMode() || isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
                     <option value="">Select Capacity</option>
                     @for (capacity of getCapacitiesByProduct(activeItem.productId); track capacity.id) {
                       <option [value]="capacity.id">{{ capacity.name }}</option>
@@ -350,11 +365,11 @@
 
                 <div>
                   <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Unit Price</label>
-                  <input type="number" [(ngModel)]="activeItem.unitPrice" (ngModelChange)="recalculateTotalAmount()" [name]="'unitPrice_' + activeProductTabIndex" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
+                  <input type="number" [(ngModel)]="activeItem.unitPrice" (ngModelChange)="recalculateTotalAmount()" [name]="'unitPrice_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
                 </div>
                 <div>
                   <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total Set Qty</label>
-                  <input type="number" [(ngModel)]="activeItem.totalSetQty" (ngModelChange)="onTotalSetQtyChange(activeProductTabIndex)" [readonly]="isMasterDataDrawerMode()" [name]="'totalSetQty_' + activeProductTabIndex" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
+                  <input type="number" [(ngModel)]="activeItem.totalSetQty" (ngModelChange)="onTotalSetQtyChange(activeProductTabIndex)" [readonly]="isMasterDataDrawerMode() || isTransferPOViewOnly" [name]="'totalSetQty_' + activeProductTabIndex" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
                 </div>
 
                 <div class="md:col-span-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
@@ -380,22 +395,23 @@
                         <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
                           {{ unitType.label }} Qty
                         </label>
-                        <input type="number" [(ngModel)]="unitType.value" [readonly]="isMasterDataDrawerMode()" [name]="'unitTypeQty_' + activeProductTabIndex + '_' + unitType.label" (ngModelChange)="onUnitTypeQtyChange(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                        <input type="number" [(ngModel)]="unitType.value" [readonly]="isMasterDataDrawerMode() || isTransferPOViewOnly" [name]="'unitTypeQty_' + activeProductTabIndex + '_' + unitType.label" (ngModelChange)="onUnitTypeQtyChange(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
                       </div>
                     }
                   </div>
                 </div>
 
-                @if (drawerMode === 'edit') {
+                @if (drawerMode === 'edit' || isTransferPOViewOnly) {
                   <div class="md:col-span-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
                     <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                      Scan Serial ({{ getSelectedUnitTypeLabel(activeProductTabIndex) }})
+                      @if (isTransferPOViewOnly) { Serial Numbers ({{ getSelectedUnitTypeLabel(activeProductTabIndex) }}) }
+                      @else { Scan Serial ({{ getSelectedUnitTypeLabel(activeProductTabIndex) }}) }
                     </p>
 
                     @for (unitType of activeItem.unitTypes; track unitType.label) {
                       @if (getSelectedUnitTypeLabel(activeProductTabIndex) === unitType.label) {
                         <div class="space-y-3">
-                          @if (!isMasterDataDrawerMode()) {
+                          @if (!isMasterDataDrawerMode() && !isTransferPOViewOnly) {
                             <div class="flex gap-2">
                               <input
                                 type="text"
@@ -416,44 +432,42 @@
                           @if (unitType.scanSuccess) {
                             <p class="text-xs text-success-700 dark:text-success-400">{{ unitType.scanSuccess }}</p>
                           }
-                          @if (!isMasterDataDrawerMode() && unitType.isScanning) {
+                          @if (!isMasterDataDrawerMode() && !isTransferPOViewOnly && unitType.isScanning) {
                             <p class="text-xs text-gray-500 dark:text-gray-400">Scanning serial...</p>
                           }
-                          @if (!isMasterDataDrawerMode() && pendingSerialScanCount > 0) {
+                          @if (!isMasterDataDrawerMode() && !isTransferPOViewOnly && pendingSerialScanCount > 0) {
                             <p class="text-xs text-gray-500 dark:text-gray-400">
                               {{ isFlushingQueuedSerials ? 'Saving scanned serials...' : (pendingSerialScanCount + ' scanned serial(s) queued for saving') }}
                             </p>
                           }
 
-                          @if (unitType.serials.length > 0) {
+                          @if (getDisplayUnitTypeSerials(unitType).length > 0) {
                             <div>
-                              <p class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">Scanned Serials</p>
+                              <p class="mb-1 text-xs font-medium text-gray-600 dark:text-gray-300">
+                                Serial Numbers
+                                <span class="ml-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 dark:bg-gray-700 dark:text-gray-400">
+                                  {{ getDisplayUnitTypeSerials(unitType).length }}
+                                </span>
+                              </p>
                               <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
                                 <table class="w-full min-w-[320px]">
                                   <thead>
                                     <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
                                       <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">#</th>
                                       <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Number</th>
-                                      @if (!isMasterDataDrawerMode()) {
-                                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
+                                      @if (!(isDrawerViewMode && isTransferPOViewOnly)) {
+                                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
                                       }
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    @for (serial of getPagedScannedSerials(activeProductTabIndex, unitType.label); track serial; let serialIndex = $index) {
+                                    @for (serial of getDisplayUnitTypeSerials(unitType); track serial; let serialIndex = $index) {
                                       <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
-                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ getScannedSerialRowNumber(activeProductTabIndex, unitType.label, serialIndex) }}</td>
+                                        <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serialIndex + 1 }}</td>
                                         <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serial }}</td>
-                                        @if (!isMasterDataDrawerMode()) {
-                                          <td class="px-3 py-2 text-right">
-                                            <button
-                                              type="button"
-                                              (click)="requestRemoveScannedSerial(activeProductTabIndex, unitType.label, serial)"
-                                              [disabled]="unitType.isScanning"
-                                              class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
-                                            >
-                                              Remove
-                                            </button>
+                                        @if (!(isDrawerViewMode && isTransferPOViewOnly)) {
+                                          <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
+                                            <button type="button" (click)="requestRemoveScannedSerial(activeProductTabIndex, unitType.label, serial)" class="rounded border border-error-300 px-2 py-1 text-xs text-error-700 hover:bg-error-50 dark:border-error-500/40 dark:text-error-400 dark:hover:bg-error-500/10">Remove</button>
                                           </td>
                                         }
                                       </tr>
@@ -461,37 +475,14 @@
                                   </tbody>
                                 </table>
                               </div>
-
-                              @if (unitType.serials.length > scannedSerialTablePageSize) {
-                                <div class="mt-2 flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
-                                  <p>
-                                    Page {{ getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) }} of {{ getScannedSerialTotalPages(activeProductTabIndex, unitType.label) }}
-                                  </p>
-                                  <div class="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      (click)="setScannedSerialPage(activeProductTabIndex, unitType.label, getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) - 1)"
-                                      [disabled]="getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) <= 1"
-                                      class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
-                                    >
-                                      Prev
-                                    </button>
-                                    <button
-                                      type="button"
-                                      (click)="setScannedSerialPage(activeProductTabIndex, unitType.label, getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) + 1)"
-                                      [disabled]="getScannedSerialCurrentPage(activeProductTabIndex, unitType.label) >= getScannedSerialTotalPages(activeProductTabIndex, unitType.label)"
-                                      class="rounded border border-gray-300 px-2 py-1 text-[11px] text-gray-600 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300"
-                                    >
-                                      Next
-                                    </button>
-                                  </div>
-                                </div>
-                              }
                             </div>
                           }
 
-                          @if (isMasterDataDrawerMode() && unitType.serials.length === 0) {
+                          @if (!isTransferPOViewOnly && isMasterDataDrawerMode() && unitType.serials.length === 0) {
                             <p class="text-xs text-gray-500 dark:text-gray-400">No scanned serial numbers yet.</p>
+                          }
+                          @if (isTransferPOViewOnly && getDisplayUnitTypeSerials(unitType).length === 0) {
+                            <p class="text-xs text-gray-500 dark:text-gray-400">No serial numbers found from the originating Sales Order.</p>
                           }
 
                           <!-- <div>
@@ -515,74 +506,77 @@
       </div>
 
       <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
-        <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Cancel</button>
-        @if (drawerMode === 'edit' && !isMasterDataDrawerMode() && canImportPurchaseCsv()) {
-          <input
-            id="purchaseSerialCsvInput"
-            type="file"
-            accept=".csv,text/csv"
-            class="hidden"
-            (change)="onSerialCsvSelected($event)"
-          />
+        <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">Close</button>
+        <!-- Verify & Receive: only for transfer POs that are not yet received -->
+        @if (isTransferPOViewOnly && editingPurchaseStatus !== 'received' && editingPurchaseStatus !== 'transfer_received') {
           <button
             type="button"
-            (click)="openSerialCsvImportPicker()"
-            [disabled]="isImportingSerials || isCreating || isProcessingApprovalAction"
-            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300"
+            (click)="verifyAndReceive()"
+            [disabled]="isVerifyingReceive || isCreating"
+            class="rounded-lg bg-success-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60 hover:bg-success-700"
           >
-            {{ isImportingSerials ? 'Importing CSV...' : 'Import CSV' }}
+            {{ isVerifyingReceive ? 'Processing...' : 'Verify & Receive' }}
           </button>
         }
-        @if (drawerMode === 'edit' && hasAnyScannedSerials()) {
-          <!-- <button
-            type="button"
-            (click)="exportScannedSerialsAsCsv()"
-            [disabled]="isExportingSerials"
-            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300"
-          >
-            Export CSV
-          </button> -->
-          <button
-            type="button"
-            (click)="exportScannedSerialsAsExcel()"
-            [disabled]="isExportingSerials"
-            class="rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300"
-          >
-            {{ isExportingSerials ? 'Exporting...' : 'Export Excel' }}
+        @if (!isTransferPOViewOnly) {
+          @if (drawerMode === 'edit' && !isMasterDataDrawerMode() && canImportPurchaseCsv()) {
+            <input
+              id="purchaseSerialCsvInput"
+              type="file"
+              accept=".csv,text/csv"
+              class="hidden"
+              (change)="onSerialCsvSelected($event)"
+            />
+            <button
+              type="button"
+              (click)="openSerialCsvImportPicker()"
+              [disabled]="isImportingSerials || isCreating || isProcessingApprovalAction"
+              class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300"
+            >
+              {{ isImportingSerials ? 'Importing CSV...' : 'Import CSV' }}
+            </button>
+          }
+          @if (drawerMode === 'edit' && hasAnyScannedSerials()) {
+            <button
+              type="button"
+              (click)="exportScannedSerialsAsExcel()"
+              [disabled]="isExportingSerials"
+              class="rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300"
+            >
+              {{ isExportingSerials ? 'Exporting...' : 'Export Excel' }}
+            </button>
+          }
+          @if (canShowApprovalDrawerActions() && !isTransferPOViewOnly) {
+            <button
+              type="button"
+              (click)="approvePurchaseOrder()"
+              [disabled]="isProcessingApprovalAction"
+              class="rounded-lg border border-success-300 px-4 py-2 text-sm font-medium text-success-700 disabled:opacity-60 hover:bg-success-50 dark:border-success-500/40 dark:text-success-400 dark:hover:bg-success-500/10"
+            >
+              {{ isProcessingApprovalAction ? 'Processing...' : 'Approve' }}
+            </button>
+            <button
+              type="button"
+              (click)="revertToDeliveries()"
+              [disabled]="isProcessingApprovalAction"
+              class="rounded-lg border border-orange-300 px-4 py-2 text-sm font-medium text-orange-700 disabled:opacity-60 hover:bg-orange-50 dark:border-orange-500/40 dark:text-orange-400 dark:hover:bg-orange-500/10"
+            >
+              {{ isProcessingApprovalAction ? 'Processing...' : 'Revert to Deliveries' }}
+            </button>
+          }
+          <button type="submit" [disabled]="isCreating || isProcessingApprovalAction" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+            {{ isCreating ? 'Saving...' : (drawerMode === 'create' ? 'Create PO Request' : 'Update PO Request') }}
           </button>
         }
-
-        @if (canShowApprovalDrawerActions()) {
-          <button
-            type="button"
-            (click)="approvePurchaseOrder()"
-            [disabled]="isProcessingApprovalAction"
-            class="rounded-lg border border-success-300 px-4 py-2 text-sm font-medium text-success-700 disabled:opacity-60 hover:bg-success-50 dark:border-success-500/40 dark:text-success-400 dark:hover:bg-success-500/10"
-          >
-            {{ isProcessingApprovalAction ? 'Processing...' : 'Approve' }}
-          </button>
-          <button
-            type="button"
-            (click)="revertToDeliveries()"
-            [disabled]="isProcessingApprovalAction"
-            class="rounded-lg border border-orange-300 px-4 py-2 text-sm font-medium text-orange-700 disabled:opacity-60 hover:bg-orange-50 dark:border-orange-500/40 dark:text-orange-400 dark:hover:bg-orange-500/10"
-          >
-            {{ isProcessingApprovalAction ? 'Processing...' : 'Revert to Deliveries' }}
-          </button>
-        }
-
-        <button type="submit" [disabled]="isCreating || isProcessingApprovalAction" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
-          {{ isCreating ? 'Saving...' : (drawerMode === 'create' ? 'Create PO Request' : 'Update PO Request') }}
-        </button>
       </div>
     </form>
   </aside>
 
   @if (isPoGuardDialogOpen) {
-    <div class="fixed inset-0 z-[100020] bg-gray-950/55 backdrop-blur-sm"></div>
-    <div class="fixed inset-0 z-[100021] flex items-center justify-center p-4">
+    <div class="fixed inset-0 z-100020 bg-gray-950/55 backdrop-blur-sm"></div>
+    <div class="fixed inset-0 z-100021 flex items-center justify-center p-4">
       <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900">
-        <div class="border-b border-gray-200 bg-gradient-to-r from-amber-50 via-white to-sky-50 px-6 py-5 dark:border-gray-800 dark:from-amber-500/10 dark:via-gray-900 dark:to-sky-500/10">
+        <div class="border-b border-gray-200 bg-linear-to-r from-amber-50 via-white to-sky-50 px-6 py-5 dark:border-gray-800 dark:from-amber-500/10 dark:via-gray-900 dark:to-sky-500/10">
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">PO Session Guard</p>
@@ -668,7 +662,7 @@
               'text-brand-700 border-brand-500 dark:text-brand-300': activeTab === 'deliveries',
               'border-transparent text-gray-500 hover:text-brand-700 hover:border-brand-400 dark:text-gray-400 dark:hover:text-brand-300': activeTab !== 'deliveries'
             }" [attr.aria-current]="activeTab === 'deliveries' ? 'page' : null" class="inline-flex items-center justify-center p-4 border-b rounded-t-base group transition-colors">
-              <svg class="w-[20px] h-[20px] me-2 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
+              <svg class="w-5 h-5 me-2 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
                 <path fill-rule="evenodd" d="M18 5.05h1a2 2 0 0 1 2 2v2H3v-2a2 2 0 0 1 2-2h1v-1a1 1 0 1 1 2 0v1h3v-1a1 1 0 1 1 2 0v1h3v-1a1 1 0 1 1 2 0v1Zm-15 6v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8H3ZM11 18a1 1 0 1 0 2 0v-1h1a1 1 0 1 0 0-2h-1v-1a1 1 0 1 0-2 0v1h-1a1 1 0 1 0 0 2h1v1Z" clip-rule="evenodd"/>
               </svg>
               Deliveries
@@ -681,7 +675,7 @@
             'text-brand-700 border-brand-500 dark:text-brand-300': activeTab === 'approvals',
             'border-transparent text-gray-500 hover:text-brand-700 hover:border-brand-400 dark:text-gray-400 dark:hover:text-brand-300': activeTab !== 'approvals'
           }" [attr.aria-current]="activeTab === 'approvals' ? 'page' : null" class="inline-flex items-center justify-center p-4 border-b rounded-t-base group transition-colors">
-            <svg class="w-[20px] h-[20px] me-2 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
+            <svg class="w-5 h-5 me-2 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
               <path fill-rule="evenodd" d="M18 14a1 1 0 1 0-2 0v2h-2a1 1 0 1 0 0 2h2v2a1 1 0 1 0 2 0v-2h2a1 1 0 1 0 0-2h-2v-2Z" clip-rule="evenodd"/>
               <path fill-rule="evenodd" d="M15.026 21.534A9.994 9.994 0 0 1 12 22C6.477 22 2 17.523 2 12S6.477 2 12 2c2.51 0 4.802.924 6.558 2.45l-7.635 7.636L7.707 8.87a1 1 0 0 0-1.414 1.414l3.923 3.923a1 1 0 0 0 1.414 0l8.3-8.3A9.956 9.956 0 0 1 22 12a9.994 9.994 0 0 1-.466 3.026A2.49 2.49 0 0 0 20 14.5h-.5V14a2.5 2.5 0 0 0-5 0v.5H14a2.5 2.5 0 0 0 0 5h.5v.5c0 .578.196 1.11.526 1.534Z" clip-rule="evenodd"/>
             </svg>
@@ -696,7 +690,7 @@
             'text-brand-700 border-brand-500 dark:text-brand-300': activeTab === 'master-data',
             'border-transparent text-gray-500 hover:text-brand-700 hover:border-brand-400 dark:text-gray-400 dark:hover:text-brand-300': activeTab !== 'master-data'
           }" [attr.aria-current]="activeTab === 'master-data' ? 'page' : null" class="inline-flex items-center justify-center p-4 border-b rounded-t-base group transition-colors">
-            <svg class="w-[20px] h-[20px] me-2 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
+            <svg class="w-5 h-5 me-2 text-gray-800 dark:text-white" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 24 24">
               <path fill-rule="evenodd" d="M12 2c-.791 0-1.55.314-2.11.874l-.893.893a.985.985 0 0 1-.696.288H7.04A2.984 2.984 0 0 0 4.055 7.04v1.262a.986.986 0 0 1-.288.696l-.893.893a2.984 2.984 0 0 0 0 4.22l.893.893a.985.985 0 0 1 .288.696v1.262a2.984 2.984 0 0 0 2.984 2.984h1.262c.261 0 .512.104.696.288l.893.893a2.984 2.984 0 0 0 4.22 0l.893-.893a.985.985 0 0 1 .696-.288h1.262a2.984 2.984 0 0 0 2.984-2.984V15.7c0-.261.104-.512.288-.696l.893-.893a2.984 2.984 0 0 0 0-4.22l-.893-.893a.985.985 0 0 1-.288-.696V7.04a2.984 2.984 0 0 0-2.984-2.984h-1.262a.985.985 0 0 1-.696-.288l-.893-.893A2.984 2.984 0 0 0 12 2Zm3.683 7.73a1 1 0 1 0-1.414-1.413l-4.253 4.253-1.277-1.277a1 1 0 0 0-1.415 1.414l1.985 1.984a1 1 0 0 0 1.414 0l4.96-4.96Z" clip-rule="evenodd"/>
             </svg>
             Master Data
@@ -706,7 +700,7 @@
     </ul>
   </div>
 
-  <div class="rounded-2xl border border-gray-200 bg-white p-5 mt-4 dark:border-gray-800 dark:bg-white/[0.03] xl:p-6">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 mt-4 dark:border-gray-800 dark:bg-white/3 xl:p-6">
     <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <input
         type="text"
@@ -728,7 +722,7 @@
       </div>
     } @else {
       <div class="overflow-x-auto">
-        <table class="w-full min-w-[850px]">
+        <table class="w-full min-w-212.5">
           <thead>
             <tr class="border-b border-gray-200 dark:border-gray-800">
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">PO Number</th>
@@ -773,7 +767,7 @@
                       </button>
                     }
 
-                    @if (canSendForApproval(item.status) && activeTab === 'deliveries' && canCreateOrUpdatePurchase()) {
+                    @if (canSendForApproval(item.status) && activeTab === 'deliveries' && canCreateOrUpdatePurchase() && !item.isTransferPO) {
                       <button
                         type="button"
                         (click)="sendForApproval(item)"
@@ -790,7 +784,7 @@
                         (click)="openEditDrawer(item)"
                         class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
                       >
-                        {{ getRowActionLabel() }}
+                        {{ getRowActionLabel(item) }}
                       </button>
                     }
 
@@ -856,7 +850,7 @@
 </div>
 
 @if (poActionDialogMode !== null) {
-  <div class="fixed inset-0 z-[100030] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm">
+  <div class="fixed inset-0 z-100030 flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm">
     <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
       <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
         <h3 class="text-base font-semibold text-gray-900 dark:text-white">

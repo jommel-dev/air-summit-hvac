@@ -1,663 +1,887 @@
 <div class="space-y-6">
-  <app-page-breadcrumb pageTitle="Customers"></app-page-breadcrumb>
+  <app-page-breadcrumb pageTitle="Stakeholders"></app-page-breadcrumb>
 
-  <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-    <div class="flex flex-wrap gap-2 items-center">
-      <button
-        (click)="onTabChange('regular')"
-        [class]="
-          'px-4 py-2 rounded-lg border text-sm font-semibold ' +
-          (activeTab === 'regular'
+  <!-- Header -->
+  <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <!-- Tabs -->
+    <div class="flex flex-wrap gap-2">
+      @for (tab of [
+        { key: 'regular', label: 'Customers' },
+        { key: 'sub_dealer', label: 'Sub-Dealers' },
+        { key: 'dealer', label: 'Dealers' }
+      ]; track tab.key) {
+        <button
+          type="button"
+          (click)="onTabChange($any(tab.key))"
+          class="rounded-lg border px-4 py-2 text-sm font-semibold transition"
+          [ngClass]="activeTab === tab.key
             ? 'bg-brand-500 text-white border-brand-500'
-            : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-700')
-        "
-      >
-        Regular Customers
-      </button>
-      <button
-        (click)="onTabChange('sub_dealer')"
-        [class]="
-          'px-4 py-2 rounded-lg border text-sm font-semibold ' +
-          (activeTab === 'sub_dealer'
-            ? 'bg-brand-500 text-white border-brand-500'
-            : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-700')
-        "
-      >
-        Sub-Dealers
-      </button>
+            : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700'"
+        >
+          {{ tab.label }}
+        </button>
+      }
     </div>
 
-    <div class="flex flex-col md:flex-row gap-2 items-stretch md:items-center">
-      <div class="relative w-full md:w-72">
+    <!-- Search + Add -->
+    <div class="flex gap-2">
+      <div class="relative">
         <input
           type="text"
-          class="w-full rounded-lg border-gray-200 bg-white py-2 pl-10 pr-4 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-          placeholder="Search customers..."
           [(ngModel)]="search"
           (ngModelChange)="onSearchChange($event)"
+          placeholder="Search name, contact..."
+          class="w-64 rounded-lg border border-gray-200 bg-white py-2 pl-9 pr-3 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
         />
-        <span class="pointer-events-none absolute inset-y-0 left-3 flex items-center">
-          <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 1116.65 16.65z"
-            />
+        <svg class="absolute left-3 top-2.5 h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 11A6 6 0 1 0 5 11a6 6 0 0 0 12 0z"/>
+        </svg>
+      </div>
+      @if (activeTab !== 'dealer') {
+        <button
+          *appCan="{ menu: 'customers', permission: 'canCreate' }"
+          type="button"
+          (click)="openCreateModal()"
+          class="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
+        >
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
           </svg>
-        </span>
-      </div>
-
-      <button
-        *appCan="{ menu: 'customers', permission: 'canCreate' }"
-        (click)="openCreateModal()"
-        class="inline-flex items-center justify-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
-      >
-        Add Customer
-      </button>
+          Add {{ activeTab === 'sub_dealer' ? 'Sub-Dealer' : 'Customer' }}
+        </button>
+      }
     </div>
   </div>
 
-  <div *ngIf="uiError" class="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-    {{ uiError }}
-  </div>
-
-  <div class="rounded-lg border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
-    <div class="overflow-x-auto">
-      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead class="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-300">
-          <tr>
-            <th class="px-4 py-3">Name</th>
-            <th class="px-4 py-3">Type</th>
-            <th class="px-4 py-3">Contact</th>
-            <th class="px-4 py-3">Balance</th>
-            <th class="px-4 py-3">Terms</th>
-            <th class="px-4 py-3">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-          <tr *ngFor="let customer of customers" class="hover:bg-gray-50 dark:hover:bg-gray-800">
-            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ customer.name }}</td>
-            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ customer.customer_type }}</td>
-            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
-              {{ customer.contact_person || customer.contact_number || customer.email }}
-            </td>
-            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ customer.current_balance | number:'1.2-2' }}</td>
-            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ customer.payment_terms }}</td>
-            <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
-              <button
-                class="mr-2 text-sm font-semibold text-brand-500 hover:text-brand-700"
-                (click)="openDetailsModal(customer)"
-              >
-                View
-              </button>
-              <button
-                *appCan="{ menu: 'customers', permission: 'canUpdate' }"
-                class="mr-2 text-sm font-semibold text-gray-600 hover:text-gray-800 dark:text-gray-300 dark:hover:text-white"
-                (click)="openEditModal(customer)"
-              >
-                Edit
-              </button>
-              <button
-                *appCan="{ menu: 'customers', permission: 'canDelete' }"
-                class="text-sm font-semibold text-red-600 hover:text-red-700"
-                (click)="deleteCustomer(customer)"
-              >
-                Delete
-              </button>
-            </td>
-          </tr>
-          <tr *ngIf="!isLoading && customers.length === 0">
-            <td colspan="7" class="px-4 py-10 text-center text-sm text-gray-500 dark:text-gray-400">
-              No customers found.
-            </td>
-          </tr>
-        </tbody>
-      </table>
+  @if (uiError) {
+    <div class="rounded-lg border border-error-200 bg-error-50 px-4 py-3 text-sm text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+      {{ uiError }}
     </div>
+  }
 
-    <div class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-      <div class="text-xs text-gray-500 dark:text-gray-400">
-        Showing {{ customers.length }} of {{ total }} customers
+  <!-- Table -->
+  <div class="rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    @if (isLoading) {
+      <div class="py-16 text-center text-sm text-gray-500 dark:text-gray-400">Loading...</div>
+    } @else if (activeTab === 'dealer') {
+      <div class="py-16 text-center">
+        <svg class="mx-auto h-10 w-10 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+        </svg>
+        <p class="mt-3 text-sm font-medium text-gray-500 dark:text-gray-400">Dealers view coming soon</p>
+        <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">Dealer order history and balance tracking will be available here.</p>
       </div>
-      <div class="flex items-center gap-2">
-        <button
-          class="rounded border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-          [disabled]="page <= 1"
-          (click)="onPageChange(page - 1)"
-        >
-          Previous
-        </button>
-        <span class="text-sm text-gray-600 dark:text-gray-300">
-          Page {{ page }} / {{ totalPages }}
-        </span>
-        <button
-          class="rounded border border-gray-200 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-          [disabled]="page >= totalPages"
-          (click)="onPageChange(page + 1)"
-        >
-          Next
-        </button>
+    } @else {
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-800">
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Name</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Contact</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">TIN</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Balance</th>
+              <th class="px-4 py-3 text-center text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Terms</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+            @for (customer of customers; track customer.id) {
+              <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50 transition">
+                <td class="px-4 py-3">
+                  <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ customer.name }}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400">{{ customer.address || '—' }}</div>
+                </td>
+                <td class="px-4 py-3">
+                  <div class="text-sm text-gray-700 dark:text-gray-300">{{ customer.contact_person || '—' }}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400">{{ customer.contact_number || customer.email || '—' }}</div>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ customer.tin_number || '—' }}</td>
+                <td class="px-4 py-3 text-right">
+                  <span class="text-sm font-semibold"
+                    [ngClass]="(customer.current_balance || 0) > 0 ? 'text-error-600 dark:text-error-400' : 'text-success-600 dark:text-success-400'">
+                    {{ formatAmount(customer.current_balance) }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-center">
+                  @if (customer.payment_terms) {
+                    <span class="inline-block rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+                      {{ customer.payment_terms }}d
+                    </span>
+                  } @else {
+                    <span class="text-xs text-gray-400">—</span>
+                  }
+                </td>
+                <td class="px-4 py-3 text-right">
+                  <div class="inline-flex items-center gap-2">
+                    <button type="button" (click)="openDetailsDrawer(customer)"
+                      class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">
+                      View
+                    </button>
+                    <button *appCan="{ menu: 'customers', permission: 'canUpdate' }"
+                      type="button" (click)="openEditModal(customer)"
+                      class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+                      Edit
+                    </button>
+                    <button *appCan="{ menu: 'customers', permission: 'canDelete' }"
+                      type="button" (click)="deleteCustomer(customer)"
+                      class="rounded-lg border border-error-300 px-3 py-1.5 text-xs font-semibold text-error-700 hover:bg-error-50 dark:border-error-500/40 dark:text-error-400 dark:hover:bg-error-500/10">
+                      Delete
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="6" class="px-4 py-12 text-center text-sm text-gray-500 dark:text-gray-400">
+                  No {{ tabLabel }} found.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
       </div>
-    </div>
+
+      <!-- Pagination -->
+      <div class="flex items-center justify-between border-t border-gray-100 px-4 py-3 dark:border-gray-800">
+        <span class="text-xs text-gray-500 dark:text-gray-400">Showing {{ customers.length }} of {{ total }}</span>
+        <div class="flex items-center gap-2">
+          <button type="button" (click)="onPageChange(page - 1)" [disabled]="page <= 1"
+            class="rounded border border-gray-200 px-3 py-1.5 text-xs text-gray-600 disabled:opacity-40 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+            Previous
+          </button>
+          <span class="text-xs text-gray-600 dark:text-gray-300">{{ page }} / {{ totalPages }}</span>
+          <button type="button" (click)="onPageChange(page + 1)" [disabled]="page >= totalPages"
+            class="rounded border border-gray-200 px-3 py-1.5 text-xs text-gray-600 disabled:opacity-40 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+            Next
+          </button>
+        </div>
+      </div>
+    }
   </div>
 </div>
 
-<app-modal [isOpen]="isModalOpen" (close)="closeModal()" [showCloseButton]="false" className="max-w-3xl">
+<!-- ── Create / Edit Modal ─────────────────────────────────────────── -->
+<app-modal [isOpen]="isModalOpen" (close)="closeModal()" [showCloseButton]="false" className="max-w-2xl">
   <div class="max-h-[85vh] overflow-y-auto p-6">
-    <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+    <div class="mb-5 flex items-start justify-between">
       <div>
-        <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">
-          {{ modalMode === 'create' ? 'Add Customer' : modalMode === 'edit' ? 'Edit Customer' : 'Customer Details' }}
+        <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">
+          {{ modalMode === 'create' ? 'Add ' + tabLabel : 'Edit ' + tabLabel }}
         </h2>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          {{ isDrawerOpen
-            ? 'Review customer activity, statements, orders, payments, and concerns.'
-            : 'Enter customer details and billing settings.' }}
-        </p>
+        <p class="mt-0.5 text-sm text-gray-500 dark:text-gray-400">Fill in the details below.</p>
       </div>
-      <button
-        class="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-        (click)="closeModal()"
-      >
+      <button type="button" (click)="closeModal()"
+        class="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
         Close
       </button>
     </div>
 
-    <div class="my-5 h-px bg-gray-200 dark:bg-gray-700"></div>
-
-    <div *ngIf="modalMode === 'create' || modalMode === 'edit'" class="space-y-4">
-      <div class="grid gap-4 md:grid-cols-2">
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Name</label>
-          <input
-            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            [(ngModel)]="form.name"
-            placeholder="Customer name"
-          />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Type</label>
-          <select
-            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            [(ngModel)]="form.customer_type"
-          >
-            <option value="regular">Regular</option>
-            <option value="sub_dealer">Sub-Dealer</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Contact Person</label>
-          <input
-            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            [(ngModel)]="form.contact_person"
-            placeholder="Contact person"
-          />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Contact Number</label>
-          <input
-            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            [(ngModel)]="form.contact_number"
-            placeholder="Contact number"
-          />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Email</label>
-          <input
-            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            [(ngModel)]="form.email"
-            placeholder="Email"
-          />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">TIN</label>
-          <input
-            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            [(ngModel)]="form.tin_number"
-            placeholder="TIN number"
-          />
-        </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Payment Terms (days)</label>
-          <input
-            type="number"
-            min="0"
-            class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            [(ngModel)]="form.payment_terms"
-            placeholder="0"
-          />
-        </div>
-        <div class="md:col-span-2">
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Address</label>
-          <textarea
-            class="mt-1 w-full resize-none rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-            rows="3"
-            [(ngModel)]="form.address"
-            placeholder="Address"
-          ></textarea>
-        </div>
+    <div class="grid gap-4 md:grid-cols-2">
+      <div class="md:col-span-2">
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Full Name *</label>
+        <input [(ngModel)]="form.name" placeholder="Enter full name"
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
       </div>
-
-      <div class="flex items-center justify-end gap-2">
-        <button
-          class="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-          (click)="closeModal()"
-        >
-          Cancel
-        </button>
-        <button
-          class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
-          [disabled]="isSaving"
-          (click)="saveCustomer()"
-        >
-          {{ modalMode === 'edit' ? 'Save Changes' : 'Create Customer' }}
-        </button>
+      <div>
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Type</label>
+        <select [(ngModel)]="form.customer_type"
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100">
+          <option value="regular">Regular Customer</option>
+          <option value="sub_dealer">Sub-Dealer</option>
+        </select>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Payment Terms (days)</label>
+        <input type="number" min="0" [(ngModel)]="form.payment_terms" placeholder="0"
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Contact Person</label>
+        <input [(ngModel)]="form.contact_person" placeholder="Contact person"
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Contact Number</label>
+        <input [(ngModel)]="form.contact_number" placeholder="Contact number"
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Email</label>
+        <input type="email" [(ngModel)]="form.email" placeholder="Email address"
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">TIN Number</label>
+        <input [(ngModel)]="form.tin_number" placeholder="TIN number"
+          class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+      </div>
+      <div class="md:col-span-2">
+        <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Address</label>
+        <textarea [(ngModel)]="form.address" rows="2" placeholder="Full address"
+          class="w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"></textarea>
       </div>
     </div>
 
+    @if (uiError) {
+      <div class="mt-3 rounded-lg border border-error-200 bg-error-50 px-3 py-2 text-sm text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+        {{ uiError }}
+      </div>
+    }
+
+    <div class="mt-5 flex justify-end gap-2">
+      <button type="button" (click)="closeModal()"
+        class="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+        Cancel
+      </button>
+      <button type="button" (click)="saveCustomer()" [disabled]="isSaving"
+        class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-60">
+        {{ isSaving ? 'Saving...' : (modalMode === 'edit' ? 'Save Changes' : 'Create') }}
+      </button>
+    </div>
   </div>
 </app-modal>
 
-<!-- Drawer for customer view (extra extra large) -->
-<aside
-  *ngIf="isDrawerOpen"
-  class="fixed inset-0 z-[100100] flex items-start justify-end bg-black/40 p-4"
-  (click)="closeDrawer()"
->
-  <div
-    class="relative h-full w-full max-w-[90vw] overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl dark:bg-gray-900"
+<!-- ── Detail Drawer ────────────────────────────────────────────────── -->
+@if (isDrawerOpen && selectedCustomer) {
+  <div class="fixed inset-0 z-[100100] bg-black/50 backdrop-blur-sm" (click)="closeDrawer()"></div>
+
+  <aside
+    class="fixed right-0 top-0 z-[100101] flex h-full w-full max-w-5xl flex-col bg-white shadow-2xl dark:bg-gray-900"
     (click)="$event.stopPropagation()"
   >
-    <!-- Header with Close Button -->
-    <div class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+    <!-- Drawer Header -->
+    <div class="flex items-start justify-between border-b border-gray-200 bg-gradient-to-r from-brand-600 to-brand-500 px-6 py-5 dark:border-gray-700">
       <div>
-        <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">
-          {{ selectedCustomer?.name }}
-        </div>
-        <div class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          <span class="inline-block rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-700 dark:bg-brand-900/30 dark:text-brand-300">
-            {{ selectedCustomer?.customer_type === 'sub_dealer' ? 'Sub-Dealer' : 'Regular Customer' }}
-          </span>
+        <div class="flex items-center gap-3">
+          <div class="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-lg font-bold text-white">
+            {{ selectedCustomer.name.charAt(0).toUpperCase() }}
+          </div>
+          <div>
+            <h2 class="text-xl font-bold text-white">{{ selectedCustomer.name }}</h2>
+            <span class="mt-0.5 inline-block rounded-full bg-white/20 px-2.5 py-0.5 text-xs font-semibold text-white">
+              {{ selectedCustomer.customer_type === 'sub_dealer' ? 'Sub-Dealer' : 'Regular Customer' }}
+            </span>
+          </div>
         </div>
       </div>
-      <button
-        class="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-        (click)="closeDrawer()"
-      >
+      <button type="button" (click)="closeDrawer()"
+        class="rounded-lg border border-white/30 px-3 py-1.5 text-sm font-semibold text-white hover:bg-white/10">
         Close
       </button>
     </div>
 
-    <div class="my-5 h-px bg-gray-200 dark:bg-gray-700"></div>
+    <!-- Scrollable Body -->
+    <div class="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
-    <!-- Customer Details Section -->
-    <div class="mb-6 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
-      <h3 class="mb-4 text-sm font-semibold text-gray-900 dark:text-gray-100">Customer Details</h3>
-      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <!-- Contact Person -->
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">Contact Person</p>
-          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
-            {{ selectedCustomer?.contact_person || 'N/A' }}
+      <!-- Customer Info Cards -->
+      <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <!-- Outstanding Balance -->
+        <div class="rounded-xl border p-4"
+          [ngClass]="paymentSummary.outstandingBalance > 0
+            ? 'border-error-200 bg-error-50 dark:border-error-500/30 dark:bg-error-500/10'
+            : 'border-success-200 bg-success-50 dark:border-success-500/30 dark:bg-success-500/10'">
+          <p class="text-xs font-semibold uppercase tracking-wide"
+            [ngClass]="paymentSummary.outstandingBalance > 0 ? 'text-error-600 dark:text-error-400' : 'text-success-600 dark:text-success-400'">
+            Outstanding Balance
+          </p>
+          <p class="mt-1 text-xl font-bold"
+            [ngClass]="paymentSummary.outstandingBalance > 0 ? 'text-error-700 dark:text-error-300' : 'text-success-700 dark:text-success-300'">
+            {{ formatAmount(paymentSummary.outstandingBalance) }}
           </p>
         </div>
 
-        <!-- Contact Number -->
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">Contact Number</p>
-          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
-            {{ selectedCustomer?.contact_number || 'N/A' }}
-          </p>
+        <!-- Total Charges -->
+        <div class="rounded-xl border border-warning-200 bg-warning-50 p-4 dark:border-warning-500/30 dark:bg-warning-500/10">
+          <p class="text-xs font-semibold uppercase tracking-wide text-warning-600 dark:text-warning-400">Total Charges</p>
+          <p class="mt-1 text-xl font-bold text-warning-700 dark:text-warning-300">{{ formatAmount(paymentSummary.totalCharges) }}</p>
         </div>
 
-        <!-- Email -->
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">Email</p>
-          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
-            {{ selectedCustomer?.email || 'N/A' }}
-          </p>
-        </div>
-
-        <!-- Address -->
-        <div class="md:col-span-2 lg:col-span-3">
-          <p class="text-xs text-gray-500 dark:text-gray-400">Address</p>
-          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
-            {{ selectedCustomer?.address || 'N/A' }}
-          </p>
-        </div>
-
-        <!-- TIN Number -->
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">TIN Number</p>
-          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
-            {{ selectedCustomer?.tin_number || 'N/A' }}
-          </p>
+        <!-- Total Settled -->
+        <div class="rounded-xl border border-brand-200 bg-brand-50 p-4 dark:border-brand-500/30 dark:bg-brand-500/10">
+          <p class="text-xs font-semibold uppercase tracking-wide text-brand-600 dark:text-brand-400">Total Paid</p>
+          <p class="mt-1 text-xl font-bold text-brand-700 dark:text-brand-300">{{ formatAmount(paymentSummary.totalManualPayments) }}</p>
         </div>
 
         <!-- Payment Terms -->
-        <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400">Payment Terms (Days)</p>
-          <p class="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
-            {{ selectedCustomer?.payment_terms || '0' }}
-          </p>
-        </div>
-
-        <!-- Current Balance -->
-        <div class="rounded-lg bg-white p-3 dark:bg-gray-700">
-          <p class="text-xs text-gray-500 dark:text-gray-400">Current Balance</p>
-          <p class="mt-1 text-lg font-bold" [ngClass]="(selectedCustomer?.current_balance ?? 0) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'">
-            {{ (selectedCustomer?.current_balance ?? 0) | number:'1.2-2' }}
-          </p>
-        </div>
-
-        <!-- Credit Limit (for sub-dealers) -->
-        <div *ngIf="selectedCustomer?.customer_type === 'sub_dealer'" class="rounded-lg bg-white p-3 dark:bg-gray-700">
-          <p class="text-xs text-gray-500 dark:text-gray-400">Credit Limit</p>
-          <p class="mt-1 text-lg font-bold text-blue-600 dark:text-blue-400">
-            {{ (selectedCustomer?.credit_limit ?? 0) | number:'1.2-2' }}
+        <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+          <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Payment Terms</p>
+          <p class="mt-1 text-xl font-bold text-gray-800 dark:text-gray-100">
+            {{ selectedCustomer.payment_terms ? selectedCustomer.payment_terms + ' days' : 'N/A' }}
           </p>
         </div>
       </div>
-    </div>
 
-    <div class="my-5 h-px bg-gray-200 dark:bg-gray-700"></div>
-
-    <!-- Tab Navigation -->
-    <div class="mb-6 rounded-lg border border-gray-200 bg-white p-1 dark:border-gray-700 dark:bg-gray-800">
-      <div class="flex flex-wrap gap-1">
-        <button
-          class="flex-1 rounded-md px-4 py-3 text-sm font-semibold transition duration-200"
-          [ngClass]="{
-            'bg-brand-500 text-white shadow-md': detailTab === 'orders',
-            'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'orders'
-          }"
-          (click)="detailTab = 'orders'"
-        >
-          <svg class="mr-2 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          Orders
-        </button>
-        <button
-          class="flex-1 rounded-md px-4 py-3 text-sm font-semibold transition duration-200"
-          [ngClass]="{
-            'bg-brand-500 text-white shadow-md': detailTab === 'payments',
-            'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'payments'
-          }"
-          (click)="detailTab = 'payments'"
-        >
-          <svg class="mr-2 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          Payments
-        </button>
-        <button
-          class="flex-1 rounded-md px-4 py-3 text-sm font-semibold transition duration-200"
-          [ngClass]="{
-            'bg-brand-500 text-white shadow-md': detailTab === 'statement',
-            'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'statement'
-          }"
-          (click)="detailTab = 'statement'"
-        >
-          <svg class="mr-2 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          SOA
-        </button>
-        <button
-          class="flex-1 rounded-md px-4 py-3 text-sm font-semibold transition duration-200"
-          [ngClass]="{
-            'bg-brand-500 text-white shadow-md': detailTab === 'concerns',
-            'text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700': detailTab !== 'concerns'
-          }"
-          (click)="detailTab = 'concerns'"
-        >
-          <svg class="mr-2 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
-          </svg>
-          Concerns
-        </button>
-      </div>
-    </div>
-
-    <!-- Tab Content -->
-    <div class="space-y-4">
-      <div *ngIf="isDetailLoading" class="rounded-xl border border-gray-200 bg-gray-50 p-8 text-center dark:border-gray-700 dark:bg-gray-800">
-        <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white shadow-sm dark:bg-gray-900">
-          <svg class="h-6 w-6 animate-spin text-brand-500" viewBox="0 0 24 24" fill="none">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-          </svg>
-        </div>
-        <h3 class="mt-4 text-sm font-semibold text-gray-900 dark:text-gray-100">Loading customer activity</h3>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Fetching orders, payments, statements, and concerns.</p>
-      </div>
-
-      <!-- Orders Tab -->
-      <div *ngIf="detailTab === 'orders' && !isDetailLoading" class="space-y-4">
-        <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Sales Orders Connected to Customer</h3>
-        <div *ngIf="orders.length === 0" class="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-800">
-          <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No sales orders found for this customer.</p>
-        </div>
-        <div *ngIf="orders.length > 0" class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead class="bg-gray-50 dark:bg-gray-800">
-              <tr>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">SO Number</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Type</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Amount</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Status</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Created</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-              <tr *ngFor="let order of orders" class="hover:bg-gray-50 dark:hover:bg-gray-800">
-                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">
-                  <span class="font-medium">{{ order.soNumber }}</span>
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.salesType }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.totalAmount | number:'1.2-2' }}</td>
-                <td class="px-4 py-3 text-sm">
-                  <span class="inline-block rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-                    {{ order.status }}
-                  </span>
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ order.createdAt }}</td>
-              </tr>
-            </tbody>
-          </table>
+      <!-- Contact Info Row -->
+      <div class="rounded-xl border border-gray-200 bg-gray-50 px-5 py-4 dark:border-gray-700 dark:bg-gray-800">
+        <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
+          <div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Contact Person</p>
+            <p class="mt-0.5 text-sm font-medium text-gray-900 dark:text-gray-100">{{ selectedCustomer.contact_person || '—' }}</p>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Contact Number</p>
+            <p class="mt-0.5 text-sm font-medium text-gray-900 dark:text-gray-100">{{ selectedCustomer.contact_number || '—' }}</p>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">Email</p>
+            <p class="mt-0.5 text-sm font-medium text-gray-900 dark:text-gray-100">{{ selectedCustomer.email || '—' }}</p>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500 dark:text-gray-400">TIN Number</p>
+            <p class="mt-0.5 text-sm font-medium text-gray-900 dark:text-gray-100">{{ selectedCustomer.tin_number || '—' }}</p>
+          </div>
+          <div class="col-span-2 md:col-span-4">
+            <p class="text-xs text-gray-500 dark:text-gray-400">Address</p>
+            <p class="mt-0.5 text-sm font-medium text-gray-900 dark:text-gray-100">{{ selectedCustomer.address || '—' }}</p>
+          </div>
         </div>
       </div>
 
-      <!-- Payments Tab -->
-      <div *ngIf="detailTab === 'payments' && !isDetailLoading" class="space-y-4">
-        <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Payment History</h3>
-        <div *ngIf="payments.length === 0" class="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-800">
-          <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No payments recorded for this customer.</p>
+      <!-- Tab Navigation -->
+      <div class="flex gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 dark:border-gray-700 dark:bg-gray-800">
+        @for (tab of [
+          { key: 'orders', label: 'Orders', count: orders.length },
+          { key: 'payments', label: 'Payments', count: soPayments.length + settlements.length },
+          { key: 'statement', label: 'SOA', count: statements.length },
+          { key: 'concerns', label: 'Concerns', count: concerns.length }
+        ]; track tab.key) {
+          <button type="button" (click)="detailTab = $any(tab.key)"
+            class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2.5 text-sm font-semibold transition"
+            [ngClass]="detailTab === tab.key
+              ? 'bg-brand-500 text-white shadow-sm'
+              : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'">
+            {{ tab.label }}
+            @if (tab.count > 0) {
+              <span class="rounded-full px-1.5 py-0.5 text-[10px] font-bold"
+                [ngClass]="detailTab === tab.key ? 'bg-white/25 text-white' : 'bg-gray-200 text-gray-600 dark:bg-gray-600 dark:text-gray-200'">
+                {{ tab.count }}
+              </span>
+            }
+          </button>
+        }
+      </div>
+
+      <!-- Loading State -->
+      @if (isDetailLoading) {
+        <div class="flex flex-col items-center justify-center py-16">
+          <div class="h-10 w-10 animate-spin rounded-full border-4 border-brand-200 border-t-brand-500"></div>
+          <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">Loading details...</p>
         </div>
-        <div *ngIf="payments.length > 0" class="space-y-3">
-          <div *ngFor="let payment of payments" class="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
-            <div class="flex items-start justify-between">
-              <div class="flex-1">
+      }
+
+      <!-- ── ORDERS TAB ─────────────────────────────────────────────── -->
+      @if (detailTab === 'orders' && !isDetailLoading) {
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold text-gray-800 dark:text-gray-100">Sales Order History</h3>
+            <span class="text-xs text-gray-500 dark:text-gray-400">{{ orders.length }} order(s)</span>
+          </div>
+
+          @if (orders.length === 0) {
+            <div class="rounded-xl border border-gray-200 bg-gray-50 py-12 text-center dark:border-gray-700 dark:bg-gray-800">
+              <svg class="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              </svg>
+              <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">No sales orders found.</p>
+            </div>
+          }
+
+          @for (order of orders; track order.id) {
+            <div class="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+              <!-- Order Header -->
+              <div class="flex flex-wrap items-start justify-between gap-2">
+                <div class="flex items-center gap-3">
+                  <div>
+                    <span class="text-sm font-bold text-gray-900 dark:text-gray-100">{{ order.soNumber }}</span>
+                    <span class="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                      {{ order.salesType || 'sales' }}
+                    </span>
+                  </div>
+                </div>
                 <div class="flex items-center gap-2">
-                  <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ payment.paymentDate }}</span>
-                  <span class="inline-block rounded-full bg-green-100 px-2 py-1 text-xs font-semibold text-green-700 dark:bg-green-900/30 dark:text-green-300">
-                    {{ payment.paymentMethod }}
+                  <span class="rounded-full px-2.5 py-1 text-xs font-semibold" [ngClass]="statusBadgeClass(order.status)">
+                    {{ order.status | uppercase }}
+                  </span>
+                  <span class="text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatAmount(order.totalAmount) }}</span>
+                </div>
+              </div>
+
+              <!-- Dates -->
+              <div class="mt-2 flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
+                <span><span class="font-medium">Created:</span> {{ formatDate(order.createdAt) }}</span>
+                @if (order.scheduleDate) {
+                  <span><span class="font-medium">Scheduled:</span> {{ formatDate(order.scheduleDate) }}</span>
+                }
+              </div>
+
+              <!-- Payment Details -->
+              @if (order.payments && order.payments.length > 0) {
+                <div class="mt-3 space-y-2 border-t border-gray-100 pt-3 dark:border-gray-700">
+                  <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Payment Details</p>
+                  @for (payment of order.payments; track $index) {
+                    <div class="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2 dark:bg-gray-700/50">
+                      <div class="flex items-center gap-2">
+                        <!-- Method badge -->
+                        <span class="rounded-full bg-brand-100 px-2 py-0.5 text-xs font-semibold text-brand-700 dark:bg-brand-500/20 dark:text-brand-300">
+                          {{ payment.method }}
+                        </span>
+                        <!-- Status badge -->
+                        <span class="rounded-full px-2 py-0.5 text-xs font-semibold" [ngClass]="statusBadgeClass(payment.status)">
+                          {{ payment.status | uppercase }}
+                        </span>
+                        <!-- Down payment indicator -->
+                        @if (payment.downPayment > 0) {
+                          <span class="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-700 dark:bg-purple-500/20 dark:text-purple-300">
+                            DP: {{ formatAmount(payment.downPayment) }}
+                          </span>
+                        }
+                      </div>
+                      <div class="flex items-center gap-3 text-xs">
+                        <!-- Terms due date with countdown -->
+                        @if (payment.termsDueDate) {
+                          <span>
+                            <span class="text-gray-500 dark:text-gray-400">Due: </span>
+                            <span class="font-medium text-gray-700 dark:text-gray-300">{{ formatDate(payment.termsDueDate) }}</span>
+                            @if (payment.status !== 'paid') {
+                              <span class="ml-1 font-semibold" [ngClass]="daysClass(daysUntil(payment.termsDueDate))">
+                                ({{ daysLabel(daysUntil(payment.termsDueDate)) }})
+                              </span>
+                            }
+                          </span>
+                        }
+                        <!-- Post-dated cheque -->
+                        @if (payment.postDated) {
+                          <span>
+                            <span class="text-gray-500 dark:text-gray-400">Post-dated: </span>
+                            <span class="font-medium text-gray-700 dark:text-gray-300">{{ formatDate(payment.postDated) }}</span>
+                            @if (payment.status !== 'paid') {
+                              <span class="ml-1 font-semibold" [ngClass]="daysClass(daysUntil(payment.postDated))">
+                                ({{ daysLabel(daysUntil(payment.postDated)) }})
+                              </span>
+                            }
+                          </span>
+                        }
+                        <!-- Check number -->
+                        @if (payment.checkNo) {
+                          <span class="text-gray-500 dark:text-gray-400">Chk# <span class="font-medium text-gray-700 dark:text-gray-300">{{ payment.checkNo }}</span></span>
+                        }
+                        <!-- Reference -->
+                        @if (payment.referenceNo) {
+                          <span class="text-gray-500 dark:text-gray-400">Ref# <span class="font-medium text-gray-700 dark:text-gray-300">{{ payment.referenceNo }}</span></span>
+                        }
+                        <!-- Amount -->
+                        <span class="font-bold text-gray-900 dark:text-gray-100">{{ formatAmount(payment.amount) }}</span>
+                      </div>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          }
+        </div>
+      }
+
+      <!-- ── PAYMENTS TAB ────────────────────────────────────────────── -->
+      @if (detailTab === 'payments' && !isDetailLoading) {
+        <div class="space-y-4">
+
+          <!-- Balance Summary Bar -->
+          <div class="grid grid-cols-3 gap-3">
+            <div class="rounded-xl border border-warning-200 bg-warning-50 p-3 text-center dark:border-warning-500/30 dark:bg-warning-500/10">
+              <p class="text-xs font-semibold text-warning-600 dark:text-warning-400">Total Charges</p>
+              <p class="mt-1 text-base font-bold text-warning-700 dark:text-warning-300">{{ formatAmount(paymentSummary.totalCharges) }}</p>
+            </div>
+            <div class="rounded-xl border border-success-200 bg-success-50 p-3 text-center dark:border-success-500/30 dark:bg-success-500/10">
+              <p class="text-xs font-semibold text-success-600 dark:text-success-400">Total Settled</p>
+              <p class="mt-1 text-base font-bold text-success-700 dark:text-success-300">{{ formatAmount(paymentSummary.totalManualPayments) }}</p>
+            </div>
+            <div class="rounded-xl border p-3 text-center"
+              [ngClass]="paymentSummary.outstandingBalance > 0
+                ? 'border-error-200 bg-error-50 dark:border-error-500/30 dark:bg-error-500/10'
+                : 'border-success-200 bg-success-50 dark:border-success-500/30 dark:bg-success-500/10'">
+              <p class="text-xs font-semibold"
+                [ngClass]="paymentSummary.outstandingBalance > 0 ? 'text-error-600 dark:text-error-400' : 'text-success-600 dark:text-success-400'">
+                Outstanding
+              </p>
+              <p class="mt-1 text-base font-bold"
+                [ngClass]="paymentSummary.outstandingBalance > 0 ? 'text-error-700 dark:text-error-300' : 'text-success-700 dark:text-success-300'">
+                {{ formatAmount(paymentSummary.outstandingBalance) }}
+              </p>
+            </div>
+          </div>
+
+          <!-- SO-Level Payment Terms -->
+          @if (soPayments.length > 0) {
+            <div>
+              <h4 class="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Per-Order Payment Terms
+              </h4>
+              <div class="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
+                <table class="min-w-full divide-y divide-gray-100 dark:divide-gray-700">
+                  <thead class="bg-gray-50 dark:bg-gray-800">
+                    <tr>
+                      <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">SO #</th>
+                      <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Method</th>
+                      <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Status</th>
+                      <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Due / Post-dated</th>
+                      <th class="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Countdown</th>
+                      <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">Down Payment</th>
+                      <th class="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100 bg-white dark:divide-gray-700 dark:bg-gray-900">
+                    @for (p of soPayments; track p.id) {
+                      <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                        <td class="px-4 py-2.5 text-sm font-medium text-brand-600 dark:text-brand-400">{{ p.soNumber || '—' }}</td>
+                        <td class="px-4 py-2.5">
+                          <span class="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+                            {{ p.method }}
+                          </span>
+                        </td>
+                        <td class="px-4 py-2.5">
+                          <span class="rounded-full px-2 py-0.5 text-xs font-semibold" [ngClass]="statusBadgeClass(p.status)">
+                            {{ p.status | uppercase }}
+                          </span>
+                        </td>
+                        <td class="px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300">
+                          @if (getEffectiveDueDate(p)) {
+                            {{ formatDate(getEffectiveDueDate(p)) }}
+                            @if (p.checkNo) {
+                              <span class="ml-1 text-xs text-gray-400">(Chk# {{ p.checkNo }})</span>
+                            }
+                          } @else {
+                            <span class="text-gray-400">—</span>
+                          }
+                        </td>
+                        <td class="px-4 py-2.5 text-sm">
+                          @if (p.status !== 'paid' && getEffectiveDueDate(p)) {
+                            <span class="font-semibold" [ngClass]="daysClass(daysUntil(getEffectiveDueDate(p)))">
+                              {{ daysLabel(daysUntil(getEffectiveDueDate(p))) }}
+                            </span>
+                          } @else if (p.status === 'paid') {
+                            <span class="text-success-600 dark:text-success-400 font-semibold">✓ Paid</span>
+                          } @else {
+                            <span class="text-gray-400">—</span>
+                          }
+                        </td>
+                        <td class="px-4 py-2.5 text-right text-sm text-gray-700 dark:text-gray-300">
+                          @if (p.downPayment > 0) {
+                            <span class="font-semibold text-purple-600 dark:text-purple-400">{{ formatAmount(p.downPayment) }}</span>
+                          } @else {
+                            <span class="text-gray-400">—</span>
+                          }
+                        </td>
+                        <td class="px-4 py-2.5 text-right text-sm font-bold text-gray-900 dark:text-gray-100">
+                          {{ formatAmount(p.amount) }}
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          }
+
+          <!-- Manual Settlements -->
+          @if (settlements.length > 0) {
+            <div>
+              <h4 class="mb-2 text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Payment Settlements
+              </h4>
+              <div class="space-y-2">
+                @for (s of settlements; track s.id) {
+                  <div class="flex items-center justify-between rounded-xl border border-success-200 bg-success-50 px-4 py-3 dark:border-success-500/30 dark:bg-success-500/10">
+                    <div class="flex items-center gap-3">
+                      <div class="flex h-8 w-8 items-center justify-center rounded-full bg-success-100 dark:bg-success-500/20">
+                        <svg class="h-4 w-4 text-success-600 dark:text-success-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                      </div>
+                      <div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ formatDate(s.paymentDate) }}</span>
+                          @if (s.method) {
+                            <span class="rounded-full bg-success-100 px-2 py-0.5 text-xs font-semibold text-success-700 dark:bg-success-500/20 dark:text-success-300">
+                              {{ s.method }}
+                            </span>
+                          }
+                          @if (s.soNumber) {
+                            <span class="text-xs text-gray-500 dark:text-gray-400">for {{ s.soNumber }}</span>
+                          }
+                        </div>
+                        @if (s.notes) {
+                          <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ s.notes }}</p>
+                        }
+                        @if (s.referenceNo) {
+                          <p class="mt-0.5 text-xs text-gray-400 dark:text-gray-500">Ref# {{ s.referenceNo }}</p>
+                        }
+                      </div>
+                    </div>
+                    <div class="text-right">
+                      <p class="text-base font-bold text-success-700 dark:text-success-300">{{ formatAmount(s.amount) }}</p>
+                      @if (s.appliedToBalance > 0) {
+                        <p class="text-xs text-gray-500 dark:text-gray-400">Applied: {{ formatAmount(s.appliedToBalance) }}</p>
+                      }
+                    </div>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          @if (soPayments.length === 0 && settlements.length === 0) {
+            <div class="rounded-xl border border-gray-200 bg-gray-50 py-12 text-center dark:border-gray-700 dark:bg-gray-800">
+              <svg class="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">No payment records found.</p>
+            </div>
+          }
+        </div>
+      }
+
+      <!-- ── SOA TAB ─────────────────────────────────────────────────── -->
+      @if (detailTab === 'statement' && !isDetailLoading) {
+        <div class="space-y-4">
+
+          <!-- Generate Form -->
+          <div class="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
+            <h4 class="mb-3 text-xs font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Generate New Statement</h4>
+            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Period From *</label>
+                <input type="date" [(ngModel)]="soaForm.periodFrom"
+                  class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Period To *</label>
+                <input type="date" [(ngModel)]="soaForm.periodTo"
+                  class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+              </div>
+              <div>
+                <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Due Date</label>
+                <input type="date" [(ngModel)]="soaForm.dueDate"
+                  class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+              </div>
+              <div class="flex items-end">
+                <button type="button" (click)="generateStatementOfAccount()"
+                  [disabled]="isGeneratingSoa || !soaForm.periodFrom || !soaForm.periodTo"
+                  class="w-full rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
+                  {{ isGeneratingSoa ? 'Generating...' : 'Generate & Preview' }}
+                </button>
+              </div>
+              <div class="sm:col-span-2 lg:col-span-4">
+                <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Notes</label>
+                <input type="text" [(ngModel)]="soaForm.notes" placeholder="Optional notes for this statement"
+                  class="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100" />
+              </div>
+            </div>
+          </div>
+
+          <!-- SOA History -->
+          @if (statements.length === 0) {
+            <div class="rounded-xl border border-gray-200 bg-gray-50 py-12 text-center dark:border-gray-700 dark:bg-gray-800">
+              <svg class="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              </svg>
+              <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">No statements generated yet.</p>
+              <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">Use the form above to generate the first SOA.</p>
+            </div>
+          }
+
+          @if (statements.length > 0) {
+            <div class="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
+              <table class="min-w-full divide-y divide-gray-100 dark:divide-gray-700">
+                <thead class="bg-gray-50 dark:bg-gray-800">
+                  <tr>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">SOA #</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400">Period</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">Opening</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">Charges</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">Payments</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">Closing</th>
+                    <th class="px-4 py-3 text-center text-xs font-semibold text-gray-500 dark:text-gray-400">Status</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400">Action</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 bg-white dark:divide-gray-700 dark:bg-gray-900">
+                  @for (soa of statements; track soa.id) {
+                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                      <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ soa.soaNumber }}</td>
+                      <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+                        <div>{{ formatDate(soa.periodFrom) }} — {{ formatDate(soa.periodTo) }}</div>
+                        @if (soa.dueDate) {
+                          <div class="text-xs" [ngClass]="daysClass(daysUntil(soa.dueDate))">
+                            Due: {{ formatDate(soa.dueDate) }}
+                            @if (soa.status !== 'paid') {
+                              ({{ daysLabel(daysUntil(soa.dueDate)) }})
+                            }
+                          </div>
+                        }
+                      </td>
+                      <td class="px-4 py-3 text-right text-sm text-gray-700 dark:text-gray-300">{{ formatAmount(soa.openingBalance) }}</td>
+                      <td class="px-4 py-3 text-right text-sm font-semibold text-warning-600 dark:text-warning-400">{{ formatAmount(soa.totalCharges) }}</td>
+                      <td class="px-4 py-3 text-right text-sm font-semibold text-success-600 dark:text-success-400">{{ formatAmount(soa.totalPayments) }}</td>
+                      <td class="px-4 py-3 text-right text-sm font-bold"
+                        [ngClass]="soa.closingBalance > 0 ? 'text-error-600 dark:text-error-400' : 'text-success-600 dark:text-success-400'">
+                        {{ formatAmount(soa.closingBalance) }}
+                      </td>
+                      <td class="px-4 py-3 text-center">
+                        <span class="rounded-full px-2.5 py-1 text-xs font-semibold" [ngClass]="statusBadgeClass(soa.status)">
+                          {{ soa.status | uppercase }}
+                        </span>
+                      </td>
+                      <td class="px-4 py-3 text-right">
+                        <button type="button" (click)="previewSoaPdf(soa)"
+                          class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">
+                          View PDF
+                        </button>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+        </div>
+      }
+
+      <!-- ── CONCERNS TAB ────────────────────────────────────────────── -->
+      @if (detailTab === 'concerns' && !isDetailLoading) {
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold text-gray-800 dark:text-gray-100">Service & Concern History</h3>
+            <span class="text-xs text-gray-500 dark:text-gray-400">{{ concerns.length }} record(s)</span>
+          </div>
+
+          @if (concerns.length === 0) {
+            <div class="rounded-xl border border-gray-200 bg-gray-50 py-12 text-center dark:border-gray-700 dark:bg-gray-800">
+              <svg class="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+              </svg>
+              <p class="mt-3 text-sm text-gray-500 dark:text-gray-400">No service or concern records found.</p>
+            </div>
+          }
+
+          @for (concern of concerns; track concern.id) {
+            <div class="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+              <!-- Header row -->
+              <div class="flex flex-wrap items-start justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-bold text-brand-600 dark:text-brand-400">{{ concern.soNumber }}</span>
+                  <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                    {{ concern.salesType || 'service' }}
                   </span>
                 </div>
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ payment.paymentNotes || 'No notes' }}</p>
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Ref: {{ payment.referenceNo || 'N/A' }}</p>
+                <div class="flex items-center gap-2">
+                  <!-- SO Status -->
+                  <span class="rounded-full px-2.5 py-1 text-xs font-semibold" [ngClass]="statusBadgeClass(concern.status)">
+                    {{ concern.status | uppercase }}
+                  </span>
+                  <!-- Priority if present -->
+                  @if (concern.priority) {
+                    <span class="rounded-full px-2.5 py-1 text-xs font-semibold" [ngClass]="priorityBadgeClass(concern.priority)">
+                      {{ concern.priority | uppercase }}
+                    </span>
+                  }
+                </div>
               </div>
-              <div class="text-right">
-                <p class="text-lg font-bold text-green-600 dark:text-green-400">
-                  {{ payment.paymentAmount | number:'1.2-2' }}
-                </p>
+
+              <!-- Service details -->
+              @if (concern.serviceName) {
+                <div class="mt-2 flex flex-wrap items-center gap-3 text-sm">
+                  <span class="font-semibold text-gray-800 dark:text-gray-100">{{ concern.serviceName }}</span>
+                  @if (concern.serviceType) {
+                    <span class="text-xs text-gray-500 dark:text-gray-400">Type: {{ concern.serviceType }}</span>
+                  }
+                  @if (concern.serviceStatus) {
+                    <span class="rounded-full px-2 py-0.5 text-xs font-semibold" [ngClass]="statusBadgeClass(concern.serviceStatus)">
+                      {{ concern.serviceStatus | uppercase }}
+                    </span>
+                  }
+                  @if (concern.serviceCost > 0) {
+                    <span class="font-semibold text-gray-900 dark:text-gray-100">{{ formatAmount(concern.serviceCost) }}</span>
+                  }
+                </div>
+              }
+
+              <!-- Concern details -->
+              @if (concern.concernSubject || concern.concernDescription) {
+                <div class="mt-2">
+                  @if (concern.concernSubject) {
+                    <p class="text-sm font-semibold text-gray-800 dark:text-gray-100">{{ concern.concernSubject }}</p>
+                  }
+                  @if (concern.concernDescription) {
+                    <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ concern.concernDescription }}</p>
+                  }
+                  @if (concern.concernStatus) {
+                    <span class="mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-semibold" [ngClass]="statusBadgeClass(concern.concernStatus)">
+                      {{ concern.concernStatus | uppercase }}
+                    </span>
+                  }
+                </div>
+              }
+
+              <!-- Dates row -->
+              <div class="mt-2 flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
+                @if (concern.createdAt) {
+                  <span><span class="font-medium">Created:</span> {{ formatDate(concern.createdAt) }}</span>
+                }
+                @if (concern.serviceDate) {
+                  <span><span class="font-medium">Service Date:</span> {{ formatDate(concern.serviceDate) }}</span>
+                }
+                @if (concern.resolvedAt) {
+                  <span class="text-success-600 dark:text-success-400">
+                    <span class="font-medium">Resolved:</span> {{ formatDate(concern.resolvedAt) }}
+                  </span>
+                }
               </div>
+
+              <!-- Resolution notes -->
+              @if (concern.resolutionNotes) {
+                <div class="mt-2 rounded-lg bg-success-50 px-3 py-2 text-xs text-success-700 dark:bg-success-500/10 dark:text-success-400">
+                  <span class="font-semibold">Resolution: </span>{{ concern.resolutionNotes }}
+                </div>
+              }
             </div>
-          </div>
+          }
         </div>
+      }
+
+      @if (uiError) {
+        <div class="rounded-lg border border-error-200 bg-error-50 px-4 py-3 text-sm text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+          {{ uiError }}
+        </div>
+      }
+
+    </div><!-- end scrollable body -->
+  </aside>
+}<!-- end @if isDrawerOpen -->
+
+<!-- ── SOA PDF Preview Modal ──────────────────────────────────────── -->
+@if (isSoaPreviewOpen && soaPreviewUrl) {
+  <div class="fixed inset-0 z-[100200] bg-gray-900/70" (click)="closeSoaPreview()">
+    <section class="flex h-screen w-screen flex-col bg-white dark:bg-gray-900" (click)="$event.stopPropagation()">
+      <header class="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-800">
+        <div>
+          <h4 class="text-sm font-bold text-gray-800 dark:text-white/90">Statement of Account Preview</h4>
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ soaPreviewFilename }}</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button type="button" (click)="downloadSoaPdf()"
+            class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10">
+            Download PDF
+          </button>
+          <button type="button" (click)="closeSoaPreview()"
+            class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+            Close
+          </button>
+        </div>
+      </header>
+      <div class="min-h-0 flex-1 bg-gray-100 dark:bg-gray-950">
+        <iframe [src]="soaPreviewUrl" title="SOA PDF Preview" class="h-full w-full border-0"></iframe>
       </div>
-
-      <!-- Statement of Account Tab -->
-      <div *ngIf="detailTab === 'statement' && !isDetailLoading" class="space-y-4">
-        <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Statement of Account</h3>
-        <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800">
-          <h4 class="mb-3 text-xs font-semibold text-gray-600 dark:text-gray-300">Generate New Statement</h4>
-          <div class="grid gap-3 md:grid-cols-4">
-            <div>
-              <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Period From</label>
-              <input
-                type="date"
-                class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-                [(ngModel)]="soaForm.periodFrom"
-              />
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Period To</label>
-              <input
-                type="date"
-                class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-                [(ngModel)]="soaForm.periodTo"
-              />
-            </div>
-            <div>
-              <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300">Due Date</label>
-              <input
-                type="date"
-                class="mt-1 w-full rounded-lg border-gray-200 bg-white px-3 py-2 text-sm shadow-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
-                [(ngModel)]="soaForm.dueDate"
-              />
-            </div>
-            <div class="flex items-end">
-              <button
-                class="w-full rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
-                [disabled]="isGeneratingSoa || !soaForm.periodFrom || !soaForm.periodTo"
-                (click)="generateStatementOfAccount()"
-              >
-                {{ isGeneratingSoa ? 'Generating...' : 'Generate SOA' }}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div *ngIf="statements.length === 0" class="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-800">
-          <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No statements of account generated yet.</p>
-        </div>
-        <div *ngIf="statements.length > 0" class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead class="bg-gray-50 dark:bg-gray-800">
-              <tr>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">SOA #</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Period</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">Opening</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">Charges</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">Payments</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">Closing</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Status</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 dark:text-gray-300">Action</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-              <tr *ngFor="let soa of statements" class="hover:bg-gray-50 dark:hover:bg-gray-800">
-                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ soa.soaNumber }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">
-                  {{ soa.periodFrom }} - {{ soa.periodTo }}
-                </td>
-                <td class="px-4 py-3 text-right text-sm text-gray-700 dark:text-gray-200">{{ soa.openingBalance | number:'1.2-2' }}</td>
-                <td class="px-4 py-3 text-right text-sm text-orange-600 dark:text-orange-400">{{ soa.totalCharges | number:'1.2-2' }}</td>
-                <td class="px-4 py-3 text-right text-sm text-green-600 dark:text-green-400">{{ soa.totalPayments | number:'1.2-2' }}</td>
-                <td class="px-4 py-3 text-right text-sm font-medium" [ngClass]="soa.closingBalance > 0 ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'">
-                  {{ soa.closingBalance | number:'1.2-2' }}
-                </td>
-                <td class="px-4 py-3 text-sm">
-                  <span [ngClass]="{
-                    'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': soa.status === 'draft',
-                    'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300': soa.status === 'sent',
-                    'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300': soa.status === 'paid',
-                    'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300': soa.status === 'overdue'
-                  }" class="inline-block rounded-full px-2 py-1 text-xs font-semibold">
-                    {{ soa.status | uppercase }}
-                  </span>
-                </td>
-                <td class="px-4 py-3 text-right text-sm">
-                  <button
-                    type="button"
-                    (click)="downloadStatementOfAccountPdf(soa)"
-                    class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-500/10"
-                  >
-                    Download PDF
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Concerns/Service Tab -->
-      <div *ngIf="detailTab === 'concerns' && !isDetailLoading" class="space-y-4">
-        <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">Service Concerns & Inquiries</h3>
-        <div *ngIf="concerns.length === 0" class="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center dark:border-gray-700 dark:bg-gray-800">
-          <svg class="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" />
-          </svg>
-          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No service concerns recorded for this customer.</p>
-        </div>
-        <div *ngIf="concerns.length > 0" class="overflow-x-auto">
-          <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-            <thead class="bg-gray-50 dark:bg-gray-800">
-              <tr>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">SO Number</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Type</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Subject</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Status</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Priority</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 dark:text-gray-300">Resolved</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-              <tr *ngFor="let concern of concerns" class="hover:bg-gray-50 dark:hover:bg-gray-800">
-                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ concern.soNumber }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.concernType }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.concernSubject }}</td>
-                <td class="px-4 py-3 text-sm">
-                  <span [ngClass]="{
-                    'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300': concern.concernStatus === 'open',
-                    'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300': concern.concernStatus === 'in-progress',
-                    'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300': concern.concernStatus === 'closed'
-                  }" class="inline-block rounded-full px-2 py-1 text-xs font-semibold">
-                    {{ concern.concernStatus }}
-                  </span>
-                </td>
-                <td class="px-4 py-3 text-sm">
-                  <span [ngClass]="{
-                    'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300': concern.priority === 'high',
-                    'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300': concern.priority === 'medium',
-                    'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300': concern.priority === 'low'
-                  }" class="inline-block rounded-full px-2 py-1 text-xs font-semibold">
-                    {{ concern.priority }}
-                  </span>
-                </td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-200">{{ concern.resolvedAt || 'Not resolved' }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <div *ngIf="uiError" class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-      {{ uiError }}
-    </div>
+    </section>
   </div>
-</aside>
+}

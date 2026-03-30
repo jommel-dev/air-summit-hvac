@@ -10,6 +10,8 @@ export interface PurchaseOrderItem {
   status: string;
   createdAt: string | null;
   serialCount: number;
+  isTransferPO?: boolean;
+  originatingSalesOrder?: { id: number } | null;
 }
 
 export interface PurchaseOrderDetailPayment {
@@ -61,6 +63,26 @@ export interface PurchaseOrderDetailItem {
   paymentDetails: PurchaseOrderDetailPayment[];
   productItems: PurchaseOrderDetailProductItem[];
   createdAt: string | null;
+  isTransferPO?: boolean;
+  originatingSalesOrder?: {
+    id: number;
+    soNumber: string | null;
+    branchId?: string | null;
+    branchName?: string | null;
+    productItems?: any[];
+    transferDetails?: {
+      id: number;
+      fromBranchId: string | null;
+      fromBranchName: string | null;
+      toBranchId: string | null;
+      toBranchName: string | null;
+      transferDate: string | null;
+      expectedDeliveryDate: string | null;
+      actualDeliveryDate: string | null;
+      transferStatus: string | null;
+      transferNotes: string | null;
+    } | null;
+  } | null;
 }
 
 interface PurchaseOrderDetailResponse {
@@ -272,12 +294,17 @@ export class PurchaseOrderService {
     return response.data;
   }
 
+  async verifyAndReceivePurchase(id: number): Promise<PurchaseActionResponse> {
+    const response = await apiClient.patch<PurchaseActionResponse>(`/purchase/${id}/verify-receive`, {});
+    return response.data;
+  }
+
   async getPurchaseById(id: number): Promise<PurchaseOrderDetailItem | null> {
     const response = await apiClient.get<PurchaseOrderDetailResponse>(`/purchase/${id}`);
     if (!response.data.success) {
       return null;
     }
-
+    // Pass through isTransferPO and originatingSalesOrder if present
     return response.data.item ?? null;
   }
 
