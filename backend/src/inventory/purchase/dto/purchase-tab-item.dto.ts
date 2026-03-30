@@ -51,4 +51,12 @@ export class PurchaseTabItemDto {
   }>;
   createdAt!: string | null;
   serialCount!: number;
+
+  // Transfer PO support
+  isTransferPO?: boolean;
+  originatingSalesOrder?: {
+    id: number;
+    soNumber?: string | null;
+    productItems?: any[];
+  } | null;
 }

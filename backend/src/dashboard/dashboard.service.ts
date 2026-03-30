@@ -1133,19 +1133,33 @@ export class DashboardService {
           customer: string;
           totalAmount: string;
           paidAmount: string;
+          downPayment: string;
           method: string;
           dueDate: string;
         }>(
-          `${this.getSalesDashboardBaseCte()}
+          `${this.getSalesDashboardBaseCte()},
+           down_payment_scope AS (
+             SELECT
+               COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
+               COALESCE(SUM(
+                 COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0)
+               ), 0) AS total_down_payment
+             FROM tblso_payments sp
+             WHERE LOWER(COALESCE(to_jsonb(sp)->>'status', '')) != 'paid'
+               AND COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0) > 0
+             GROUP BY COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId')
+           )
            SELECT
              ss.so_id::text AS "soId",
              ss.so_number::text AS "soNumber",
              ss.customer::text AS customer,
              ss.total_amount::text AS "totalAmount",
              ss.paid_amount::text AS "paidAmount",
+             COALESCE(dp.total_down_payment, 0)::text AS "downPayment",
              ss.credit_terms_methods::text AS method,
              ss.due_date::text AS "dueDate"
            FROM sales_scope ss
+           LEFT JOIN down_payment_scope dp ON dp.so_id = ss.so_id
            WHERE ${mode === 'overdues' ? overdueBalancePredicate : openBalancePredicate}
              AND ($1::text IS NULL OR ss.branch_id = $1::text)
            ORDER BY ss.due_date ASC NULLS LAST, ss.created_at DESC
@@ -1155,17 +1169,24 @@ export class DashboardService {
 
         return {
           success: true,
-          items: result.rows.map((row) => ({
-            id: row.soId,
-            soId: Number(row.soId),
-            soNumber: row.soNumber,
-            customer: row.customer,
-            totalAmount: this.toNumber(row.totalAmount),
-            paidAmount: this.toNumber(row.paidAmount),
-            method: row.method,
-            balance: Math.max(this.toNumber(row.totalAmount) - this.toNumber(row.paidAmount), 0),
-            dueDate: row.dueDate ? new Date(row.dueDate) : null,
-          })),
+          items: result.rows.map((row) => {
+            const total = this.toNumber(row.totalAmount);
+            const paid = this.toNumber(row.paidAmount);
+            const dp = this.toNumber(row.downPayment);
+            const balance = Math.max(total - paid - dp, 0);
+            return {
+              id: row.soId,
+              soId: Number(row.soId),
+              soNumber: row.soNumber,
+              customer: row.customer,
+              totalAmount: total,
+              paidAmount: paid,
+              downPayment: dp,
+              method: row.method,
+              balance,
+              dueDate: row.dueDate ? new Date(row.dueDate) : null,
+            };
+          }),
         };
       }
 

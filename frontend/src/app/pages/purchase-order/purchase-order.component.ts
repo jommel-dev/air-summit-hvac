@@ -1,3 +1,4 @@
+// Removed accidental top-level getter definition. The correct getter is inside the class.
 import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -87,10 +88,30 @@ interface QueuedPurchaseSerialScan {
 export class PurchaseOrderComponent implements OnInit, OnDestroy {
   activeTab: PurchaseTab = 'deliveries';
   isFormDrawerOpen = false;
-  drawerMode: 'create' | 'edit' = 'create';
+  drawerMode: 'create' | 'edit' | 'view' = 'create';
   editingPurchaseId: number | null = null;
   editingPoNumber = '';
   editingPurchaseStatus = '';
+  isTransferPO: boolean = false;
+  originatingSalesOrder: {
+    id: number;
+    soNumber: string | null;
+    branchId?: string | null;
+    branchName?: string | null;
+    productItems?: any[];
+    transferDetails?: {
+      id: number;
+      fromBranchId: string | null;
+      fromBranchName: string | null;
+      toBranchId: string | null;
+      toBranchName: string | null;
+      transferDate: string | null;
+      expectedDeliveryDate: string | null;
+      actualDeliveryDate: string | null;
+      transferStatus: string | null;
+      transferNotes: string | null;
+    } | null;
+  } | null = null;
   vendorMode: 'existing' | 'new' = 'existing';
   isLoading = false;
   errorMessage = '';
@@ -102,6 +123,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   totalPages = 1;
   isCreating = false;
   isProcessingApprovalAction = false;
+  isVerifyingReceive = false;
   createError = '';
   createSuccess = '';
   isExportingSerials = false;
@@ -170,10 +192,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private suppressBeforeUnloadPrompt = false;
   private drawerInitialStateSnapshot = '';
   private readonly purchaseTabPermissionKeyMap: Record<PurchaseTab, string[]> = {
-    deliveries: ['purchase-order.tab.deliveries', 'purchase-order.tab.local'],
-    approvals: ['purchase-order.tab.approvals'],
-    'master-data': ['purchase-order.tab.master-data', 'purchase-order.tab.imported'],
-  };
+      deliveries: ['purchase-order.tab.deliveries', 'purchase-order.tab.local'],
+      approvals: ['purchase-order.tab.approvals'],
+      'master-data': ['purchase-order.tab.master-data', 'purchase-order.tab.imported'],
+    };
 
   constructor(
     private readonly purchaseOrderService: PurchaseOrderService,
@@ -506,7 +528,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
   }
 
-  private async loadTabData(tab: PurchaseTab): Promise<void> {
+  async loadTabData(tab: PurchaseTab): Promise<void> {
     if (!this.canAccessPurchaseTab(tab)) {
       this.purchaseOrders = [];
       this.total = 0;
@@ -574,7 +596,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     return this.activeTab === 'master-data' && this.drawerMode === 'edit';
   }
 
-  getRowActionLabel(): 'View' | 'Edit' {
+  getRowActionLabel(item?: PurchaseOrderItem): 'View' | 'Edit' {
+    if (item && item.isTransferPO) return 'View';
     return this.activeTab === 'approvals' || this.activeTab === 'master-data'
       ? 'View'
       : 'Edit';
@@ -943,6 +966,38 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
   }
 
+  async verifyAndReceive(): Promise<void> {
+    if (!this.editingPurchaseId || this.isVerifyingReceive || this.isCreating) {
+      return;
+    }
+
+    this.isVerifyingReceive = true;
+    this.createError = '';
+    this.createSuccess = '';
+
+    try {
+      const response = await this.purchaseOrderService.verifyAndReceivePurchase(this.editingPurchaseId);
+      if (!response.success) {
+        this.createError = response.message ?? 'Failed to verify and receive transfer PO';
+        return;
+      }
+
+      this.createSuccess = response.message ?? 'Transfer PO verified and received successfully';
+      await this.closeCreateDrawer();
+      await this.loadTabData(this.activeTab);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.createError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to verify and receive transfer PO';
+      } else {
+        this.createError = 'Failed to verify and receive transfer PO';
+      }
+    } finally {
+      this.isVerifyingReceive = false;
+    }
+  }
+
   // ── Cancel / Delete ────────────────────────────────────────────────
 
   canCancelPurchase(status: string | null | undefined): boolean {
@@ -1117,7 +1172,6 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
 
     this.resetCreateForm();
-    this.drawerMode = 'edit';
     this.editingPurchaseId = item.id;
     this.isFormDrawerOpen = true;
     this.createError = '';
@@ -1133,6 +1187,12 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         return;
       }
 
+      this.isTransferPO = !!detail.isTransferPO;
+      this.originatingSalesOrder = detail.originatingSalesOrder || null;
+
+      // Set drawerMode after isTransferPO is known
+      this.drawerMode = this.isTransferPO ? 'view' : 'edit';
+
       this.applyDetailToForm(detail, item);
       this.editingPoNumber = String(detail.poNumber ?? item.poNumber ?? '').trim();
       this.editingPurchaseStatus = String(detail.status ?? item.status ?? '').trim();
@@ -1146,6 +1206,51 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         this.createError = 'Failed to load purchase order details';
       }
     }
+  }
+
+  /**
+   * Returns true if this PO is a transfer PO and should be view-only in the receiver branch.
+   * You may want to enhance this logic to check if the current user is in the receiver branch.
+   */
+
+  get isTransferPOViewOnly(): boolean {
+    return this.isTransferPO;
+    // Optionally: check if user branch matches receiver branch
+    // return this.isTransferPO && this.rbacService.getPayload()?.branchId === this.editingBranchId;
+  }
+
+  get isDrawerViewMode(): boolean {
+    return this.drawerMode === 'view';
+  }
+
+  /**
+   * For transfer POs, get serials from originatingSalesOrder if present.
+   */
+  getDisplayUnitTypeSerials(unitType: any): string[] {
+    if (this.isTransferPOViewOnly && this.originatingSalesOrder && Array.isArray(this.originatingSalesOrder.productItems)) {
+      const poProduct = this.createForm.productItems[this.activeProductTabIndex];
+      // Try to match by productId/capacityId and check both salesId and previousSalesId
+      const soProduct = this.originatingSalesOrder.productItems.find((p: any) => {
+        // Match by productId/capacityId
+        const matchProduct = String(p.productId) === String(poProduct.productId) && String(p.capacityId) === String(poProduct.capacityId);
+        if (!matchProduct) return false;
+        // If SO product has previousSalesId, prefer that
+        if (p.previousSalesId) {
+          // If PO has a reference to previousSalesId, you could add logic here if needed
+          return true;
+        }
+        // Otherwise, match on salesId if present
+        if (p.salesId) {
+          return true;
+        }
+        // Fallback: match if no salesId/previousSalesId info
+        return true;
+      });
+      if (soProduct && soProduct.serialNumbers && unitType.label in soProduct.serialNumbers) {
+        return soProduct.serialNumbers[unitType.label] || [];
+      }
+    }
+    return unitType.serials;
   }
 
   async closeCreateDrawer(): Promise<void> {
@@ -1429,7 +1534,6 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     const allTabs: PurchaseTab[] = ['deliveries', 'approvals', 'master-data'];
     return allTabs.filter((tab) => this.canAccessPurchaseTab(tab));
   }
-
   private applyMeta(meta?: { page: number; limit: number; total: number; totalPages: number }): void {
     if (!meta) {
       this.total = this.purchaseOrders.length;

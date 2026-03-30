@@ -20,6 +20,7 @@ import {
 } from '../../shared/services/sales-order.service';
 import { MaterialTransactionItem } from '../../shared/services/sales-order-material.service';
 import { RbacService } from '../../shared/services/rbac.service';
+import { UserManagementService, UserApiItem } from '../../shared/services/user-management.service';
 import {
   BusinessProfileSettings,
   BusinessSettingsService,
@@ -103,44 +104,46 @@ interface SalesPendingSerialRemoval {
   serialNumber: string;
 }
 
+
 @Component({
   selector: 'app-sales-order',
   imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
   templateUrl: './sales-order.component.html',
   styles: ``,
 })
-export class SalesOrderComponent implements OnInit, OnDestroy {
-    readonly salesTypeOptions = [
-      'sales',
-      'sales and service',
-      'project',
-      'sub-dealer',
-      'service',
-      'concern',
-      'transfer',
-    ] as const;
+export class SalesOrderComponent {
+  receiverOptions: UserApiItem[] = [];
+  readonly salesTypeOptions = [
+    'sales',
+    'sales and service',
+    'project',
+    'sub-dealer',
+    'service',
+    'concern',
+    'transfer',
+  ] as const;
 
-    readonly serviceNameOptions = [
-      'CLEANING',
-      'DISMANTLE',
-      'RELOCATION',
-      'CHARING FREON',
-      'SURVEY',
-      'CHIPPING',
-      'PUMP DOWN',
-      'INSTALL ONLY',
-      'CHECKUP',
-    ] as const;
+  readonly serviceNameOptions = [
+    'CLEANING',
+    'DISMANTLE',
+    'RELOCATION',
+    'CHARING FREON',
+    'SURVEY',
+    'CHIPPING',
+    'PUMP DOWN',
+    'INSTALL ONLY',
+    'CHECKUP',
+  ] as const;
 
-    readonly paymentMethodOptions: SalesPaymentFormItem['method'][] = [
-      'Cash',
-      'Bank Transfer',
-      'Terms',
-      'Terms with DP',
-      'Cheque',
-      'Credit Card',
-      'Installment',
-    ];
+  readonly paymentMethodOptions: SalesPaymentFormItem['method'][] = [
+    'Cash',
+    'Bank Transfer',
+    'Terms',
+    'Terms with DP',
+    'Cheque',
+    'Credit Card',
+    'Installment',
+  ];
 
   constructor(
     private readonly salesOrderService: SalesOrderService,
@@ -148,7 +151,10 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     private readonly route: ActivatedRoute,
     private readonly sanitizer: DomSanitizer,
     private readonly rbacService: RbacService,
+    private readonly userManagementService: UserManagementService
   ) {}
+
+  // ...existing code (all properties, methods, etc. go here, inside the class)...
 
   activeTab: SalesTab = 'schedules';
   isLoading = false;
@@ -264,6 +270,11 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     void this.loadTabData(this.activeTab);
     void this.loadReferenceData();
     void this.loadCustomerOptions();
+
+    // Load employees for receiver dropdown
+    this.userManagementService.getUsers().then((res) => {
+      this.receiverOptions = res.data || [];
+    });
 
     const editId = Number(this.route.snapshot.queryParamMap.get('editId'));
     if (Number.isInteger(editId) && editId > 0) {
@@ -1777,7 +1788,22 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
     const item = this.form.productItems[productIndex];
     if (!item) return;
 
+    // Update totalSetQty
     item.totalSetQty = Math.max(0, Math.floor(Number(item.totalSetQty) || 0));
+
+    // If there are unitTypes, update all their values to match totalSetQty (or distribute as needed)
+    if (Array.isArray(item.unitTypes) && item.unitTypes.length > 0) {
+      item.unitTypes = item.unitTypes.map((entry: SalesUnitTypeFormItem) => ({
+        ...entry,
+        value: item.totalSetQty,
+      }));
+    }
+
+    // Always sync unitTypesQty for backend payload
+    (item as any).unitTypesQty = (item.unitTypes || []).map((entry: any) => ({
+      label: entry.label,
+      value: Number(entry.value) || 0,
+    }));
 
     this.recalculateTotalAmount();
   }
@@ -1997,31 +2023,50 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
   }
 
   async saveDesignForm(): Promise<void> {
-
-    // Only strictly validate serials if product items are being changed or status is being set to for-delivery/remitted
-    const isProductEdit = this.drawerMode === 'create' || this.form.productItems.some((item: any) => item._edited);
-    const isDeliveryOrRemit = ['for-delivery', 'remitted'].includes((this.form.status || '').toLowerCase());
-    if (isProductEdit || isDeliveryOrRemit) {
-      const hasProduct = (this.form.productItems ?? []).length > 0;
-      const hasZeroQty = (this.form.productItems ?? []).some((item: any) => Number(item.totalSetQty) <= 0);
-      const missingSerials = (this.form.productItems ?? []).some((item: any) => {
-        return (item.unitTypes ?? []).some((ut: any) => ut.value > 0 && (!ut.serials || ut.serials.length < ut.value));
+    // For transfer SO, only require serials for every product/unit if status is for-delivery or remitted AND not in create mode
+    const salesType = this.form.salesType;
+    const status = (this.form.status || '').toLowerCase();
+    if (salesType === 'transfer' && ['for-delivery', 'remitted'].includes(status) && this.drawerMode !== 'create') {
+      const missingSerials: string[] = [];
+      (this.form.productItems ?? []).forEach((item: any, idx: number) => {
+        (item.unitTypes ?? []).forEach((ut: any) => {
+          if (ut.value > 0 && (!ut.serials || ut.serials.length < ut.value)) {
+            missingSerials.push(`Product #${idx + 1} (${ut.label})`);
+          }
+        });
       });
-      if (hasProduct && hasZeroQty) {
-        this.uiError = 'Unit quantity must not be zero.';
+      if (missingSerials.length > 0) {
+        this.uiError = `All required serial numbers must be scanned before submitting. Missing: ${missingSerials.join(', ')}`;
         return;
       }
-      if (hasProduct && missingSerials) {
-        this.uiError = 'All required serial numbers must be scanned before submitting.';
-        return;
+    } else {
+      // Only strictly validate serials if product items are being changed or status is being set to for-delivery/remitted
+      // SKIP serial validation for transfer SOs in create mode
+      if (!(salesType === 'transfer' && this.drawerMode === 'create')) {
+        const isProductEdit = this.drawerMode === 'create' || this.form.productItems.some((item: any) => item._edited);
+        const isDeliveryOrRemit = ['for-delivery', 'remitted'].includes((this.form.status || '').toLowerCase());
+        if (isProductEdit || isDeliveryOrRemit) {
+          const hasProduct = (this.form.productItems ?? []).length > 0;
+          const hasZeroQty = (this.form.productItems ?? []).some((item: any) => Number(item.totalSetQty) <= 0);
+          const missingSerials = (this.form.productItems ?? []).some((item: any) => {
+            return (item.unitTypes ?? []).some((ut: any) => ut.value > 0 && (!ut.serials || ut.serials.length < ut.value));
+          });
+          if (hasProduct && hasZeroQty) {
+            this.uiError = 'Unit quantity must not be zero.';
+            return;
+          }
+          if (hasProduct && missingSerials) {
+            this.uiError = 'All required serial numbers must be scanned before submitting.';
+            return;
+          }
+        }
       }
     }
     if (this.isSubmitting) {
       return;
     }
 
-    const salesType = this.form.salesType;
-
+    // (moved up: salesType already declared above)
     if (salesType === 'transfer') {
       const td = this.form.transferDetails ?? {};
       if (!td.fromBranchId || !td.toBranchId) {
@@ -2264,7 +2309,7 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
           unitPrice: Number(item.unitPrice) || 0,
           sellPrice: item.sellPrice === '' ? '' : Number(item.sellPrice) || 0,
           discountPrice: item.discountPrice === '' ? '' : Number(item.discountPrice) || 0,
-          unitTypesQty: item.unitTypes.map((entry: any) => ({
+          unitTypesQty: (item.unitTypes || []).map((entry: any) => ({
             label: entry.label,
             value: Number(entry.value) || 0,
           })),
@@ -2312,6 +2357,8 @@ export class SalesOrderComponent implements OnInit, OnDestroy {
         actualDeliveryDate: '',
         transferStatus: '',
         transferNotes: '',
+        receiverName: '',
+        receivedBy: undefined as number | undefined, // employee/receiver
       },
       concernDetails: {
         concernType: '',

@@ -10,7 +10,9 @@ import { randomUUID } from 'crypto';
 import { ListSalesOrderQueryDto } from './dto/list-sales-order-query.dto';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 import { MaterialTransactionsService } from 'src/inventory/material-transactions/material-transactions.service';
+
 import { MaterialsService } from 'src/inventory/materials/materials.service';
+import { PurchaseService } from 'src/inventory/purchase/purchase.service';
 
 type SalesMode =
   | 'deliveries'
@@ -39,6 +41,7 @@ export class SalesOrderService {
     private readonly materialStockService: MaterialStockService,
     private readonly materialTransactionsService: MaterialTransactionsService,
     private readonly materialsService: MaterialsService,
+    private readonly purchaseService: PurchaseService,
   ) {}
 
   private async getTableColumns(
@@ -521,20 +524,57 @@ export class SalesOrderService {
       `SELECT COALESCE(SUM(COALESCE(so.total_amount, 0)::numeric), 0)::text AS total_charges
          FROM tblsales_order so
         WHERE so.customer_id::text = $1
-          AND COALESCE(so.created_at, NOW())::date BETWEEN $2::date AND $3::date`,
+          AND COALESCE(so.created_at, NOW())::date BETWEEN $2::date AND $3::date
+          AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, 'pending'))), '_', '-'), ' ', '-')
+              NOT IN ('pending', 'for-delivery', 'in-progress', 'scheduled', 'cancelled', 'rejected')`,
       [normalizedCustomerId, effectivePeriodFrom, effectivePeriodTo],
     );
 
-    const paymentsResult = await this.databaseService.query<{ total_payments: string | null }>(
-      `SELECT COALESCE(SUM(payment_amount), 0)::text AS total_payments
-         FROM tblcustomer_payments
-        WHERE customer_id::text = $1
-          AND payment_date BETWEEN $2::date AND $3::date`,
+    // Total payments = manual settlements + down payments on unpaid SOs + fully paid SO amounts
+    const paymentsResult = await this.databaseService.query<{
+      total_manual: string | null;
+      total_down: string | null;
+      total_so_paid: string | null;
+    }>(
+      `SELECT
+         -- Manual settlements in period
+         (
+           SELECT COALESCE(SUM(payment_amount), 0)::text
+           FROM tblcustomer_payments
+           WHERE customer_id::text = $1
+             AND payment_date BETWEEN $2::date AND $3::date
+         ) AS total_manual,
+         -- Down payments on UNPAID SOs in period
+         (
+           SELECT COALESCE(SUM(
+             COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0)
+           ), 0)::text
+           FROM tblso_payments sp
+           JOIN tblsales_order so2 ON so2.id = sp.so_id
+           WHERE so2.customer_id::text = $1
+             AND COALESCE(so2.created_at, NOW())::date BETWEEN $2::date AND $3::date
+             AND LOWER(COALESCE(to_jsonb(sp)->>'status', '')) != 'paid'
+             AND COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0) > 0
+         ) AS total_down,
+         -- Fully paid SO payment amounts in period
+         (
+           SELECT COALESCE(SUM(
+             COALESCE(NULLIF(to_jsonb(sp)->>'amount', '')::numeric, 0)
+           ), 0)::text
+           FROM tblso_payments sp
+           JOIN tblsales_order so2 ON so2.id = sp.so_id
+           WHERE so2.customer_id::text = $1
+             AND COALESCE(so2.created_at, NOW())::date BETWEEN $2::date AND $3::date
+             AND LOWER(COALESCE(to_jsonb(sp)->>'status', '')) = 'paid'
+         ) AS total_so_paid`,
       [normalizedCustomerId, effectivePeriodFrom, effectivePeriodTo],
     );
 
     const totalCharges = this.toOptionalNumber(chargeResult.rows[0]?.total_charges) ?? 0;
-    const totalPayments = this.toOptionalNumber(paymentsResult.rows[0]?.total_payments) ?? 0;
+    const totalManual = this.toOptionalNumber(paymentsResult.rows[0]?.total_manual) ?? 0;
+    const totalDown = this.toOptionalNumber(paymentsResult.rows[0]?.total_down) ?? 0;
+    const totalSoPaid = this.toOptionalNumber(paymentsResult.rows[0]?.total_so_paid) ?? 0;
+    const totalPayments = totalManual + totalDown + totalSoPaid;
     const closingBalance = openingBalance + totalCharges - totalPayments;
 
     return {
@@ -720,7 +760,6 @@ export class SalesOrderService {
         'sales-and-service',
         'sales_and_service'
       )`);
-    } else if (mode === 'services') {
       whereParts.push(`(
         LOWER(COALESCE(base.sales_type, '')) IN (
           'service',
@@ -1006,6 +1045,9 @@ export class SalesOrderService {
   }
 
   async create(createSalesOrderDto: CreateSalesOrderDto, userId?: number, branchId?: number) {
+    // --- Defer PO creation for transfer SOs until after transaction ---
+    let transferPOPayload: any = null;
+    let transferPOBranchId: number | undefined = undefined;
     const payload = createSalesOrderDto;
     const status = String(payload.status ?? 'pending').trim() || 'pending';
     const productItems = Array.isArray(payload.productItems) ? payload.productItems : [];
@@ -1019,17 +1061,59 @@ export class SalesOrderService {
     const hasTransferInfo = Boolean(payload.transferDetails);
     const hasConcernInfo = Boolean(payload.concernDetails);
 
-    if (!hasProductItems && !hasServiceItems && !hasProjectInfo && !hasTransferInfo && !hasConcernInfo) {
-      return {
-        success: false,
-        message:
-          'At least one sales product item, service item, project detail, transfer detail, or concern detail is required',
-      };
+    // For transfer SOs, require only transferDetails and productItems
+    if (String(payload.salesType).toLowerCase() === 'transfer') {
+      if (!hasTransferInfo) {
+        return {
+          success: false,
+          message: 'Transfer Details are required for transfer sales orders.',
+        };
+      }
+      if (!hasProductItems) {
+        return {
+          success: false,
+          message: 'At least one Product Item is required for transfer sales orders.',
+        };
+      }
+      // Only enforce serials if status is not 'pending' or 'scheduled'
+      if (!['pending', 'scheduled', 'schedule today', 'schedule_today'].includes(status.toLowerCase())) {
+        for (const [idx, item] of productItems.entries()) {
+          if (!item.serialNumbers || typeof item.serialNumbers !== 'object' || Object.keys(item.serialNumbers).length === 0) {
+            return {
+              success: false,
+              message: `Serial numbers are required for all product items in transfer sales orders (missing at index ${idx})`,
+            };
+          }
+          // Check that at least one serial exists for each unit type
+          const hasAnySerial = Object.entries(item.serialNumbers)
+            .filter(([key]) => key.toLowerCase() !== 'status')
+            .some(([, arr]) => Array.isArray(arr) && arr.length > 0);
+          if (!hasAnySerial) {
+            return {
+              success: false,
+              message: `At least one serial number must be provided for each product item in transfer sales orders (index ${idx})`,
+            };
+          }
+        }
+      }
+    } else {
+      if (!hasProductItems && !hasServiceItems && !hasProjectInfo && !hasTransferInfo && !hasConcernInfo) {
+        return {
+          success: false,
+          message:
+            'At least one sales product item, service item, project detail, transfer detail, or concern detail is required',
+        };
+      }
     }
 
+    let result: any;
     try {
-      const result = await this.databaseService.withTransaction(async (client) => {
-        const customerId = await this.upsertCustomerFromPayload(client, payload);
+      result = await this.databaseService.withTransaction(async (client) => {
+        // For transfer SOs, do not require or upsert customer
+        let customerId: string | null = null;
+        if (String(payload.salesType).toLowerCase() !== 'transfer') {
+          customerId = await this.upsertCustomerFromPayload(client, payload);
+        }
 
         let computedProductTotal = 0;
         for (const item of productItems) {
@@ -1537,6 +1621,43 @@ export class SalesOrderService {
             const insertedTransfer = await this.runInsert(client, 'tbltransfer_details', record);
             transferDetailsId = Number(insertedTransfer.rows[0]?.id ?? null);
           }
+
+          // --- Hybrid SO/PO Transfer Logic ---
+          // Only trigger for transfer sales type
+          if (String(payload.salesType).toLowerCase() === 'transfer') {
+            // Prepare PO payload for receiving branch, but DO NOT create PO here!
+            transferPOPayload = {
+              productItems: productItems.map((item) => ({ ...item, transType: 'purchase' })),
+              branchId: this.toOptionalNumber(payload.transferDetails?.toBranchId) ?? undefined,
+              linkedSalesOrderId: null, // will set after commit
+              status: 'AWAITING_RECEIPT',
+            };
+            transferPOPayload.totalAmount = productItems.reduce((sum, item) => {
+              const price = typeof item.unitPrice === 'number' ? item.unitPrice : Number(item.unitPrice) || 0;
+              const qty = typeof item.totalSetQty === 'number' ? item.totalSetQty : Number(item.totalSetQty) || 0;
+              return sum + price * qty;
+            }, 0);
+            // Find or create 'System Transfer' vendor and use its UUID
+            let systemVendorId: string | null = null;
+            try {
+              const vendorResult = await this.databaseService.query(
+                `SELECT id FROM tblvendors WHERE LOWER(name) = 'system transfer' LIMIT 1`
+              );
+              if (vendorResult.rowCount > 0) {
+                systemVendorId = String(vendorResult.rows[0].id);
+              } else {
+                const insertResult = await this.databaseService.query(
+                  `INSERT INTO tblvendors (name) VALUES ('System Transfer') RETURNING id`
+                );
+                systemVendorId = String(insertResult.rows[0].id);
+              }
+            } catch (err) {
+              console.error('[Transfer SO] Failed to find or create System Transfer vendor:', err);
+            }
+            transferPOPayload.vendorId = systemVendorId;
+            transferPOPayload.vendor = { name: 'System Transfer' };
+            transferPOBranchId = this.toOptionalNumber(payload.transferDetails?.toBranchId) ?? undefined;
+          }
         }
 
         // Persist expense details (if provided)
@@ -1663,6 +1784,37 @@ export class SalesOrderService {
         };
       });
 
+      // --- After transaction: if transfer SO, create PO and update linkage ---
+      if (transferPOPayload && result?.salesOrderId) {
+        const poPayload = {
+          ...transferPOPayload,
+          productItems: (transferPOPayload.productItems || []).map((item: any) => ({
+            ...item,
+            salesId: result.salesOrderId,
+          })),
+          linkedSalesOrderId: result.salesOrderId,
+        };
+        try {
+          const poResult = await this.purchaseService.create(poPayload, userId, transferPOBranchId);
+          if (poResult && poResult.success !== false && poResult.data?.purchaseOrderId) {
+            const linkedPurchaseOrderId = poResult.data.purchaseOrderId;
+            // Update SO with linked PO
+            await this.databaseService.query(
+              `UPDATE tblsales_order SET linked_purchase_order_id = $1 WHERE id = $2`,
+              [linkedPurchaseOrderId, result.salesOrderId],
+            );
+            // Update PO with linked SO (if not already set)
+            await this.databaseService.query(
+              `UPDATE tblpurchase_orders SET linked_sales_order_id = $1 WHERE id = $2`,
+              [result.salesOrderId, linkedPurchaseOrderId],
+            );
+          } else {
+            console.error('[Transfer SO] PO creation failed (post-commit):', poResult?.message, { poPayload });
+          }
+        } catch (err) {
+          console.error('[Transfer SO] PO creation threw error (post-commit):', err);
+        }
+      }
       return {
         success: true,
         message: 'Sales order created successfully',
@@ -1833,7 +1985,37 @@ export class SalesOrderService {
            COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name') AS name,
            COALESCE(to_jsonb(c)->>'customer_type', to_jsonb(c)->>'customerType', 'regular') AS "customerType",
            COALESCE(to_jsonb(c)->>'credit_limit', '') AS "creditLimit",
-           COALESCE(to_jsonb(c)->>'current_balance', '') AS "currentBalance",
+           -- Compute real outstanding balance: totalCharges - totalSettled
+           (
+             COALESCE((
+               SELECT SUM(so.total_amount)
+               FROM tblsales_order so
+               WHERE so.customer_id = c.id
+             ), 0)
+             -
+             COALESCE((
+               SELECT SUM(cp.payment_amount)
+               FROM tblcustomer_payments cp
+               WHERE cp.customer_id = c.id
+             ), 0)
+             -
+             COALESCE((
+               SELECT SUM(COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0))
+               FROM tblso_payments sp
+               JOIN tblsales_order so2 ON so2.id = sp.so_id
+               WHERE so2.customer_id = c.id
+                 AND LOWER(COALESCE(to_jsonb(sp)->>'status', '')) != 'paid'
+                 AND COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0) > 0
+             ), 0)
+             -
+             COALESCE((
+               SELECT SUM(COALESCE(NULLIF(to_jsonb(sp)->>'amount', '')::numeric, 0))
+               FROM tblso_payments sp
+               JOIN tblsales_order so2 ON so2.id = sp.so_id
+               WHERE so2.customer_id = c.id
+                 AND LOWER(COALESCE(to_jsonb(sp)->>'status', '')) = 'paid'
+             ), 0)
+           )::text AS "currentBalance",
            COALESCE(to_jsonb(c)->>'payment_terms', '') AS "paymentTerms",
            COALESCE(to_jsonb(c)->>'address', '') AS address,
            COALESCE(to_jsonb(c)->>'contact_person', to_jsonb(c)->>'contactPerson', '') AS "contactPerson",
@@ -2111,9 +2293,10 @@ export class SalesOrderService {
 
     try {
       const countResult = await this.databaseService.query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count
-         FROM tblsales_order so
-         WHERE so.customer_id::text = $1`,
+        `SELECT COUNT(*)::text AS count FROM tblsales_order so
+         WHERE so.customer_id::text = $1
+           AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, 'pending'))), '_', '-'), ' ', '-')
+               NOT IN ('pending', 'for-delivery', 'in-progress', 'scheduled', 'cancelled', 'rejected')`,
         [id],
       );
       const total = Number(countResult.rows[0]?.count ?? 0);
@@ -2125,7 +2308,10 @@ export class SalesOrderService {
         total_amount: string | null;
         status: string | null;
         salesType: string | null;
+        scheduleDate: string | null;
         created_at: string | null;
+        payments: unknown;
+        product_items: unknown;
       }>(
         `SELECT
            so.id,
@@ -2133,12 +2319,62 @@ export class SalesOrderService {
            so.total_amount::text,
            COALESCE(so.status, 'pending') AS status,
            so."salesType",
-           so.created_at::text
+           COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', null) AS "scheduleDate",
+           so.created_at::text,
+           -- Payment details
+           COALESCE(
+             (
+               SELECT json_agg(
+                 json_build_object(
+                   'method', COALESCE(to_jsonb(sp)->>'method', ''),
+                   'amount', COALESCE(NULLIF(to_jsonb(sp)->>'amount', '')::numeric, 0),
+                   'status', COALESCE(to_jsonb(sp)->>'status', 'unpaid'),
+                   'terms', COALESCE(to_jsonb(sp)->>'terms', null),
+                   'termsDueDate', COALESCE(to_jsonb(sp)->>'termsDueDate', to_jsonb(sp)->>'terms_due_date', null),
+                   'downPayment', COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0),
+                   'checkNo', COALESCE(to_jsonb(sp)->>'checkNo', to_jsonb(sp)->>'check_no', null),
+                   'postDated', COALESCE(to_jsonb(sp)->>'postDated', to_jsonb(sp)->>'post_dated', null),
+                   'paymentDate', COALESCE(to_jsonb(sp)->>'paymentDate', to_jsonb(sp)->>'payment_date', null),
+                   'bankName', COALESCE(to_jsonb(sp)->>'bankName', to_jsonb(sp)->>'bank_name', null),
+                   'referenceNo', COALESCE(to_jsonb(sp)->>'referenceNo', to_jsonb(sp)->>'reference_no', null)
+                 ) ORDER BY sp.id ASC
+               )
+               FROM tblso_payments sp
+               WHERE COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') = so.id::text
+             ),
+             '[]'::json
+           ) AS payments,
+           -- Product items with product/capacity names
+           COALESCE(
+             (
+               SELECT json_agg(
+                 json_build_object(
+                   'productName', COALESCE(
+                     to_jsonb(p)->>'productName',
+                     to_jsonb(p)->>'product_name',
+                     to_jsonb(p)->>'name',
+                     'Unknown Product'
+                   ),
+                   'capacity', COALESCE(to_jsonb(c)->>'capacity', ''),
+                   'qty', COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', ''), '')::int, 0),
+                   'unitPrice', COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', ''), '')::numeric, 0),
+                   'discountPrice', COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', ''), '')::numeric, 0)
+                 ) ORDER BY tpi.id ASC
+               )
+               FROM tbltransaction_product_items tpi
+               LEFT JOIN tblproducts p ON p.id::text = COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id')
+               LEFT JOIN tblcapacity c ON c.id::text = COALESCE(to_jsonb(tpi)->>'capacityId', to_jsonb(tpi)->>'capacity_id')
+               WHERE COALESCE(to_jsonb(tpi)->>'salesId', to_jsonb(tpi)->>'sales_id') = so.id::text
+                 AND LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'sales')) = 'sales'
+             ),
+             '[]'::json
+           ) AS product_items
          FROM tblsales_order so
          WHERE so.customer_id::text = $1
+           AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, 'pending'))), '_', '-'), ' ', '-')
+               NOT IN ('pending', 'for-delivery', 'in-progress', 'scheduled', 'cancelled', 'rejected')
          ORDER BY so.created_at DESC NULLS LAST
-         LIMIT $2
-         OFFSET $3`,
+         LIMIT $2 OFFSET $3`,
         [id, limit, offset],
       );
 
@@ -2150,7 +2386,28 @@ export class SalesOrderService {
           totalAmount: this.toOptionalNumber(row.total_amount) ?? 0,
           status: row.status ?? 'pending',
           salesType: row.salesType ?? '',
+          scheduleDate: row.scheduleDate ?? null,
           createdAt: row.created_at ?? null,
+          payments: Array.isArray(row.payments) ? row.payments.map((p: any) => ({
+            method: String(p.method ?? ''),
+            amount: Number(p.amount ?? 0),
+            status: String(p.status ?? 'unpaid'),
+            terms: p.terms ? String(p.terms) : null,
+            termsDueDate: p.termsDueDate ?? null,
+            downPayment: Number(p.downPayment ?? 0),
+            checkNo: p.checkNo ?? null,
+            postDated: p.postDated ?? null,
+            paymentDate: p.paymentDate ?? null,
+            bankName: p.bankName ?? null,
+            referenceNo: p.referenceNo ?? null,
+          })) : [],
+          productItems: Array.isArray(row.product_items) ? row.product_items.map((p: any) => ({
+            productName: String(p.productName ?? ''),
+            capacity: String(p.capacity ?? ''),
+            qty: Number(p.qty ?? 0),
+            unitPrice: Number(p.unitPrice ?? 0),
+            discountPrice: Number(p.discountPrice ?? 0),
+          })) : [],
         })),
         meta: { page, limit, total, totalPages },
       };
@@ -2171,46 +2428,190 @@ export class SalesOrderService {
     }
 
     try {
-      const result = await this.databaseService.query<{
-        id: string;
+      // 1. SO-level payments from tblso_payments (per transaction)
+      const soPaymentsResult = await this.databaseService.query<{
+        soId: string;
+        soNumber: string | null;
+        method: string | null;
+        amount: string | null;
+        downPayment: string | null;
+        status: string | null;
+        termsDueDate: string | null;
+        postDated: string | null;
         paymentDate: string | null;
-        paymentAmount: string | null;
-        paymentMethod: string | null;
         referenceNo: string | null;
-        paymentNotes: string | null;
+        checkNo: string | null;
+        bankName: string | null;
         createdAt: string | null;
       }>(
         `SELECT
-           id::text AS id,
-           COALESCE(payment_date::text, '') AS "paymentDate",
-           COALESCE(payment_amount::text, '0') AS "paymentAmount",
-           COALESCE(payment_method, '') AS "paymentMethod",
-           COALESCE(reference_no, '') AS "referenceNo",
-           COALESCE(payment_notes, '') AS "paymentNotes",
-           COALESCE(created_at::text, '') AS "createdAt"
-         FROM tblcustomer_payments
-         WHERE customer_id::text = $1
-         ORDER BY payment_date DESC, created_at DESC`,
+           sp.so_id::text AS "soId",
+           so.so_number AS "soNumber",
+           COALESCE(to_jsonb(sp)->>'method', '') AS method,
+           COALESCE(NULLIF(to_jsonb(sp)->>'amount', '')::numeric, 0)::text AS amount,
+           COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0)::text AS "downPayment",
+           COALESCE(to_jsonb(sp)->>'status', 'unpaid') AS status,
+           COALESCE(to_jsonb(sp)->>'termsDueDate', to_jsonb(sp)->>'terms_due_date', null) AS "termsDueDate",
+           COALESCE(to_jsonb(sp)->>'postDated', to_jsonb(sp)->>'post_dated', null) AS "postDated",
+           COALESCE(to_jsonb(sp)->>'paymentDate', to_jsonb(sp)->>'payment_date', null) AS "paymentDate",
+           COALESCE(to_jsonb(sp)->>'referenceNo', to_jsonb(sp)->>'reference_no', null) AS "referenceNo",
+           COALESCE(to_jsonb(sp)->>'checkNo', to_jsonb(sp)->>'check_no', null) AS "checkNo",
+           COALESCE(to_jsonb(sp)->>'bankName', to_jsonb(sp)->>'bank_name', null) AS "bankName",
+           so.created_at::text AS "createdAt"
+         FROM tblso_payments sp
+         JOIN tblsales_order so ON so.id = sp.so_id
+         WHERE so.customer_id::text = $1
+           AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, 'pending'))), '_', '-'), ' ', '-')
+               NOT IN ('pending', 'for-delivery', 'in-progress', 'scheduled', 'cancelled', 'rejected')
+         ORDER BY COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'paymentDate', to_jsonb(sp)->>'payment_date', ''), ''), so.created_at::text) ASC, sp.id ASC`,
         [id],
       );
 
+      // 2. Dashboard/manual settlements from tblcustomer_payments
+      const manualPaymentsResult = await this.databaseService.query<{
+        id: string;
+        salesId: string | null;
+        soNumber: string | null;
+        paymentAmount: string | null;
+        paymentDate: string | null;
+        paymentMethod: string | null;
+        referenceNo: string | null;
+        paymentNotes: string | null;
+        appliedToBalance: string | null;
+        createdAt: string | null;
+      }>(
+        `SELECT
+           cp.id::text AS id,
+           cp.sales_id::text AS "salesId",
+           so.so_number AS "soNumber",
+           COALESCE(cp.payment_amount::text, '0') AS "paymentAmount",
+           COALESCE(cp.payment_date::text, '') AS "paymentDate",
+           COALESCE(cp.payment_method, '') AS "paymentMethod",
+           COALESCE(cp.reference_no, '') AS "referenceNo",
+           COALESCE(cp.payment_notes, '') AS "paymentNotes",
+           COALESCE(cp.applied_to_balance::text, '0') AS "appliedToBalance",
+           COALESCE(cp.created_at::text, '') AS "createdAt"
+         FROM tblcustomer_payments cp
+         LEFT JOIN tblsales_order so ON so.id = cp.sales_id
+         WHERE cp.customer_id::text = $1
+         ORDER BY cp.payment_date DESC, cp.created_at DESC`,
+        [id],
+      );
+
+      // 3. Calculate balance: totalCharges vs all payments (SO-level paid + down payments + manual settlements)
+      const balanceResult = await this.databaseService.query<{
+        totalCharges: string | null;
+        totalManualPayments: string | null;
+        totalDownPayments: string | null;
+        totalSoPaid: string | null;
+      }>(
+        `SELECT
+           -- Total SO charges for this customer (exclude pending/in-progress/cancelled)
+           COALESCE(SUM(so.total_amount), 0)::text AS "totalCharges",
+           -- Manual settlements from dashboard
+           (
+             SELECT COALESCE(SUM(cp.payment_amount), 0)::text
+             FROM tblcustomer_payments cp
+             WHERE cp.customer_id::text = $1
+           ) AS "totalManualPayments",
+           -- Down payments from UNPAID SO payment terms only (to avoid double-counting with paid SOs)
+           (
+             SELECT COALESCE(SUM(
+               COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0)
+             ), 0)::text
+             FROM tblso_payments sp
+             JOIN tblsales_order so2 ON so2.id = sp.so_id
+             WHERE so2.customer_id::text = $1
+               AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(so2.status, 'pending'))), '_', '-'), ' ', '-')
+                   NOT IN ('pending', 'for-delivery', 'in-progress', 'scheduled', 'cancelled', 'rejected')
+               AND LOWER(COALESCE(to_jsonb(sp)->>'status', '')) != 'paid'
+               AND COALESCE(NULLIF(COALESCE(to_jsonb(sp)->>'downPayment', to_jsonb(sp)->>'down_payment', ''), '')::numeric, 0) > 0
+           ) AS "totalDownPayments",
+           -- Fully paid SO payment amounts
+           (
+             SELECT COALESCE(SUM(
+               COALESCE(NULLIF(to_jsonb(sp)->>'amount', '')::numeric, 0)
+             ), 0)::text
+             FROM tblso_payments sp
+             JOIN tblsales_order so2 ON so2.id = sp.so_id
+             WHERE so2.customer_id::text = $1
+               AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(so2.status, 'pending'))), '_', '-'), ' ', '-')
+                   NOT IN ('pending', 'for-delivery', 'in-progress', 'scheduled', 'cancelled', 'rejected')
+               AND LOWER(COALESCE(to_jsonb(sp)->>'status', '')) = 'paid'
+           ) AS "totalSoPaid"
+         FROM tblsales_order so
+         WHERE so.customer_id::text = $1
+           AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, 'pending'))), '_', '-'), ' ', '-')
+               NOT IN ('pending', 'for-delivery', 'in-progress', 'scheduled', 'cancelled', 'rejected')`,
+        [id],
+      );
+
+      const totalCharges = this.toOptionalNumber(balanceResult.rows[0]?.totalCharges) ?? 0;
+      const totalManualPayments = this.toOptionalNumber(balanceResult.rows[0]?.totalManualPayments) ?? 0;
+      const totalDownPayments = this.toOptionalNumber(balanceResult.rows[0]?.totalDownPayments) ?? 0;
+      const totalSoPaid = this.toOptionalNumber(balanceResult.rows[0]?.totalSoPaid) ?? 0;
+      // Total settled = manual settlements + down payments on unpaid SOs + fully paid SO amounts
+      // No double-counting: totalDownPayments only covers unpaid SOs, totalSoPaid covers paid SOs
+      const totalSettled = totalManualPayments + totalDownPayments + totalSoPaid;
+
+      // Build unified payment timeline
+      const soPayments = soPaymentsResult.rows.map((row) => ({
+        id: `so-${row.soId}-${row.method}`,
+        type: 'so_payment' as const,
+        soId: row.soId,
+        soNumber: row.soNumber ?? '',
+        method: row.method ?? '',
+        amount: this.toOptionalNumber(row.amount) ?? 0,
+        downPayment: this.toOptionalNumber(row.downPayment) ?? 0,
+        status: row.status ?? 'unpaid',
+        termsDueDate: row.termsDueDate ?? null,
+        postDated: row.postDated ?? null,
+        paymentDate: row.paymentDate ?? null,
+        referenceNo: row.referenceNo ?? null,
+        checkNo: row.checkNo ?? null,
+        bankName: row.bankName ?? null,
+        notes: null as string | null,
+        appliedToBalance: 0,
+        date: row.paymentDate || row.createdAt || null,
+      }));
+
+      const manualPayments = manualPaymentsResult.rows.map((row) => ({
+        id: row.id,
+        type: 'settlement' as const,
+        soId: row.salesId ?? null,
+        soNumber: row.soNumber ?? null,
+        method: row.paymentMethod ?? '',
+        amount: this.toOptionalNumber(row.paymentAmount) ?? 0,
+        downPayment: 0,
+        status: 'paid' as const,
+        termsDueDate: null as string | null,
+        postDated: null as string | null,
+        paymentDate: row.paymentDate ?? null,
+        referenceNo: row.referenceNo ?? null,
+        checkNo: null as string | null,
+        bankName: null as string | null,
+        notes: row.paymentNotes ?? null,
+        appliedToBalance: this.toOptionalNumber(row.appliedToBalance) ?? 0,
+        date: row.paymentDate || row.createdAt || null,
+      }));
+
       return {
         success: true,
-        items: result.rows.map((row) => ({
-          id: row.id,
-          paymentDate: row.paymentDate ?? null,
-          paymentAmount: this.toOptionalNumber(row.paymentAmount) ?? 0,
-          paymentMethod: row.paymentMethod ?? '',
-          referenceNo: row.referenceNo ?? '',
-          paymentNotes: row.paymentNotes ?? '',
-          createdAt: row.createdAt ?? null,
-        })),
+        summary: {
+          totalCharges,
+          totalManualPayments: totalSettled,
+          outstandingBalance: Math.max(0, totalCharges - totalSettled),
+        },
+        soPayments,
+        settlements: manualPayments,
       };
     } catch (error) {
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Failed to load customer payments',
-        items: [],
+        summary: { totalCharges: 0, totalManualPayments: 0, outstandingBalance: 0 },
+        soPayments: [],
+        settlements: [],
       };
     }
   }
@@ -2222,10 +2623,14 @@ export class SalesOrderService {
     }
 
     try {
+      // Pull service/concern SOs linked to this customer (service, concern, sales and service types)
       const result = await this.databaseService.query<{
         id: number;
-        sales_id: number;
         so_number: string | null;
+        sales_type: string | null;
+        status: string | null;
+        schedule_date: string | null;
+        created_at: string | null;
         concern_type: string | null;
         concern_subject: string | null;
         concern_description: string | null;
@@ -2233,22 +2638,46 @@ export class SalesOrderService {
         priority: string | null;
         resolution_notes: string | null;
         resolved_at: string | null;
+        service_name: string | null;
+        service_type: string | null;
+        service_status: string | null;
+        service_date: string | null;
+        service_cost: string | null;
       }>(
         `SELECT
-           cd.id,
-           cd.sales_id,
+           so.id,
            so.so_number,
+           COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '') AS sales_type,
+           COALESCE(so.status, 'pending') AS status,
+           COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', null) AS schedule_date,
+           so.created_at::text,
+           -- concern details
            cd.concern_type,
            cd.concern_subject,
            cd.concern_description,
            cd.concern_status,
            cd.priority,
            cd.resolution_notes,
-           cd.resolved_at::text
-         FROM tblconcern_details cd
-         LEFT JOIN tblsales_order so ON so.id = cd.sales_id
-         WHERE cd.customer_id::text = $1
-         ORDER BY cd.id DESC`,
+           cd.resolved_at::text,
+           -- service details
+           sd.service_name,
+           sd.service_type,
+           sd.service_status,
+           sd.service_date::text,
+           sd.service_cost::text
+         FROM tblsales_order so
+         LEFT JOIN tblconcern_details cd ON cd.sales_id = so.id
+         LEFT JOIN tblservice_details sd ON sd.sales_id = so.id
+         WHERE so.customer_id::text = $1
+           AND (
+             LOWER(COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '')) IN (
+               'service', 'services', 'concern', 'concerns',
+               'sales and service', 'sales & service', 'sales-and-service', 'sales_and_service'
+             )
+             OR cd.id IS NOT NULL
+             OR sd.id IS NOT NULL
+           )
+         ORDER BY so.created_at DESC NULLS LAST`,
         [id],
       );
 
@@ -2256,8 +2685,13 @@ export class SalesOrderService {
         success: true,
         items: result.rows.map((row) => ({
           id: row.id,
-          salesId: row.sales_id,
+          salesId: row.id,
           soNumber: row.so_number ?? '',
+          salesType: row.sales_type ?? '',
+          status: row.status ?? '',
+          scheduleDate: row.schedule_date ?? null,
+          createdAt: row.created_at ?? null,
+          // concern fields
           concernType: row.concern_type ?? '',
           concernSubject: row.concern_subject ?? '',
           concernDescription: row.concern_description ?? '',
@@ -2265,6 +2699,12 @@ export class SalesOrderService {
           priority: row.priority ?? '',
           resolutionNotes: row.resolution_notes ?? '',
           resolvedAt: row.resolved_at ?? null,
+          // service fields
+          serviceName: row.service_name ?? '',
+          serviceType: row.service_type ?? '',
+          serviceStatus: row.service_status ?? '',
+          serviceDate: row.service_date ?? null,
+          serviceCost: this.toOptionalNumber(row.service_cost) ?? 0,
         })),
       };
     } catch (error) {
@@ -3073,13 +3513,15 @@ export class SalesOrderService {
           total_amount: string | null;
           status: string | null;
           installer: string | null;
+          sales_type: string | null;
         }>(
           `SELECT
              so.id,
              so.customer_id::text AS customer_id,
              so.total_amount::text AS total_amount,
              so.status::text AS status,
-             COALESCE(to_jsonb(so)->>'installer', '') AS installer
+             COALESCE(to_jsonb(so)->>'installer', '') AS installer,
+             COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '') AS sales_type
            FROM tblsales_order so
            WHERE so.id = $1
            LIMIT 1`,
@@ -3091,74 +3533,79 @@ export class SalesOrderService {
         }
 
         const existingSales = existingSalesResult.rows[0];
-        const customerColumns = await this.getTableColumns(client, 'tblcustomer');
-        const customerNameColumn = this.pickColumn(customerColumns, ['name', 'customer_name']);
-        const customerAddressColumn = this.pickColumn(customerColumns, ['address']);
-        const customerContactPersonColumn = this.pickColumn(customerColumns, [
-          'contact_person',
-          'contactPerson',
-        ]);
-        const customerContactNumberColumn = this.pickColumn(customerColumns, [
-          'contact_number',
-          'contactNumber',
-        ]);
-        const customerEmailColumn = this.pickColumn(customerColumns, ['email']);
-        const customerTinColumn = this.pickColumn(customerColumns, ['tin_number', 'tinNumber']);
+        const isTransferSO = String(payload.salesType ?? existingSales.sales_type ?? '').toLowerCase() === 'transfer';
 
-        const customerId = await this.upsertCustomerFromPayload(client, {
-          customer_id: payload.customer_id ?? existingSales.customer_id ?? null,
-          customer: payload.customer,
-        });
+        let customerId: string | null = null;
+        if (!isTransferSO) {
+          const customerColumns = await this.getTableColumns(client, 'tblcustomer');
+          const customerNameColumn = this.pickColumn(customerColumns, ['name', 'customer_name']);
+          const customerAddressColumn = this.pickColumn(customerColumns, ['address']);
+          const customerContactPersonColumn = this.pickColumn(customerColumns, [
+            'contact_person',
+            'contactPerson',
+          ]);
+          const customerContactNumberColumn = this.pickColumn(customerColumns, [
+            'contact_number',
+            'contactNumber',
+          ]);
+          const customerEmailColumn = this.pickColumn(customerColumns, ['email']);
+          const customerTinColumn = this.pickColumn(customerColumns, ['tin_number', 'tinNumber']);
 
-        if (customerId && payload.customer) {
-          const updates: string[] = [];
-          const params: unknown[] = [];
+          customerId = await this.upsertCustomerFromPayload(client, {
+            customer_id: payload.customer_id ?? existingSales.customer_id ?? null,
+            customer: payload.customer,
+          });
 
-          const customerName = this.normalizeText(payload.customer.name);
-          const customerAddress = this.normalizeText(payload.customer.address);
-          const customerContactPerson = this.normalizeText(payload.customer.contact_person);
-          const customerContactNumber = this.normalizeText(payload.customer.contact_number);
-          const customerEmail = this.normalizeText(payload.customer.email);
-          const customerTin = this.normalizeText(payload.customer.tin_number);
+          if (customerId && payload.customer) {
+            const updates: string[] = [];
+            const params: unknown[] = [];
 
-          if (customerNameColumn && customerName) {
-            params.push(customerName);
-            updates.push(`"${customerNameColumn}" = $${params.length}`);
-          }
-          if (customerAddressColumn && customerAddress) {
-            params.push(customerAddress);
-            updates.push(`"${customerAddressColumn}" = $${params.length}`);
-          }
-          if (customerContactPersonColumn && customerContactPerson) {
-            params.push(customerContactPerson);
-            updates.push(`"${customerContactPersonColumn}" = $${params.length}`);
-          }
-          if (customerContactNumberColumn && customerContactNumber) {
-            params.push(customerContactNumber);
-            updates.push(`"${customerContactNumberColumn}" = $${params.length}`);
-          }
-          if (customerEmailColumn && customerEmail) {
-            params.push(customerEmail);
-            updates.push(`"${customerEmailColumn}" = $${params.length}`);
-          }
-          if (customerTinColumn && customerTin) {
-            params.push(customerTin);
-            updates.push(`"${customerTinColumn}" = $${params.length}`);
+            const customerName = this.normalizeText(payload.customer.name);
+            const customerAddress = this.normalizeText(payload.customer.address);
+            const customerContactPerson = this.normalizeText(payload.customer.contact_person);
+            const customerContactNumber = this.normalizeText(payload.customer.contact_number);
+            const customerEmail = this.normalizeText(payload.customer.email);
+            const customerTin = this.normalizeText(payload.customer.tin_number);
+
+            if (customerNameColumn && customerName) {
+              params.push(customerName);
+              updates.push(`"${customerNameColumn}" = $${params.length}`);
+            }
+            if (customerAddressColumn && customerAddress) {
+              params.push(customerAddress);
+              updates.push(`"${customerAddressColumn}" = $${params.length}`);
+            }
+            if (customerContactPersonColumn && customerContactPerson) {
+              params.push(customerContactPerson);
+              updates.push(`"${customerContactPersonColumn}" = $${params.length}`);
+            }
+            if (customerContactNumberColumn && customerContactNumber) {
+              params.push(customerContactNumber);
+              updates.push(`"${customerContactNumberColumn}" = $${params.length}`);
+            }
+            if (customerEmailColumn && customerEmail) {
+              params.push(customerEmail);
+              updates.push(`"${customerEmailColumn}" = $${params.length}`);
+            }
+            if (customerTinColumn && customerTin) {
+              params.push(customerTin);
+              updates.push(`"${customerTinColumn}" = $${params.length}`);
+            }
+
+            if (updates.length > 0) {
+              params.push(customerId);
+              await client.query(
+                `UPDATE tblcustomer
+                 SET ${updates.join(', ')}
+                 WHERE id::text = $${params.length}`,
+                params,
+              );
+            }
           }
 
-          if (updates.length > 0) {
-            params.push(customerId);
-            await client.query(
-              `UPDATE tblcustomer
-               SET ${updates.join(', ')}
-               WHERE id::text = $${params.length}`,
-              params,
-            );
+          if (!customerId) {
+            throw new Error('Unable to resolve customer for sales order update');
           }
-        }
-
-        if (!customerId) {
-          throw new Error('Unable to resolve customer for sales order update');
         }
 
         const productItems = Array.isArray(payload.productItems) ? payload.productItems : [];

@@ -159,23 +159,87 @@ export interface SalesCustomerOrder {
   totalAmount: number;
   status: string;
   salesType: string;
+  scheduleDate: string | null;
   createdAt: string | null;
+  payments: Array<{
+    method: string;
+    amount: number;
+    status: string;
+    terms: string | null;
+    termsDueDate: string | null;
+    downPayment: number;
+    checkNo: string | null;
+    postDated: string | null;
+    paymentDate: string | null;
+    bankName: string | null;
+    referenceNo: string | null;
+  }>;
+  productItems: Array<{
+    productName: string;
+    capacity: string;
+    qty: number;
+    unitPrice: number;
+    discountPrice: number;
+  }>;
 }
 
-export interface SalesCustomerPayment {
-  id: string;
-  paymentDate: string | null;
-  paymentAmount: number;
-  paymentMethod: string;
-  referenceNo: string;
-  paymentNotes: string;
-  createdAt: string | null;
+export interface SalesCustomerPaymentSummary {
+  totalCharges: number;
+  totalManualPayments: number;
+  outstandingBalance: number;
 }
+
+export interface SalesCustomerSoPayment {
+  id: string;
+  type: 'so_payment';
+  soId: string;
+  soNumber: string;
+  method: string;
+  amount: number;
+  downPayment: number;
+  status: string;
+  termsDueDate: string | null;
+  postDated: string | null;
+  paymentDate: string | null;
+  referenceNo: string | null;
+  checkNo: string | null;
+  bankName: string | null;
+  notes: string | null;
+  appliedToBalance: number;
+  date: string | null;
+}
+
+export interface SalesCustomerSettlement {
+  id: string;
+  type: 'settlement';
+  soId: string | null;
+  soNumber: string | null;
+  method: string;
+  amount: number;
+  downPayment: number;
+  status: string;
+  termsDueDate: string | null;
+  postDated: string | null;
+  paymentDate: string | null;
+  referenceNo: string | null;
+  checkNo: string | null;
+  bankName: string | null;
+  notes: string | null;
+  appliedToBalance: number;
+  date: string | null;
+}
+
+// Keep backward compat alias
+export type SalesCustomerPayment = SalesCustomerSoPayment | SalesCustomerSettlement;
 
 export interface SalesCustomerConcern {
   id: number;
   salesId: number;
   soNumber: string;
+  salesType: string;
+  status: string;
+  scheduleDate: string | null;
+  createdAt: string | null;
   concernType: string;
   concernSubject: string;
   concernDescription: string;
@@ -183,6 +247,11 @@ export interface SalesCustomerConcern {
   priority: string;
   resolutionNotes: string;
   resolvedAt: string | null;
+  serviceName: string;
+  serviceType: string;
+  serviceStatus: string;
+  serviceDate: string | null;
+  serviceCost: number;
 }
 
 export interface SalesStatementOfAccountItem {
@@ -560,14 +629,22 @@ export class SalesOrderService {
     };
   }
 
-  async getCustomerPayments(id: string): Promise<{ success: boolean; items?: SalesCustomerPayment[]; message?: string }> {
-    const response = await apiClient.get<{ success: boolean; items?: SalesCustomerPayment[]; message?: string }>(
-      `/sales-order/customers/${id}/payments`,
-    );
-
+  async getCustomerPayments(id: string): Promise<{
+    success: boolean;
+    summary?: { totalCharges: number; totalManualPayments: number; outstandingBalance: number };
+    soPayments?: SalesCustomerSoPayment[];
+    settlements?: SalesCustomerSettlement[];
+    message?: string;
+  }> {
+    const response = await apiClient.get<{
+      success: boolean;
+      summary?: { totalCharges: number; totalManualPayments: number; outstandingBalance: number };
+      soPayments?: SalesCustomerSoPayment[];
+      settlements?: SalesCustomerSettlement[];
+      message?: string;
+    }>(`/sales-order/customers/${id}/payments`);
     return response.data;
   }
-
   async getCustomerConcerns(id: string): Promise<{ success: boolean; items?: SalesCustomerConcern[]; message?: string }> {
     const response = await apiClient.get<{ success: boolean; items?: SalesCustomerConcern[]; message?: string }>(
       `/sales-order/customers/${id}/concerns`,

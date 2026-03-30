@@ -176,6 +176,18 @@ export class PurchaseController {
     );
   }
 
+  @Patch(':id/verify-receive')
+  verifyAndReceive(
+    @Param('id') id: string,
+    @Req() request: { user?: { sub?: unknown } },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.purchaseService.verifyAndReceive(
+      +id,
+      Number.isFinite(userId) ? userId : undefined,
+    );
+  }
+
   @Patch(':id/approve')
   approve(
     @Param('id') id: string,

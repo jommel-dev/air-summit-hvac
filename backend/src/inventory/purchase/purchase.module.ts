@@ -10,5 +10,6 @@ import { AuditLogModule } from 'src/audit-log/audit-log.module';
   imports: [DatabaseModule, MaterialStockModule, AuditLogModule],
   controllers: [PurchaseController],
   providers: [PurchaseService, JwtAuthGuard],
+  exports: [PurchaseService],
 })
 export class PurchaseModule {}

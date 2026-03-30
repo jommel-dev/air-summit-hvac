@@ -742,7 +742,7 @@ export class PurchaseService {
 
   async create(createPurchaseDto: CreatePurchaseDto, userId?: number, branchId?: number) {
     const poNumber = String(createPurchaseDto.poNumber ?? '').trim();
-    const status = String(createPurchaseDto.status ?? 'pending').trim() || 'pending';
+    const status = String(createPurchaseDto.status ?? 'pending').trim().toLowerCase() || 'pending';
 
     const productItems = Array.isArray(createPurchaseDto.productItems)
       ? createPurchaseDto.productItems
@@ -1353,6 +1353,32 @@ export class PurchaseService {
           [nextStatus, id],
         );
 
+        // If this PO is linked to a transfer SO, set SO status to 'transfer_received' when PO is received
+        if (String(nextStatus).toLowerCase() === 'received') {
+          // Find the linked sales order (SO) via tbltransaction_product_items.salesId
+          const soResult = await client.query<{ salesId: number }>(
+            `SELECT DISTINCT tpi."salesId" AS "salesId"
+             FROM tbltransaction_product_items tpi
+             WHERE tpi."purchaseId" = $1 AND tpi."salesId" IS NOT NULL
+             LIMIT 1`,
+            [id],
+          );
+          if (soResult.rowCount > 0) {
+            const transferSalesId = soResult.rows[0].salesId;
+            if (transferSalesId) {
+              // Update the SO status to 'transfer_received'
+              const soColumns = await this.getTableColumns(client, 'tblsales_order');
+              const soStatusColumn = this.pickColumn(soColumns, ['status']);
+              if (soStatusColumn) {
+                await client.query(
+                  `UPDATE tblsales_order SET "${soStatusColumn}" = $1 WHERE id = $2`,
+                  ['transfer_received', transferSalesId],
+                );
+              }
+            }
+          }
+        }
+
         let updatedSerialCount = 0;
         let recordedNetPriceItems = 0;
         let postedMaterialMovements = 0;
@@ -1452,6 +1478,124 @@ export class PurchaseService {
       updateSerialsToInStock: false,
       successMessage: 'Purchase order reverted to deliveries',
     });
+  }
+
+  async verifyAndReceive(id: number, userId?: number) {
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: 'Invalid purchase id' };
+    }
+
+    try {
+      const result = await this.databaseService.withTransaction(async (client) => {
+        // 1. Validate PO exists
+        const poResult = await client.query<{ status: string | null }>(
+          `SELECT status FROM tblpurchase_orders WHERE id = $1 LIMIT 1`,
+          [id],
+        );
+        if (poResult.rowCount === 0) {
+          throw new Error(`Purchase order ${id} not found`);
+        }
+
+        // 2. Find originating salesId from transaction items
+        const soResult = await client.query<{ salesId: number }>(
+          `SELECT DISTINCT tpi."salesId" AS "salesId"
+           FROM tbltransaction_product_items tpi
+           WHERE tpi."purchaseId" = $1 AND tpi."salesId" IS NOT NULL
+           LIMIT 1`,
+          [id],
+        );
+        if (soResult.rowCount === 0) {
+          throw new Error('No originating Sales Order found for this Transfer PO');
+        }
+        const salesId = soResult.rows[0].salesId;
+
+        // 3. Get the receiving branch (toBranchId) from tbltransfer_details
+        const tdResult = await client.query<{ toBranchId: number | null }>(
+          `SELECT to_branch_id AS "toBranchId"
+           FROM tbltransfer_details
+           WHERE sales_id = $1
+           LIMIT 1`,
+          [salesId],
+        );
+        const receivingBranchId = tdResult.rows[0]?.toBranchId ?? null;
+
+        // 4. Update PO status to 'received' and set branchId to receiving branch
+        if (receivingBranchId) {
+          await client.query(
+            `UPDATE tblpurchase_orders SET status = 'received', "branchId" = $1 WHERE id = $2`,
+            [receivingBranchId, id],
+          );
+        } else {
+          await client.query(
+            `UPDATE tblpurchase_orders SET status = 'received' WHERE id = $1`,
+            [id],
+          );
+        }
+
+        // 5. Update SO status to 'transfer_received'
+        await client.query(
+          `UPDATE tblsales_order SET status = 'transfer_received' WHERE id = $1`,
+          [salesId],
+        );
+
+        // 6. Update serial numbers:
+        //    - previousSalesId = salesId (traceability)
+        //    - salesId = NULL (serials now free at receiving branch)
+        //    - branchId = receiving branch
+        //    - status = 'in-stock'
+        const serialColumns = await this.getTableColumns(client, 'tblserial_numbers');
+        const hasPreviousSalesId = serialColumns.some(
+          (col) => col.toLowerCase() === 'previoussalesid',
+        );
+
+        if (hasPreviousSalesId) {
+          if (receivingBranchId) {
+            await client.query(
+              `UPDATE tblserial_numbers
+               SET "previousSalesId" = "salesId", "salesId" = NULL, status = 'in-stock', "branchId" = $2
+               WHERE "salesId" = $1`,
+              [salesId, receivingBranchId],
+            );
+          } else {
+            await client.query(
+              `UPDATE tblserial_numbers
+               SET "previousSalesId" = "salesId", "salesId" = NULL, status = 'in-stock'
+               WHERE "salesId" = $1`,
+              [salesId],
+            );
+          }
+        } else {
+          if (receivingBranchId) {
+            await client.query(
+              `UPDATE tblserial_numbers
+               SET "salesId" = NULL, status = 'in-stock', "branchId" = $2
+               WHERE "salesId" = $1`,
+              [salesId, receivingBranchId],
+            );
+          } else {
+            await client.query(
+              `UPDATE tblserial_numbers
+               SET "salesId" = NULL, status = 'in-stock'
+               WHERE "salesId" = $1`,
+              [salesId],
+            );
+          }
+        }
+
+        return { purchaseId: id, salesId, status: 'received', receivingBranchId };
+      });
+
+      return {
+        success: true,
+        message: 'Transfer PO verified and received. Serials are now in-stock.',
+        data: result,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to verify and receive transfer PO',
+      };
+    }
   }
 
   async approve(id: number, userId?: number) {
@@ -1817,6 +1961,142 @@ export class PurchaseService {
         onlyItem.serialNumbers = mergedSerialNumbers;
       }
 
+      // --- Transfer PO logic ---
+      // If any productItem has a salesId, treat as transfer PO
+      const transferProduct = mappedProductItems.find((item) => !!item.salesId);
+      let isTransferPO = false;
+      let originatingSalesOrder: null | {
+        id: number;
+        soNumber: string | null;
+        branchId?: string | null;
+        branchName?: string | null;
+        productItems?: any[];
+        transferDetails?: any | null;
+      } = null;
+
+      if (transferProduct && transferProduct.salesId) {
+        isTransferPO = true;
+        const soId = transferProduct.salesId;
+        let soNumber: string | null = null;
+        let soProductItems: any[] = [];
+        let transferDetails: any | null = null;
+
+        try {
+          // 1. Get SO number
+          const soResult = await this.databaseService.query<{ so_number: string | null }>(
+            `SELECT COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', NULL) AS so_number
+             FROM tblsales_order so WHERE so.id = $1 LIMIT 1`,
+            [soId],
+          );
+          if (soResult.rowCount > 0) {
+            soNumber = soResult.rows[0].so_number ?? null;
+          }
+
+          // 2. Fetch transfer details from tbltransfer_details
+          const tdResult = await this.databaseService.query<{
+            id: number;
+            fromBranchId: string | null;
+            fromBranchName: string | null;
+            toBranchId: string | null;
+            toBranchName: string | null;
+            transferDate: string | null;
+            expectedDeliveryDate: string | null;
+            actualDeliveryDate: string | null;
+            transferStatus: string | null;
+            transferNotes: string | null;
+          }>(
+            `SELECT
+               td.id,
+               td.from_branch_id::text AS "fromBranchId",
+               fb."branchName" AS "fromBranchName",
+               td.to_branch_id::text AS "toBranchId",
+               tb."branchName" AS "toBranchName",
+               td.transfer_date::text AS "transferDate",
+               td.expected_delivery_date::text AS "expectedDeliveryDate",
+               td.actual_delivery_date::text AS "actualDeliveryDate",
+               td.transfer_status AS "transferStatus",
+               td.transfer_notes AS "transferNotes"
+             FROM tbltransfer_details td
+             LEFT JOIN tblbranches fb ON fb.id = td.from_branch_id
+             LEFT JOIN tblbranches tb ON tb.id = td.to_branch_id
+             WHERE td.sales_id = $1
+             LIMIT 1`,
+            [soId],
+          );
+          if (tdResult.rowCount > 0) {
+            transferDetails = tdResult.rows[0];
+          }
+
+          // 3. Fetch serial numbers from tblserial_numbers using salesId OR previousSalesId
+          //    This covers both the original SO serials and transferred serials
+          const soSerialResult = await this.databaseService.query<{
+            serialNumber: string | null;
+            productId: string | null;
+            capacityId: string | null;
+            unitType: string | null;
+          }>(
+            `SELECT
+               COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number') AS "serialNumber",
+               COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id') AS "productId",
+               COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id') AS "capacityId",
+               COALESCE(to_jsonb(sn)->>'unitType', to_jsonb(sn)->>'unit_type', 'set') AS "unitType"
+             FROM tblserial_numbers sn
+             WHERE
+               sn."salesId"::text = $1
+               OR sn."previousSalesId"::text = $1`,
+            [String(soId)],
+          );
+
+          // Build serialNumbers map grouped by productId::capacityId
+          const soSerialMap = new Map<string, Record<string, string[]>>();
+          for (const row of soSerialResult.rows) {
+            const pId = String(row.productId ?? '').trim();
+            const cId = String(row.capacityId ?? '').trim();
+            const serial = this.normalizeSerialNumber(row.serialNumber);
+            const unitType = String(row.unitType ?? 'set').trim().toLowerCase() || 'set';
+            if (!serial || !pId || !cId) continue;
+            const key = `${pId}::${cId}`;
+            const existing = soSerialMap.get(key) ?? {};
+            if (!Array.isArray(existing[unitType])) existing[unitType] = [];
+            if (!existing[unitType].includes(serial)) existing[unitType].push(serial);
+            soSerialMap.set(key, existing);
+          }
+
+          // 4. Fetch SO product items and attach serial numbers from the map
+          const soProductResult = await this.databaseService.query<{
+            id: number;
+            productId: string | null;
+            capacityId: string | null;
+          }>(
+            `SELECT
+               tpi.id,
+               COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id', '') AS "productId",
+               COALESCE(to_jsonb(tpi)->>'capacityId', to_jsonb(tpi)->>'capacity_id', '') AS "capacityId"
+             FROM tbltransaction_product_items tpi
+             WHERE COALESCE(to_jsonb(tpi)->>'salesId', to_jsonb(tpi)->>'sales_id') = $1
+               AND LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'sales')) = 'sales'`,
+            [String(soId)],
+          );
+
+          soProductItems = soProductResult.rows.map((row) => {
+            const key = `${String(row.productId ?? '').trim()}::${String(row.capacityId ?? '').trim()}`;
+            return {
+              id: row.id,
+              productId: row.productId,
+              capacityId: row.capacityId,
+              serialNumbers: soSerialMap.get(key) ?? {},
+            };
+          });
+        } catch {}
+
+        originatingSalesOrder = {
+          id: soId,
+          soNumber,
+          productItems: soProductItems,
+          transferDetails,
+        };
+      }
+
       return {
         success: true,
         item: {
@@ -1845,6 +2125,8 @@ export class PurchaseService {
           })),
           productItems: mappedProductItems,
           createdAt: purchase.createdAt,
+          isTransferPO,
+          originatingSalesOrder,
         },
       };
     } catch (error) {
@@ -2815,7 +3097,7 @@ export class PurchaseService {
 
     if (mode === 'deliveries') {
       whereParts.push(`LOWER(COALESCE(base.original_status, '')) NOT IN (
-        'for_approval', 'for approval', 'approval', 'approved', 'completed', 'cancelled', 'rejected'
+        'for_approval', 'for approval', 'approval', 'approved', 'completed', 'cancelled', 'rejected', 'received', 'transfer_received'
       )`);
     } else if (mode === 'approvals') {
       whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN (
@@ -3147,7 +3429,15 @@ export class PurchaseService {
 
   private toPurchaseTabItem(row: PurchaseRow): PurchaseTabItemDto {
     const totalAmount = Number(row.totalAmount ?? 0);
-
+    const productItems = (row.productItems as any[]) ?? [];
+    // Transfer PO logic: if any productItem has a salesId, treat as transfer PO
+    const transferProduct = productItems.find((item) => !!item.salesId);
+    let isTransferPO = false;
+    let originatingSalesOrder: null | { id: number } = null;
+    if (transferProduct && transferProduct.salesId) {
+      isTransferPO = true;
+      originatingSalesOrder = { id: transferProduct.salesId };
+    }
     return {
       id: row.id,
       poNumber: row.poNumber ?? '-',
@@ -3164,10 +3454,11 @@ export class PurchaseService {
       status: row.status ?? 'pending',
       paymentDetails:
         (row.paymentDetails as PurchaseTabItemDto['paymentDetails']) ?? null,
-      productItems:
-        (row.productItems as PurchaseTabItemDto['productItems']) ?? [],
+      productItems,
       createdAt: row.createdAt,
       serialCount: row.serialCount ?? 0,
+      isTransferPO,
+      originatingSalesOrder,
     };
   }
 
