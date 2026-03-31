@@ -1,4 +1,4 @@
-import { CommonModule } from '@angular/common';
+﻿import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
@@ -49,6 +49,7 @@ interface SalesOrderRow {
   scheduleDate: string;
   serialCount?: number;
   createdAt?: string | null;
+  concernStatus?: string;
 }
 
 interface SalesUnitTypeFormItem {
@@ -236,6 +237,7 @@ export class SalesOrderComponent {
       priority: '',
       resolutionNotes: '',
       resolvedAt: '',
+      warrantySerials: '',
     },
     expenseDetails: [this.createEmptyExpenseItem()],
     customer: {
@@ -1424,6 +1426,7 @@ export class SalesOrderComponent {
       scheduleDate: item.scheduleDate ?? '-',
       serialCount: Number(item.serialCount ?? 0),
       createdAt: item.createdAt ?? null,
+      concernStatus: item.concernStatus ?? '',
     }));
   }
 
@@ -2079,7 +2082,7 @@ export class SalesOrderComponent {
       }
     }
 
-    if (['service', 'sales and service'].includes(salesType)) {
+    if (['service', 'sales and service', 'concern'].includes(salesType)) {
       const hasService = (this.form.serviceItems ?? []).some((item: any) =>
         String(item.serviceName ?? '').trim().length > 0 ||
         Number(item.unitPrice) > 0 ||
@@ -2262,7 +2265,9 @@ export class SalesOrderComponent {
         concernDescription: String(cd.concernDescription ?? '').trim() || undefined,
         concernStatus: String(cd.concernStatus ?? '').trim() || undefined,
         priority: String(cd.priority ?? '').trim() || undefined,
-        resolutionNotes: String(cd.resolutionNotes ?? '').trim() || undefined,
+        resolutionNotes: cd.concernStatus === 'warranty'
+          ? String(cd.warrantySerials ?? '').trim() || undefined
+          : String(cd.resolutionNotes ?? '').trim() || undefined,
         resolvedAt: cd.resolvedAt || undefined,
       };
     })();
@@ -2358,7 +2363,7 @@ export class SalesOrderComponent {
         transferStatus: '',
         transferNotes: '',
         receiverName: '',
-        receivedBy: undefined as number | undefined, // employee/receiver
+        receivedBy: undefined as number | undefined,
       },
       concernDetails: {
         concernType: '',
@@ -2368,6 +2373,7 @@ export class SalesOrderComponent {
         priority: '',
         resolutionNotes: '',
         resolvedAt: '',
+        warrantySerials: '',
       },
       expenseDetails: [this.createEmptyExpenseItem()],
       customer: {
@@ -2381,7 +2387,7 @@ export class SalesOrderComponent {
       paymentDetails: [this.createEmptyPaymentItem()],
       productItems: [this.createEmptyProductItem()],
       serviceItems: [this.createEmptyServiceItem()],
-      status: 'pending',
+      status: this.getDefaultStatusFromActiveTab(),
     };
 
     this.editingSalesId = null;
@@ -2674,7 +2680,16 @@ export class SalesOrderComponent {
       priority: '',
       resolutionNotes: '',
       resolvedAt: '',
+      warrantySerials: '',
     };
+    // If status is warranty, resolutionNotes holds the warranty serials
+    (concernDetails as any).warrantySerials =
+      concernDetails.concernStatus === 'warranty'
+        ? (concernDetails.resolutionNotes ?? '')
+        : '';
+    if (concernDetails.concernStatus === 'warranty') {
+      (concernDetails as any).resolutionNotes = '';
+    }
 
     const expenseDetails = Array.isArray(detail.expenseDetails) && detail.expenseDetails.length > 0
       ? detail.expenseDetails
@@ -2859,6 +2874,11 @@ export class SalesOrderComponent {
     if (this.activeTab === 'sales-receivable') return 'sales';
     if (this.activeTab === 'remitted-sales') return 'sales';
     return 'sales';
+  }
+
+  private getDefaultStatusFromActiveTab(): string {
+    if (this.activeTab === 'services') return 'after_sales';
+    return 'pending';
   }
 
   private normalizeSerial(value: unknown): string {

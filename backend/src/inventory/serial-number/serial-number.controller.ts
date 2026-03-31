@@ -42,6 +42,23 @@ export class SerialNumberController {
     return normalizedTokenBranchId;
   }
 
+  @Post('csv-preview')
+  csvPreview(
+    @Body() body: { rows: Array<{ serialNumber: string; status: string }> },
+  ) {
+    return this.serialNumberService.csvPreview(body.rows);
+  }
+
+  @Post('bulk-update-status')
+  bulkUpdateStatus(
+    @Body() body: { serialNumbers: string[]; status: string },
+    @Req() request: { user?: { sub?: unknown } },
+  ) {
+    const userId = Number(request.user?.sub);
+    const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
+    return this.serialNumberService.bulkUpdateStatus(body.serialNumbers, body.status, normalizedUserId);
+  }
+
   @Post('scan-sales-order')
   scanSalesOrder(
     @Body() dto: ScanSalesOrderDto,

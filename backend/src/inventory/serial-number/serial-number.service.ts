@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+﻿import { Injectable } from '@nestjs/common';
 import { CreateSerialNumberDto } from './dto/create-serial-number.dto';
 import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { DatabaseService } from 'src/database/database.service';
@@ -1447,6 +1447,146 @@ export class SerialNumberService {
         },
         groups,
       },
+    };
+  }
+
+  async csvPreview(rows: Array<{ serialNumber: string; status: string }>) {
+    const normalized = (rows ?? [])
+      .map((r) => ({
+        serialNumber: this.normalizeSerialNumber(r.serialNumber),
+        csvStatus: String(r.status ?? '').trim().toLowerCase(),
+      }))
+      .filter((r) => r.serialNumber.length > 0);
+
+    if (normalized.length === 0) {
+      return { success: false, message: 'No serial numbers provided' };
+    }
+
+    const seen = new Set<string>();
+    const unique = normalized.filter((r) => {
+      const key = r.serialNumber.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const serialList = unique.map((r) => r.serialNumber);
+
+    const result = await this.databaseService.query<{
+      serialNumber: string;
+      status: string | null;
+      productName: string | null;
+      capacityName: string | null;
+    }>(
+      `SELECT
+         COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '') AS "serialNumber",
+         COALESCE(to_jsonb(sn)->>'status', '') AS status,
+         COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', '') AS "productName",
+         COALESCE(to_jsonb(c)->>'capacity', '') AS "capacityName"
+       FROM tblserial_numbers sn
+       LEFT JOIN tblproducts p ON p.id::text = COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id')
+       LEFT JOIN tblcapacity c ON c.id::text = COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id')
+       WHERE LOWER(regexp_replace(BTRIM(COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '')), '\\s+', ' ', 'g'))
+         = ANY(SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($1::text[]) s)`,
+      [serialList],
+    );
+
+    const foundMap = new Map<string, { serialNumber: string; dbStatus: string; productName: string; capacityName: string }>();
+    for (const row of result.rows) {
+      foundMap.set(row.serialNumber.toLowerCase().trim(), {
+        serialNumber: row.serialNumber,
+        dbStatus: String(row.status ?? '').toLowerCase().trim(),
+        productName: String(row.productName ?? '').trim(),
+        capacityName: String(row.capacityName ?? '').trim(),
+      });
+    }
+
+    const toInstall: Array<{ serialNumber: string; csvStatus: string; productName: string; capacityName: string }> = [];
+    const alreadyInstalled: Array<{ serialNumber: string; productName: string; capacityName: string }> = [];
+    const notFound: Array<{ serialNumber: string; csvStatus: string }> = [];
+    const otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; productName: string; capacityName: string }> = [];
+
+    for (const row of unique) {
+      const found = foundMap.get(row.serialNumber.toLowerCase());
+
+      if (!found) {
+        notFound.push({ serialNumber: row.serialNumber, csvStatus: row.csvStatus });
+        continue;
+      }
+
+      if (found.dbStatus === 'installed') {
+        alreadyInstalled.push({ serialNumber: found.serialNumber, productName: found.productName, capacityName: found.capacityName });
+        continue;
+      }
+
+      if (row.csvStatus === 'installed') {
+        toInstall.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, productName: found.productName, capacityName: found.capacityName });
+        continue;
+      }
+
+      otherStatus.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, dbStatus: found.dbStatus, productName: found.productName, capacityName: found.capacityName });
+    }
+
+    return {
+      success: true,
+      summary: {
+        total: unique.length,
+        toInstall: toInstall.length,
+        alreadyInstalled: alreadyInstalled.length,
+        notFound: notFound.length,
+        otherStatus: otherStatus.length,
+      },
+      toInstall,
+      alreadyInstalled,
+      notFound,
+      otherStatus,
+    };
+  }
+  async bulkUpdateStatus(serialNumbers: string[], status: string, userId?: number) {
+    const allowedStatuses = ['installed', 'in-stock', 'reserved', 'for-delivery'];
+    const normalizedStatus = String(status ?? '').trim().toLowerCase();
+    if (!allowedStatuses.includes(normalizedStatus)) {
+      return { success: false, message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}` };
+    }
+
+    const normalized = (serialNumbers ?? [])
+      .map((s) => this.normalizeSerialNumber(s))
+      .filter((s) => s.length > 0);
+
+    if (normalized.length === 0) {
+      return { success: false, message: 'No serial numbers provided' };
+    }
+
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+    const serialCreatedByColumn = this.pickColumn(serialColumns, ['created_by', 'createdBy', 'createdby']);
+
+    if (!serialStatusColumn) {
+      return { success: false, message: 'Status column not found in tblserial_numbers' };
+    }
+
+    const setClauses = [`"${serialStatusColumn}" = $1`];
+    const params: unknown[] = [normalizedStatus];
+
+    if (serialCreatedByColumn && userId !== undefined) {
+      params.push(userId);
+      setClauses.push(`"${serialCreatedByColumn}" = $${params.length}`);
+    }
+
+    params.push(normalized);
+    const result = await this.databaseService.query(
+      `UPDATE tblserial_numbers
+       SET ${setClauses.join(', ')}
+       WHERE LOWER(regexp_replace(BTRIM(COALESCE("serialNumber", '')), '\\s+', ' ', 'g')) = ANY(
+         SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($${params.length}::text[]) s
+       )`,
+      params,
+    );
+
+    return {
+      success: true,
+      message: `Updated ${result.rowCount ?? 0} serial number(s) to '${normalizedStatus}'`,
+      updated: result.rowCount ?? 0,
     };
   }
 

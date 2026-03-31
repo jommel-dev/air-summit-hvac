@@ -760,16 +760,14 @@ export class SalesOrderService {
         'sales-and-service',
         'sales_and_service'
       )`);
+    } else if (mode === 'services') {
       whereParts.push(`(
         LOWER(COALESCE(base.sales_type, '')) IN (
-          'service',
-          'services',
-          'sales and service',
-          'sales & service',
-          'sales-and-service',
-          'sales_and_service'
+          'service', 'services', 'concern', 'concerns',
+          'sales and service', 'sales & service', 'sales-and-service', 'sales_and_service'
         )
         OR EXISTS (SELECT 1 FROM tblservice_details sd WHERE sd.sales_id = base.id)
+        OR EXISTS (SELECT 1 FROM tblconcern_details cd WHERE cd.sales_id = base.id)
       )`);
     } else if (mode === 'projects') {
       whereParts.push(`(
@@ -935,6 +933,7 @@ export class SalesOrderService {
           COALESCE(sc.serial_count, 0)::int AS serial_count,
           COALESCE(pt.payment_method, '-') AS payment_method,
           COALESCE(pt.paid_amount, 0) AS paid_amount,
+          COALESCE(cd.concern_status, '') AS concern_status,
           GREATEST(
             COALESCE(
               NULLIF(
@@ -961,6 +960,8 @@ export class SalesOrderService {
           ON sc.so_id = so.id::text
         LEFT JOIN payment_totals pt
           ON pt.so_id = so.id::text
+        LEFT JOIN tblconcern_details cd
+          ON cd.sales_id = so.id
       )
     `;
 
@@ -994,7 +995,8 @@ export class SalesOrderService {
         base.payment_method AS "paymentMethod",
         base.schedule_date AS "scheduleDate",
         base.created_at AS "createdAt",
-        base.serial_count AS "serialCount"
+        base.serial_count AS "serialCount",
+        base.concern_status AS "concernStatus"
       FROM base
       ${whereSql}
       ORDER BY base.id DESC
@@ -1016,6 +1018,7 @@ export class SalesOrderService {
       scheduleDate: string | null;
       createdAt: string | null;
       serialCount: number;
+      concernStatus: string | null;
     }>(listSql, params);
 
     return {
@@ -1034,6 +1037,7 @@ export class SalesOrderService {
         scheduleDate: row.scheduleDate,
         createdAt: row.createdAt,
         serialCount: Number(row.serialCount ?? 0),
+        concernStatus: row.concernStatus ?? '',
       })),
       meta: {
         page,
@@ -1049,7 +1053,11 @@ export class SalesOrderService {
     let transferPOPayload: any = null;
     let transferPOBranchId: number | undefined = undefined;
     const payload = createSalesOrderDto;
-    const status = String(payload.status ?? 'pending').trim() || 'pending';
+    const status = String(payload.status ?? 'pending').trim() || (
+      ['service', 'concern', 'sales and service'].includes(String(payload.salesType ?? '').toLowerCase())
+        ? 'after_sales'
+        : 'pending'
+    );
     const productItems = Array.isArray(payload.productItems) ? payload.productItems : [];
     const serviceItems = Array.isArray(payload.serviceItems) ? payload.serviceItems : [];
 
@@ -1743,34 +1751,22 @@ export class SalesOrderService {
             if (concernCustomerIdColumn && details.customerId !== undefined) {
               record[concernCustomerIdColumn] = String(details.customerId ?? '').trim();
             }
-            if (concernTypeColumn && details.concernType !== undefined) {
-              record[concernTypeColumn] = String(details.concernType ?? '').trim();
-            }
-            if (concernSubjectColumn && details.concernSubject !== undefined) {
-              record[concernSubjectColumn] = String(details.concernSubject ?? '').trim();
-            }
-            if (concernDescriptionColumn && details.concernDescription !== undefined) {
-              record[concernDescriptionColumn] = String(details.concernDescription ?? '').trim();
-            }
+            if (concernTypeColumn) record[concernTypeColumn] = String(details.concernType ?? '').trim();
+            if (concernSubjectColumn) record[concernSubjectColumn] = String(details.concernSubject ?? '').trim();
+            if (concernDescriptionColumn) record[concernDescriptionColumn] = String(details.concernDescription ?? '').trim();
             if (concernStatusColumn) {
               const concernStatus = String(details.concernStatus ?? '').trim().toLowerCase();
-              const validConcernStatuses = ['open', 'in_progress', 'resolved', 'closed'];
-              record[concernStatusColumn] = validConcernStatuses.includes(concernStatus) ? concernStatus : 'open';
+              const validConcernStatuses = ['open', 'in_progress', 'resolved', 'closed', 'in-progress', 'reschedule', 'pulled-out', 'warranty', 'void-warranty', 'complete'];
+              record[concernStatusColumn] = validConcernStatuses.includes(concernStatus) ? concernStatus : concernStatus || 'open';
             }
             if (priorityColumn) {
               const priority = String(details.priority ?? '').trim().toLowerCase();
               const validPriorities = ['low', 'medium', 'high', 'urgent'];
-              record[priorityColumn] = validPriorities.includes(priority) ? priority : 'medium';
+              record[priorityColumn] = validPriorities.includes(priority) ? priority : '';
             }
-            if (assignedToColumn && details.assignedTo !== undefined) {
-              record[assignedToColumn] = this.toOptionalNumber(details.assignedTo);
-            }
-            if (resolutionNotesColumn && details.resolutionNotes !== undefined) {
-              record[resolutionNotesColumn] = String(details.resolutionNotes ?? '').trim();
-            }
-            if (resolvedAtColumn && details.resolvedAt !== undefined) {
-              record[resolvedAtColumn] = this.toIsoDateOrNull(details.resolvedAt);
-            }
+            if (assignedToColumn && details.assignedTo !== undefined) record[assignedToColumn] = this.toOptionalNumber(details.assignedTo);
+            if (resolutionNotesColumn) record[resolutionNotesColumn] = String(details.resolutionNotes ?? '').trim();
+            if (resolvedAtColumn) record[resolvedAtColumn] = this.toIsoDateOrNull(details.resolvedAt);
 
             await this.runInsert(client, 'tblconcern_details', record);
           }
@@ -3978,7 +3974,9 @@ export class SalesOrderService {
                 record[laborCostColumn] = this.toOptionalNumber(item.laborCost) ?? 0;
               }
               if (serviceStatusColumn && item.serviceStatus !== undefined) {
-                record[serviceStatusColumn] = String(item.serviceStatus ?? '').trim();
+                const svcStatus = String(item.serviceStatus ?? '').trim().toLowerCase();
+                const validSvcStatuses = ['scheduled', 'in_progress', 'completed', 'cancelled'];
+                record[serviceStatusColumn] = validSvcStatuses.includes(svcStatus) ? svcStatus : 'scheduled';
               }
               if (serviceNotesColumn && item.serviceNotes !== undefined) {
                 record[serviceNotesColumn] = String(item.serviceNotes ?? '').trim();
@@ -4198,30 +4196,14 @@ export class SalesOrderService {
             if (concernCustomerIdColumn && details.customerId !== undefined) {
               record[concernCustomerIdColumn] = String(details.customerId ?? '').trim();
             }
-            if (concernTypeColumn && details.concernType !== undefined) {
-              record[concernTypeColumn] = String(details.concernType ?? '').trim();
-            }
-            if (concernSubjectColumn && details.concernSubject !== undefined) {
-              record[concernSubjectColumn] = String(details.concernSubject ?? '').trim();
-            }
-            if (concernDescriptionColumn && details.concernDescription !== undefined) {
-              record[concernDescriptionColumn] = String(details.concernDescription ?? '').trim();
-            }
-            if (concernStatusColumn && details.concernStatus !== undefined) {
-              record[concernStatusColumn] = String(details.concernStatus ?? '').trim();
-            }
-            if (priorityColumn && details.priority !== undefined) {
-              record[priorityColumn] = String(details.priority ?? '').trim();
-            }
-            if (assignedToColumn && details.assignedTo !== undefined) {
-              record[assignedToColumn] = this.toOptionalNumber(details.assignedTo);
-            }
-            if (resolutionNotesColumn && details.resolutionNotes !== undefined) {
-              record[resolutionNotesColumn] = String(details.resolutionNotes ?? '').trim();
-            }
-            if (resolvedAtColumn && details.resolvedAt !== undefined) {
-              record[resolvedAtColumn] = this.toIsoDateOrNull(details.resolvedAt);
-            }
+            if (concernTypeColumn) record[concernTypeColumn] = String(details.concernType ?? '').trim();
+            if (concernSubjectColumn) record[concernSubjectColumn] = String(details.concernSubject ?? '').trim();
+            if (concernDescriptionColumn) record[concernDescriptionColumn] = String(details.concernDescription ?? '').trim();
+            if (concernStatusColumn) record[concernStatusColumn] = String(details.concernStatus ?? '').trim();
+            if (priorityColumn) record[priorityColumn] = String(details.priority ?? '').trim();
+            if (assignedToColumn && details.assignedTo !== undefined) record[assignedToColumn] = this.toOptionalNumber(details.assignedTo);
+            if (resolutionNotesColumn) record[resolutionNotesColumn] = String(details.resolutionNotes ?? '').trim();
+            if (resolvedAtColumn) record[resolvedAtColumn] = this.toIsoDateOrNull(details.resolvedAt);
 
             await this.runInsert(client, 'tblconcern_details', record);
           }

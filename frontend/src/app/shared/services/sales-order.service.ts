@@ -78,6 +78,7 @@ export interface SalesOrderConcernDetailsPayload {
   priority?: string;
   resolutionNotes?: string;
   resolvedAt?: string | null;
+  warrantySerials?: string;
 }
 
 export interface SalesOrderExpenseDetailsPayload {
@@ -135,6 +136,7 @@ export interface SalesOrderListItem {
   scheduleDate: string | null;
   createdAt: string | null;
   serialCount: number;
+  concernStatus?: string;
 }
 
 export interface SalesCustomerDetail {
@@ -781,6 +783,27 @@ export class SalesOrderService {
       payload,
     );
 
+    return response.data;
+  }
+
+  async bulkUpdateSerialStatus(serialNumbers: string[], status: string): Promise<{ success: boolean; message?: string; updated?: number }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; updated?: number }>(
+      '/serial-number/bulk-update-status',
+      { serialNumbers, status },
+    );
+    return response.data;
+  }
+
+  async previewCsvSerials(rows: Array<{ serialNumber: string; status: string }>): Promise<{
+    success: boolean;
+    message?: string;
+    summary?: { total: number; toInstall: number; alreadyInstalled: number; notFound: number; otherStatus: number };
+    toInstall?: Array<{ serialNumber: string; csvStatus: string; productName: string; capacityName: string }>;
+    alreadyInstalled?: Array<{ serialNumber: string; productName: string; capacityName: string }>;
+    notFound?: Array<{ serialNumber: string; csvStatus: string }>;
+    otherStatus?: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; productName: string; capacityName: string }>;
+  }> {
+    const response = await apiClient.post('/serial-number/csv-preview', { rows });
     return response.data;
   }
 }

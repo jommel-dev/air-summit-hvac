@@ -170,6 +170,27 @@ export class InventoryComponent implements OnInit {
   serialCurrentPage = 1;
   capacityStockSummary: CapacityStockSummary | null = null;
 
+  // Bulk serial selection
+  selectedSerials = new Set<string>();
+  isBulkUpdating = false;
+  bulkUpdateMessage = '';
+  bulkUpdateError = '';
+
+  // CSV upload modal
+  isCsvModalOpen = false;
+  isCsvParsing = false;
+  isCsvConfirming = false;
+  csvModalTab: 'will-install' | 'already-installed' | 'not-found' | 'other' = 'will-install';
+  csvPreviewResult: {
+    summary: { total: number; toInstall: number; alreadyInstalled: number; notFound: number; otherStatus: number };
+    toInstall: Array<{ serialNumber: string; csvStatus: string; productName: string; capacityName: string }>;
+    alreadyInstalled: Array<{ serialNumber: string; productName: string; capacityName: string }>;
+    notFound: Array<{ serialNumber: string; csvStatus: string }>;
+    otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; productName: string; capacityName: string }>;
+  } | null = null;
+  csvConfirmMessage = '';
+  csvConfirmError = '';
+
   // Cached stock counts for capacities to display in the folder tree
   isLoadingCapacityCounts = false;
   capacityCountsError = '';
@@ -2458,7 +2479,179 @@ export class InventoryComponent implements OnInit {
     this.addCapacitySuccess = '';
   }
 
+  openCsvModal(): void {
+    this.isCsvModalOpen = true;
+    this.csvPreviewResult = null;
+    this.csvConfirmMessage = '';
+    this.csvConfirmError = '';
+    this.csvModalTab = 'will-install';
+  }
+
+  closeCsvModal(): void {
+    this.isCsvModalOpen = false;
+    this.csvPreviewResult = null;
+    this.csvConfirmMessage = '';
+    this.csvConfirmError = '';
+  }
+
+  triggerCsvFileInput(): void {
+    const input = document.getElementById('csvFileInput') as HTMLInputElement | null;
+    input?.click();
+  }
+
+  async onCsvFileSelected(event: Event): Promise<void> {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    this.isCsvParsing = true;
+    this.csvPreviewResult = null;
+    this.csvConfirmMessage = '';
+    this.csvConfirmError = '';
+    try {
+      const text = await file.text();
+      const lines = text.split(/[\r\n]+/).map((l) => l.trim()).filter((l) => l.length > 0);
+      // Detect header row
+      const hasHeader = lines[0]?.toLowerCase().startsWith('serialnumber') || lines[0]?.toLowerCase().startsWith('serial_number') || lines[0]?.toLowerCase().startsWith('serial number');
+      const dataLines = hasHeader ? lines.slice(1) : lines;
+      const rows = dataLines
+        .map((line) => {
+          const parts = line.split(',');
+          const serialNumber = (parts[0] ?? '').trim();
+          const status = (parts[1] ?? '').trim().toLowerCase();
+          return { serialNumber, status };
+        })
+        .filter((r) => r.serialNumber.length > 0);
+      if (rows.length === 0) {
+        this.csvConfirmError = 'No serial numbers found in the file.';
+        return;
+      }
+      const result = await this.salesOrderService.previewCsvSerials(rows);
+      if (!result.success) {
+        this.csvConfirmError = result.message ?? 'Failed to preview serials';
+        return;
+      }
+      this.csvPreviewResult = {
+        summary: result.summary!,
+        toInstall: result.toInstall ?? [],
+        alreadyInstalled: result.alreadyInstalled ?? [],
+        notFound: result.notFound ?? [],
+        otherStatus: result.otherStatus ?? [],
+      };
+      this.csvModalTab = 'will-install';
+    } catch {
+      this.csvConfirmError = 'Failed to read or process the CSV file.';
+    } finally {
+      this.isCsvParsing = false;
+      (event.target as HTMLInputElement).value = '';
+    }
+  }
+
+  async confirmCsvInstall(): Promise<void> {
+    if (!this.csvPreviewResult || this.isCsvConfirming) return;
+    const serials = this.csvPreviewResult.toInstall.map((s) => s.serialNumber);
+    if (serials.length === 0) {
+      this.csvConfirmError = 'No serials to install.';
+      return;
+    }
+    this.isCsvConfirming = true;
+    this.csvConfirmMessage = '';
+    this.csvConfirmError = '';
+    try {
+      const result = await this.salesOrderService.bulkUpdateSerialStatus(serials, 'installed');
+      if (!result.success) {
+        this.csvConfirmError = result.message ?? 'Failed to update serials';
+        return;
+      }
+      this.csvConfirmMessage = result.message ?? `Updated ${result.updated} serial(s) to installed`;
+      this.csvPreviewResult = {
+        ...this.csvPreviewResult,
+        summary: { ...this.csvPreviewResult.summary, toInstall: 0, alreadyInstalled: this.csvPreviewResult.summary.alreadyInstalled + serials.length },
+        alreadyInstalled: [...this.csvPreviewResult.alreadyInstalled, ...this.csvPreviewResult.toInstall.map((s) => ({ serialNumber: s.serialNumber, productName: s.productName, capacityName: s.capacityName }))],
+        toInstall: [],
+      };
+      if (this.selectedProductId && this.selectedCapacityId) {
+        await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
+      }
+    } catch {
+      this.csvConfirmError = 'Failed to update serial numbers.';
+    } finally {
+      this.isCsvConfirming = false;
+    }
+  }
+
+  downloadCsvSummary(): void {
+    if (!this.csvPreviewResult) return;
+    const rows: string[] = ['Serial Number,CSV Status,DB Status,Category,Product,Capacity'];
+    for (const s of this.csvPreviewResult.toInstall) {
+      rows.push(`${s.serialNumber},${s.csvStatus},in-stock/reserved,To Install,${s.productName},${s.capacityName}`);
+    }
+    for (const s of this.csvPreviewResult.alreadyInstalled) {
+      rows.push(`${s.serialNumber},installed,installed,Already Installed,${s.productName},${s.capacityName}`);
+    }
+    for (const s of this.csvPreviewResult.notFound) {
+      rows.push(`${s.serialNumber},${s.csvStatus},,Not Found in DB,,`);
+    }
+    for (const s of this.csvPreviewResult.otherStatus) {
+      rows.push(`${s.serialNumber},${s.csvStatus},${s.dbStatus},Other Status,${s.productName},${s.capacityName}`);
+    }
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `serial-summary-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   private getProductTreeKey(brandName: string, productId: number): string {
     return `${brandName}::${productId}`;
+  }
+
+  toggleSerialSelection(serialNumber: string): void {
+    if (this.selectedSerials.has(serialNumber)) {
+      this.selectedSerials.delete(serialNumber);
+    } else {
+      this.selectedSerials.add(serialNumber);
+    }
+  }
+
+  selectAllVisibleSerials(serials: Array<{ serialNumber: string }>): void {
+    const allSelected = serials.every(s => this.selectedSerials.has(s.serialNumber));
+    if (allSelected) {
+      serials.forEach(s => this.selectedSerials.delete(s.serialNumber));
+    } else {
+      serials.forEach(s => this.selectedSerials.add(s.serialNumber));
+    }
+  }
+
+  clearSerialSelection(): void {
+    this.selectedSerials.clear();
+    this.bulkUpdateMessage = '';
+    this.bulkUpdateError = '';
+  }
+
+  async bulkMarkAsInstalled(): Promise<void> {
+    if (this.selectedSerials.size === 0 || this.isBulkUpdating) return;
+    this.isBulkUpdating = true;
+    this.bulkUpdateMessage = '';
+    this.bulkUpdateError = '';
+    try {
+      const result = await this.salesOrderService.bulkUpdateSerialStatus(
+        Array.from(this.selectedSerials), 'installed'
+      );
+      if (!result.success) {
+        this.bulkUpdateError = result.message ?? 'Failed to update serials';
+        return;
+      }
+      this.bulkUpdateMessage = result.message ?? `Updated ${result.updated} serial(s) to installed`;
+      this.selectedSerials.clear();
+      // Reload the current capacity stock summary
+      if (this.selectedProductId && this.selectedCapacityId) {
+        await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
+      }
+    } catch {
+      this.bulkUpdateError = 'Failed to update serial numbers';
+    } finally {
+      this.isBulkUpdating = false;
+    }
   }
 }

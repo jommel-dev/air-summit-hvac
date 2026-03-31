@@ -1,4 +1,4 @@
-<div>
+﻿<div>
   <app-page-breadcrumb pageTitle="Sales Order" />
 
   <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/3 xl:p-6">
@@ -92,15 +92,28 @@
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatAmount(order.totalAmount) }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.paymentMethod || '-' }}</td>
                 <td class="px-4 py-3">
-                  <span class="rounded-full px-2 py-0.5 text-xs font-medium"
-                    [ngClass]="{
-                      'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-500': order.status.toLowerCase() === 'pending',
-                      'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400': order.status.toLowerCase() === 'in-progress',
-                      'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-500': order.status.toLowerCase().includes('approval'),
-                      'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': !['pending','in-progress'].includes(order.status.toLowerCase()) && !order.status.toLowerCase().includes('approval')
-                    }">
-                    {{ order.status }}
-                  </span>
+                  @if (activeTab === 'services' && order.concernStatus) {
+                    <span class="rounded-full px-2 py-0.5 text-xs font-medium"
+                      [ngClass]="{
+                        'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-500': order.concernStatus === 'in-progress' || order.concernStatus === 'reschedule',
+                        'bg-yellow-50 text-yellow-700 dark:bg-yellow-500/15 dark:text-yellow-400': order.concernStatus === 'warranty',
+                        'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400': order.concernStatus === 'pulled-out' || order.concernStatus === 'void-warranty',
+                        'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-500': order.concernStatus === 'complete',
+                        'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': !['in-progress','reschedule','warranty','pulled-out','void-warranty','complete'].includes(order.concernStatus)
+                      }">
+                      {{ order.concernStatus }}
+                    </span>
+                  } @else {
+                    <span class="rounded-full px-2 py-0.5 text-xs font-medium"
+                      [ngClass]="{
+                        'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-500': order.status.toLowerCase() === 'pending',
+                        'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400': order.status.toLowerCase() === 'in-progress',
+                        'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-500': order.status.toLowerCase().includes('approval'),
+                        'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300': !['pending','in-progress'].includes(order.status.toLowerCase()) && !order.status.toLowerCase().includes('approval')
+                      }">
+                      {{ order.status }}
+                    </span>
+                  }
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.salesType || '-' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.projectCode || '-' }}</td>
@@ -713,6 +726,7 @@
             <input type="number" [(ngModel)]="form.totalAmount" name="computedTotalAmount" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
           </div>
         </section>
+        }
 
         @if (form.salesType === 'transfer') {
           <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
@@ -821,7 +835,7 @@
           </section>
         }
 
-        @if (form.salesType === 'concern') {
+        @if (['concern', 'service', 'sales and service'].includes(form.salesType)) {
           <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
             <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Concern Details</h4>
             <div class="grid gap-3 md:grid-cols-2">
@@ -838,13 +852,33 @@
                 <textarea [(ngModel)]="form.concernDetails.concernDescription" name="concernDescription" rows="3" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
               </div>
               <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Status</label>
-                <input type="text" [(ngModel)]="form.concernDetails.concernStatus" name="concernStatus" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Service/Concern Status</label>
+                <select [(ngModel)]="form.concernDetails.concernStatus" name="concernStatus" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                  <option value="">Select Status</option>
+                  <option value="in-progress">In Progress</option>
+                  <option value="reschedule">Reschedule</option>
+                  <option value="pulled-out">Pulled Out</option>
+                  <option value="warranty">Warranty</option>
+                  <option value="void-warranty">Void Warranty</option>
+                  <option value="complete">Complete</option>
+                </select>
               </div>
               <div>
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Priority</label>
-                <input type="text" [(ngModel)]="form.concernDetails.priority" name="priority" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                <select [(ngModel)]="form.concernDetails.priority" name="priority" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                  <option value="">Select Priority</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
               </div>
+              @if (form.concernDetails.concernStatus === 'warranty') {
+                <div class="md:col-span-2">
+                  <label class="mb-1 block text-xs font-medium text-yellow-600 dark:text-yellow-400">âš  Warranty Serial Numbers <span class="text-gray-400 font-normal">(one per line â€” flagged yellow in costing reports)</span></label>
+                  <textarea [(ngModel)]="form.concernDetails.warrantySerials" name="warrantySerials" rows="3" placeholder="Enter serial numbers under warranty, one per line" class="w-full rounded-lg border border-yellow-400 bg-yellow-50 px-3 py-2 text-sm dark:border-yellow-600 dark:bg-yellow-900/20"></textarea>
+                </div>
+              }
               <div class="md:col-span-2">
                 <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Resolution Notes</label>
                 <textarea [(ngModel)]="form.concernDetails.resolutionNotes" name="resolutionNotes" rows="2" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
@@ -856,8 +890,6 @@
             </div>
           </section>
         }
-
-      }
 
         @if (drawerMode === 'edit') {
           <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
@@ -896,7 +928,7 @@
           </section>
         }
 
-        @if (['sales and service', 'service'].includes(form.salesType)) {
+        @if (['sales and service', 'service', 'concern'].includes(form.salesType)) {
           <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
             <div class="mb-3 flex items-center justify-between">
               <h4 class="text-sm font-semibold text-gray-700 dark:text-gray-200">Sevice Details</h4>
