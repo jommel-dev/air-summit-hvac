@@ -798,10 +798,10 @@ export class SalesOrderService {
     success: boolean;
     message?: string;
     summary?: { total: number; toInstall: number; alreadyInstalled: number; notFound: number; otherStatus: number };
-    toInstall?: Array<{ serialNumber: string; csvStatus: string; productName: string; capacityName: string }>;
-    alreadyInstalled?: Array<{ serialNumber: string; productName: string; capacityName: string }>;
+    toInstall?: Array<{ serialNumber: string; csvStatus: string; unitType: string; productName: string; capacityName: string }>;
+    alreadyInstalled?: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }>;
     notFound?: Array<{ serialNumber: string; csvStatus: string }>;
-    otherStatus?: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; productName: string; capacityName: string }>;
+    otherStatus?: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
   }> {
     const response = await apiClient.post('/serial-number/csv-preview', { rows });
     return response.data;

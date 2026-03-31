@@ -1475,12 +1475,14 @@ export class SerialNumberService {
     const result = await this.databaseService.query<{
       serialNumber: string;
       status: string | null;
+      unitType: string | null;
       productName: string | null;
       capacityName: string | null;
     }>(
       `SELECT
          COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '') AS "serialNumber",
          COALESCE(to_jsonb(sn)->>'status', '') AS status,
+         COALESCE(to_jsonb(sn)->>'unitType', to_jsonb(sn)->>'unit_type', '') AS "unitType",
          COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', '') AS "productName",
          COALESCE(to_jsonb(c)->>'capacity', '') AS "capacityName"
        FROM tblserial_numbers sn
@@ -1491,20 +1493,21 @@ export class SerialNumberService {
       [serialList],
     );
 
-    const foundMap = new Map<string, { serialNumber: string; dbStatus: string; productName: string; capacityName: string }>();
+    const foundMap = new Map<string, { serialNumber: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>();
     for (const row of result.rows) {
       foundMap.set(row.serialNumber.toLowerCase().trim(), {
         serialNumber: row.serialNumber,
         dbStatus: String(row.status ?? '').toLowerCase().trim(),
+        unitType: String(row.unitType ?? '').trim().toUpperCase(),
         productName: String(row.productName ?? '').trim(),
         capacityName: String(row.capacityName ?? '').trim(),
       });
     }
 
-    const toInstall: Array<{ serialNumber: string; csvStatus: string; productName: string; capacityName: string }> = [];
-    const alreadyInstalled: Array<{ serialNumber: string; productName: string; capacityName: string }> = [];
+    const toInstall: Array<{ serialNumber: string; csvStatus: string; unitType: string; productName: string; capacityName: string }> = [];
+    const alreadyInstalled: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }> = [];
     const notFound: Array<{ serialNumber: string; csvStatus: string }> = [];
-    const otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; productName: string; capacityName: string }> = [];
+    const otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }> = [];
 
     for (const row of unique) {
       const found = foundMap.get(row.serialNumber.toLowerCase());
@@ -1515,16 +1518,16 @@ export class SerialNumberService {
       }
 
       if (found.dbStatus === 'installed') {
-        alreadyInstalled.push({ serialNumber: found.serialNumber, productName: found.productName, capacityName: found.capacityName });
+        alreadyInstalled.push({ serialNumber: found.serialNumber, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
         continue;
       }
 
       if (row.csvStatus === 'installed') {
-        toInstall.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, productName: found.productName, capacityName: found.capacityName });
+        toInstall.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
         continue;
       }
 
-      otherStatus.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, dbStatus: found.dbStatus, productName: found.productName, capacityName: found.capacityName });
+      otherStatus.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, dbStatus: found.dbStatus, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
     }
 
     return {

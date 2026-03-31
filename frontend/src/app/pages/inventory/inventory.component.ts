@@ -183,10 +183,10 @@ export class InventoryComponent implements OnInit {
   csvModalTab: 'will-install' | 'already-installed' | 'not-found' | 'other' = 'will-install';
   csvPreviewResult: {
     summary: { total: number; toInstall: number; alreadyInstalled: number; notFound: number; otherStatus: number };
-    toInstall: Array<{ serialNumber: string; csvStatus: string; productName: string; capacityName: string }>;
-    alreadyInstalled: Array<{ serialNumber: string; productName: string; capacityName: string }>;
+    toInstall: Array<{ serialNumber: string; csvStatus: string; unitType: string; productName: string; capacityName: string }>;
+    alreadyInstalled: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }>;
     notFound: Array<{ serialNumber: string; csvStatus: string }>;
-    otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; productName: string; capacityName: string }>;
+    otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
   } | null = null;
   csvConfirmMessage = '';
   csvConfirmError = '';
@@ -2479,6 +2479,10 @@ export class InventoryComponent implements OnInit {
     this.addCapacitySuccess = '';
   }
 
+  get canBulkInstall(): boolean {
+    return this.rbacService.isAdminOrSuperAdmin();
+  }
+
   openCsvModal(): void {
     this.isCsvModalOpen = true;
     this.csvPreviewResult = null;
@@ -2565,7 +2569,7 @@ export class InventoryComponent implements OnInit {
       this.csvPreviewResult = {
         ...this.csvPreviewResult,
         summary: { ...this.csvPreviewResult.summary, toInstall: 0, alreadyInstalled: this.csvPreviewResult.summary.alreadyInstalled + serials.length },
-        alreadyInstalled: [...this.csvPreviewResult.alreadyInstalled, ...this.csvPreviewResult.toInstall.map((s) => ({ serialNumber: s.serialNumber, productName: s.productName, capacityName: s.capacityName }))],
+        alreadyInstalled: [...this.csvPreviewResult.alreadyInstalled, ...this.csvPreviewResult.toInstall.map((s) => ({ serialNumber: s.serialNumber, unitType: s.unitType, productName: s.productName, capacityName: s.capacityName }))],
         toInstall: [],
       };
       if (this.selectedProductId && this.selectedCapacityId) {
@@ -2580,18 +2584,18 @@ export class InventoryComponent implements OnInit {
 
   downloadCsvSummary(): void {
     if (!this.csvPreviewResult) return;
-    const rows: string[] = ['Serial Number,CSV Status,DB Status,Category,Product,Capacity'];
+    const rows: string[] = ['Serial Number,Unit Type,CSV Status,DB Status,Category,Product,Capacity'];
     for (const s of this.csvPreviewResult.toInstall) {
-      rows.push(`${s.serialNumber},${s.csvStatus},in-stock/reserved,To Install,${s.productName},${s.capacityName}`);
+      rows.push(`${s.serialNumber},${s.unitType},${s.csvStatus},in-stock/reserved,To Install,${s.productName},${s.capacityName}`);
     }
     for (const s of this.csvPreviewResult.alreadyInstalled) {
-      rows.push(`${s.serialNumber},installed,installed,Already Installed,${s.productName},${s.capacityName}`);
+      rows.push(`${s.serialNumber},${s.unitType},installed,installed,Already Installed,${s.productName},${s.capacityName}`);
     }
     for (const s of this.csvPreviewResult.notFound) {
-      rows.push(`${s.serialNumber},${s.csvStatus},,Not Found in DB,,`);
+      rows.push(`${s.serialNumber},,${s.csvStatus},,Not Found in DB,,`);
     }
     for (const s of this.csvPreviewResult.otherStatus) {
-      rows.push(`${s.serialNumber},${s.csvStatus},${s.dbStatus},Other Status,${s.productName},${s.capacityName}`);
+      rows.push(`${s.serialNumber},${s.unitType},${s.csvStatus},${s.dbStatus},Other Status,${s.productName},${s.capacityName}`);
     }
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);

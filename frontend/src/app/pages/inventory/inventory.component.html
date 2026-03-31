@@ -355,10 +355,12 @@
                   <div class="mt-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
                     <div class="flex items-center justify-between">
                       <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Serial Numbers</p>
-                      <button type="button" (click)="openCsvModal()"
-                        class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-600 dark:text-brand-300 dark:hover:bg-brand-900/20">
-                        Upload CSV
-                      </button>
+                      @if (canBulkInstall) {
+                        <button type="button" (click)="openCsvModal()"
+                          class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-600 dark:text-brand-300 dark:hover:bg-brand-900/20">
+                          Upload CSV
+                        </button>
+                      }
                     </div>
                     <div class="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <input
@@ -388,7 +390,7 @@
                       }
                     </div>
 
-                    @if (selectedSerials.size > 0) {
+                    @if (canBulkInstall && selectedSerials.size > 0) {
                       <div class="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 dark:border-brand-700 dark:bg-brand-900/20">
                         <span class="text-xs font-medium text-brand-700 dark:text-brand-300">{{ selectedSerials.size }} selected</span>
                         <button type="button" (click)="bulkMarkAsInstalled()" [disabled]="isBulkUpdating"
@@ -408,23 +410,27 @@
                       </div>
                     }
 
+                    @if (canBulkInstall) {
                     <div class="mt-2 flex items-center gap-2">
                       <button type="button" (click)="selectAllVisibleSerials(paginatedActiveTabSerialList)"
                         class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
                         {{ paginatedActiveTabSerialList.length > 0 && paginatedActiveTabSerialList.every(s => selectedSerials.has(s.serialNumber)) ? 'Deselect Page' : 'Select Page' }}
                       </button>
                     </div>
+                    }
 
                     <div class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
                       @for (serialEntry of paginatedActiveTabSerialList; track serialEntry.serialNumber + '::' + serialEntry.unitType) {
                         <div class="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-xs font-medium transition"
-                          [ngClass]="selectedSerials.has(serialEntry.serialNumber)
+                          [ngClass]="canBulkInstall && selectedSerials.has(serialEntry.serialNumber)
                             ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-600 dark:bg-brand-900/20 dark:text-brand-300'
                             : 'border-gray-200 text-gray-700 hover:border-gray-300 dark:border-gray-700 dark:text-gray-300'"
-                          (click)="toggleSerialSelection(serialEntry.serialNumber)">
-                          <input type="checkbox" [checked]="selectedSerials.has(serialEntry.serialNumber)"
-                            (click)="$event.stopPropagation()" (change)="toggleSerialSelection(serialEntry.serialNumber)"
-                            class="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand-500" />
+                          (click)="canBulkInstall && toggleSerialSelection(serialEntry.serialNumber)">
+                          @if (canBulkInstall) {
+                            <input type="checkbox" [checked]="selectedSerials.has(serialEntry.serialNumber)"
+                              (click)="$event.stopPropagation()" (change)="toggleSerialSelection(serialEntry.serialNumber)"
+                              class="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand-500" />
+                          }
                           <div>
                             <p>{{ serialEntry.serialNumber }}</p>
                             @if (serialEntry.unitType) {
@@ -1139,7 +1145,7 @@
               @for (s of csvPreviewResult.toInstall; track s.serialNumber) {
                 <div class="rounded border border-success-200 bg-success-50 px-3 py-1.5 dark:border-success-800 dark:bg-success-900/20">
                   <p class="text-xs font-medium text-success-800 dark:text-success-300">{{ s.serialNumber }}</p>
-                  <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}</p>
+                  <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
                 </div>
               }
             </div>
@@ -1153,7 +1159,7 @@
               @for (s of csvPreviewResult.alreadyInstalled; track s.serialNumber) {
                 <div class="rounded border border-brand-200 bg-brand-50 px-3 py-1.5 dark:border-brand-800 dark:bg-brand-900/20">
                   <p class="text-xs font-medium text-brand-800 dark:text-brand-300">{{ s.serialNumber }}</p>
-                  <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}</p>
+                  <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
                 </div>
               }
             </div>
@@ -1181,7 +1187,7 @@
               @for (s of csvPreviewResult.otherStatus; track s.serialNumber) {
                 <div class="rounded border border-warning-200 bg-warning-50 px-3 py-1.5 dark:border-warning-800 dark:bg-warning-900/20">
                   <p class="text-xs font-medium text-warning-800 dark:text-warning-300">{{ s.serialNumber }}</p>
-                  <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}</p>
+                  <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
                   <p class="text-[11px] text-gray-500">CSV: {{ s.csvStatus }} | DB: {{ s.dbStatus }}</p>
                 </div>
               }

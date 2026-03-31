@@ -382,4 +382,9 @@ export class RbacService {
     const n = Number(raw);
     return isNaN(n) || n === 0 ? null : n;
   }
+
+  isAdminOrSuperAdmin(): boolean {
+    const role = String(this.getPayload()?.roleName ?? '').trim().toLowerCase();
+    return role === 'superadmin' || role === 'super admin' || role === 'admin';
+  }
 }
