@@ -1069,14 +1069,14 @@
 
 <!-- CSV Upload Modal -->
 @if (isCsvModalOpen) {
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+  <div class="fixed inset-0 z-[100000] flex items-center justify-center bg-black/50 p-4">
     <div class="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-xl bg-white shadow-xl dark:bg-gray-900">
 
       <!-- Header -->
       <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-700">
         <div>
           <h3 class="text-base font-semibold text-gray-800 dark:text-white">CSV Serial Number Upload</h3>
-          <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Upload a CSV file with one serial number per line to bulk mark as installed</p>
+          <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">CSV format: serialNumber,unitType,status</p>
         </div>
         <button type="button" (click)="closeCsvModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
           <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -1089,7 +1089,7 @@
         @if (!csvPreviewResult) {
           <div class="flex flex-col items-center gap-3 rounded-lg border-2 border-dashed border-gray-300 py-8 dark:border-gray-600">
             <svg class="h-10 w-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-            <p class="text-sm text-gray-500 dark:text-gray-400">One serial number per line (or comma-separated)</p>
+            <p class="text-sm text-gray-500 dark:text-gray-400">Format: serialNumber,unitType,status (one per line)</p>
             <button type="button" (click)="triggerCsvFileInput()" [disabled]="isCsvParsing"
               class="rounded-lg border border-brand-300 bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">
               {{ isCsvParsing ? 'Processing...' : 'Choose CSV File' }}
@@ -1123,7 +1123,23 @@
               <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Other Status</p>
             </div>
           </div>
-          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Total in CSV: {{ csvPreviewResult.summary.total }} serials</p>
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Total in CSV: {{ csvPreviewResult!.summary.total }} serials</p>
+          <div class="mt-2 flex flex-wrap gap-3 text-xs">
+            <span class="rounded bg-gray-100 px-2 py-1 dark:bg-gray-800">
+              <span class="font-medium text-gray-700 dark:text-gray-200">Total Sets:</span>
+              <span class="ml-1 text-gray-600 dark:text-gray-300">{{ csvPreviewResult!.summary.totalSets }}</span>
+            </span>
+            <span class="rounded bg-gray-100 px-2 py-1 dark:bg-gray-800">
+              <span class="font-medium text-gray-700 dark:text-gray-200">Remaining Stocks:</span>
+              <span class="ml-1 text-gray-600 dark:text-gray-300">{{ csvPreviewResult!.summary.remainingStocks }}</span>
+            </span>
+            @for (entry of (csvPreviewResult!.summary.unitTypeCounts | keyvalue); track entry.key) {
+              <span class="rounded bg-brand-50 px-2 py-1 dark:bg-brand-900/20">
+                <span class="font-medium uppercase text-brand-700 dark:text-brand-300">{{ entry.key }}:</span>
+                <span class="ml-1 text-brand-600 dark:text-brand-400">{{ entry.value }}</span>
+              </span>
+            }
+          </div>
         }
         @if (csvConfirmError) {
           <p class="mt-2 text-xs text-error-600 dark:text-error-400">{{ csvConfirmError }}</p>
@@ -1137,7 +1153,18 @@
       @if (csvPreviewResult) {
         <div class="min-h-0 flex-1 overflow-y-auto px-6 py-3">
           @if (csvModalTab === 'will-install') {
-            <p class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">CSV status = installed but not yet in DB:</p>
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">CSV status = installed but not yet in DB. Move to:</p>
+              <select [(ngModel)]="csvToInstallTargetStatus" class="rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800">
+                <option value="installed">installed</option>
+                <option value="in-stock">in-stock</option>
+                <option value="reserved">reserved</option>
+              </select>
+              <button type="button" (click)="confirmCsvInstall()" [disabled]="isCsvConfirming || csvPreviewResult!.toInstall.length === 0"
+                class="rounded-lg border border-success-300 bg-success-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-success-600 disabled:opacity-60">
+                {{ isCsvConfirming ? 'Updating...' : 'Apply to ' + csvPreviewResult!.toInstall.length + ' Serials' }}
+              </button>
+            </div>
             @if (csvPreviewResult.toInstall.length === 0) {
               <p class="text-sm text-gray-400">None</p>
             }
@@ -1151,7 +1178,17 @@
             </div>
           }
           @if (csvModalTab === 'already-installed') {
-            <p class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">Already marked as installed — no change needed:</p>
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Already installed in DB. Revert to:</p>
+              <select [(ngModel)]="csvAlreadyInstalledTargetStatus" class="rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800">
+                <option value="in-stock">in-stock</option>
+                <option value="reserved">reserved</option>
+              </select>
+              <button type="button" (click)="revertInstalledToStock()" [disabled]="isCsvRevertingInstalled || csvPreviewResult!.alreadyInstalled.length === 0"
+                class="rounded-lg border border-warning-300 bg-warning-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-warning-600 disabled:opacity-60">
+                {{ isCsvRevertingInstalled ? 'Reverting...' : 'Revert ' + csvPreviewResult!.alreadyInstalled.length + ' Serials' }}
+              </button>
+            </div>
             @if (csvPreviewResult.alreadyInstalled.length === 0) {
               <p class="text-sm text-gray-400">None</p>
             }
@@ -1165,7 +1202,17 @@
             </div>
           }
           @if (csvModalTab === 'not-found') {
-            <p class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">These serials do not exist in the database:</p>
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Not in DB. Insert as:</p>
+              <select [(ngModel)]="csvNotFoundTargetStatus" class="rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800">
+                <option value="in-stock">in-stock</option>
+              </select>
+              <button type="button" (click)="insertNotFoundAsInStock()" [disabled]="isCsvInsertingNotFound || csvPreviewResult!.notFound.length === 0"
+                class="rounded-lg border border-error-300 bg-error-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-error-600 disabled:opacity-60">
+                {{ isCsvInsertingNotFound ? 'Inserting...' : 'Insert ' + csvPreviewResult!.notFound.length + ' Serials (No PO)' }}
+              </button>
+            </div>
+            <p class="mb-2 text-[11px] text-warning-600 dark:text-warning-400">Note: inserted serials will have no PO or dealer linkage.</p>
             @if (csvPreviewResult.notFound.length === 0) {
               <p class="text-sm text-gray-400">None</p>
             }
@@ -1173,13 +1220,13 @@
               @for (s of csvPreviewResult.notFound; track s.serialNumber) {
                 <div class="rounded border border-error-200 bg-error-50 px-3 py-1.5 dark:border-error-800 dark:bg-error-900/20">
                   <p class="text-xs font-medium text-error-800 dark:text-error-300">{{ s.serialNumber }}</p>
-                  <p class="text-[11px] text-gray-500">CSV status: {{ s.csvStatus || '—' }}</p>
+                  <p class="text-[11px] text-gray-500">CSV unitType: {{ s.csvUnitType || '—' }} | CSV status: {{ s.csvStatus || '—' }}</p>
                 </div>
               }
             </div>
           }
           @if (csvModalTab === 'other') {
-            <p class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">These serials have a status that won't be auto-updated:</p>
+            <p class="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">These serials have a conflicting status - no action taken. Review manually:</p>
             @if (csvPreviewResult.otherStatus.length === 0) {
               <p class="text-sm text-gray-400">None</p>
             }
@@ -1215,12 +1262,6 @@
             class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300">
             Close
           </button>
-          @if (csvPreviewResult && csvPreviewResult.toInstall.length > 0) {
-            <button type="button" (click)="confirmCsvInstall()" [disabled]="isCsvConfirming"
-              class="rounded-lg border border-success-300 bg-success-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-success-600 disabled:opacity-60">
-              {{ isCsvConfirming ? 'Installing...' : 'Confirm & Install ' + csvPreviewResult.toInstall.length + ' Serials' }}
-            </button>
-          }
         </div>
       </div>
 

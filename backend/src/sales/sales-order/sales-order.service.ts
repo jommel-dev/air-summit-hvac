@@ -34,6 +34,27 @@ type SalesPaymentMethod =
   | 'Credit Card'
   | 'Installment';
 
+type DailyReleaseSourceRow = {
+  rowNumber: number;
+  sourceRowNumbers: number[];
+  date: string;
+  dailySalesTeam: string;
+  customerName: string;
+  unitHp: string;
+  salesName: string;
+  indoorSerial: string;
+  outdoorSerial: string;
+  remarks: string;
+};
+
+type ProductCapacityCatalogItem = {
+  productId: number;
+  capacityId: number;
+  brandName: string;
+  productName: string;
+  capacity: string;
+};
+
 @Injectable()
 export class SalesOrderService {
   constructor(
@@ -276,6 +297,88 @@ export class SalesOrderService {
       .replace(/\s+/g, ' ');
   }
 
+  private isMigrationSerialPlaceholder(value: unknown): boolean {
+    const raw = this.normalizeSerialNumber(value).toLowerCase();
+    if (!raw) {
+      return true;
+    }
+
+    const compact = raw.replace(/[^a-z0-9]/g, '');
+    const placeholders = new Set([
+      'na',
+      'none',
+      'null',
+      'nil',
+      'noserial',
+      'unknown',
+      'tbd',
+      'return',
+      'indooronly',
+      'outdooronly',
+      '-',
+    ]);
+
+    return placeholders.has(compact);
+  }
+
+  private splitMigrationSerialValues(value: unknown): { valid: string[]; ignored: string[] } {
+    const tokens = String(value ?? '')
+      .split(/[,;]/)
+      .map((entry) => this.normalizeSerialNumber(entry))
+      .filter((entry) => entry.length > 0);
+
+    const valid: string[] = [];
+    const ignored: string[] = [];
+
+    for (const token of tokens) {
+      if (this.isMigrationSerialPlaceholder(token)) {
+        ignored.push(token);
+      } else {
+        valid.push(token);
+      }
+    }
+
+    return { valid, ignored };
+  }
+
+  private sanitizeMigrationPayloadSerials(payload: CreateSalesOrderDto): CreateSalesOrderDto {
+    const cloned = {
+      ...payload,
+      productItems: Array.isArray(payload.productItems)
+        ? payload.productItems.map((item) => {
+            const serialPayload =
+              item?.serialNumbers && typeof item.serialNumbers === 'object'
+                ? (item.serialNumbers as Record<string, unknown>)
+                : {};
+
+            const nextSerialPayload: Record<string, unknown> = {};
+            for (const [key, value] of Object.entries(serialPayload)) {
+              if (key.toLowerCase() === 'status') {
+                nextSerialPayload[key] = value;
+                continue;
+              }
+
+              const values = Array.isArray(value) ? value : [];
+              const sanitized = values
+                .map((entry) => this.normalizeSerialNumber(entry))
+                .filter((entry) => entry.length > 0 && !this.isMigrationSerialPlaceholder(entry));
+
+              if (sanitized.length > 0) {
+                nextSerialPayload[key] = sanitized;
+              }
+            }
+
+            return {
+              ...item,
+              serialNumbers: nextSerialPayload,
+            };
+          })
+        : [],
+    };
+
+    return cloned as CreateSalesOrderDto;
+  }
+
   private toSalesPaymentMethod(value: unknown): SalesPaymentMethod {
     const normalized = String(value ?? '')
       .trim()
@@ -318,6 +421,716 @@ export class SalesOrderService {
     }
 
     return 'unpaid';
+  }
+
+  private normalizeHeaderKey(value: unknown): string {
+    return String(value ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+  }
+
+  private pickRowField(row: Record<string, unknown>, aliases: string[]): string {
+    const normalizedAliases = new Set(aliases.map((alias) => this.normalizeHeaderKey(alias)));
+    for (const [key, value] of Object.entries(row)) {
+      if (normalizedAliases.has(this.normalizeHeaderKey(key))) {
+        return String(value ?? '').trim();
+      }
+    }
+
+    return '';
+  }
+
+  private normalizeMigrationSourceRow(raw: Record<string, unknown>, rowNumber: number): DailyReleaseSourceRow {
+    return {
+      rowNumber,
+      sourceRowNumbers: [rowNumber],
+      date: this.pickRowField(raw, ['date', 'release_date']),
+      dailySalesTeam: this.pickRowField(raw, ['daily sales/team', 'daily_sales_team', 'team']),
+      customerName: this.pickRowField(raw, ['customer name', 'customer_name', 'customer']),
+      unitHp: this.pickRowField(raw, ['unit/hp', 'unit_hp', 'unit']),
+      salesName: this.pickRowField(raw, ['sales name', 'sales_name', 'sales']),
+      indoorSerial: this.pickRowField(raw, ['indoor serial', 'indoor_serial', 'indoor']),
+      outdoorSerial: this.pickRowField(raw, ['outdoor serial', 'outdoor_serial', 'outdoor']),
+      remarks: this.pickRowField(raw, ['remarks', 'note', 'notes']),
+    };
+  }
+
+  private aggregateMigrationSourceRows(rows: Array<Record<string, unknown>>): DailyReleaseSourceRow[] {
+    const groups = new Map<
+      string,
+      {
+        source: DailyReleaseSourceRow;
+        indoorSerials: string[];
+        outdoorSerials: string[];
+      }
+    >();
+
+    const splitSerialRaw = (value: string): string[] =>
+      String(value ?? '')
+        .split(/[,;]/)
+        .map((entry) => this.normalizeSerialNumber(entry))
+        .filter((entry) => entry.length > 0);
+
+    const keyFor = (source: DailyReleaseSourceRow): string =>
+      [
+        source.date,
+        source.dailySalesTeam,
+        source.customerName,
+        source.unitHp,
+        source.salesName,
+        source.remarks,
+      ]
+        .map((value) => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' '))
+        .join('|');
+
+    for (let index = 0; index < rows.length; index++) {
+      const source = this.normalizeMigrationSourceRow(rows[index] ?? {}, index + 1);
+      const key = keyFor(source);
+      const indoorSerials = splitSerialRaw(source.indoorSerial);
+      const outdoorSerials = splitSerialRaw(source.outdoorSerial);
+
+      const existing = groups.get(key);
+      if (!existing) {
+        groups.set(key, {
+          source: {
+            ...source,
+            sourceRowNumbers: [source.rowNumber],
+          },
+          indoorSerials,
+          outdoorSerials,
+        });
+        continue;
+      }
+
+      existing.source.sourceRowNumbers.push(source.rowNumber);
+      existing.indoorSerials.push(...indoorSerials);
+      existing.outdoorSerials.push(...outdoorSerials);
+    }
+
+    return [...groups.values()].map((entry) => {
+      const uniqueIndoor = [...new Set(entry.indoorSerials)];
+      const uniqueOutdoor = [...new Set(entry.outdoorSerials)];
+
+      return {
+        ...entry.source,
+        rowNumber: entry.source.sourceRowNumbers[0],
+        sourceRowNumbers: [...entry.source.sourceRowNumbers],
+        indoorSerial: uniqueIndoor.join(', '),
+        outdoorSerial: uniqueOutdoor.join(', '),
+      };
+    });
+  }
+
+  private normalizeCapacityKey(raw: string): string {
+    const source = String(raw ?? '').trim().toUpperCase();
+    const hpMatch = source.match(/(\d+(?:\.\d+)?)\s*HP/);
+    if (hpMatch) {
+      return `${hpMatch[1]}HP`;
+    }
+
+    const trMatch = source.match(/(\d+(?:\.\d+)?)\s*TR/);
+    if (trMatch) {
+      return `${trMatch[1]}TR`;
+    }
+
+    return source.replace(/\s+/g, '');
+  }
+
+  private parseUnitHp(raw: string): { capacityKey: string; productHint: string } {
+    const normalized = String(raw ?? '').trim();
+    if (!normalized) {
+      return { capacityKey: '', productHint: '' };
+    }
+
+    const leadingCapacityMatch = normalized.match(/^(\d+(?:\.\d+)?)\s*(HP|TR)\b\s*(.*)$/i);
+    if (leadingCapacityMatch) {
+      const trailingHint = String(leadingCapacityMatch[3] ?? '').trim().toLowerCase();
+      return {
+        capacityKey: this.normalizeCapacityKey(`${leadingCapacityMatch[1]}${leadingCapacityMatch[2]}`),
+        productHint: trailingHint,
+      };
+    }
+
+    const trailingCapacityMatch = normalized.match(/^(.*?)\s*(\d+(?:\.\d+)?)\s*(HP|TR)\b$/i);
+    if (trailingCapacityMatch) {
+      const leadingHint = String(trailingCapacityMatch[1] ?? '').trim().toLowerCase();
+      return {
+        capacityKey: this.normalizeCapacityKey(`${trailingCapacityMatch[2]}${trailingCapacityMatch[3]}`),
+        productHint: leadingHint,
+      };
+    }
+
+    const parts = normalized.split('/');
+    const left = String(parts[0] ?? '').trim();
+    const right = String(parts.slice(1).join('/') ?? '').trim();
+
+    return {
+      capacityKey: this.normalizeCapacityKey(left),
+      productHint: right.toLowerCase(),
+    };
+  }
+
+  private parseMultipleUnitHp(raw: string): Array<{ capacityKey: string; productHint: string }> {
+    const normalized = String(raw ?? '').trim();
+    if (!normalized) return [{ capacityKey: '', productHint: '' }];
+
+    // No slash — allow both capacity-first and capacity-last patterns.
+    if (!normalized.includes('/')) {
+      return [this.parseUnitHp(normalized)];
+    }
+
+    // Walk slash-separated parts; each HP/TR token starts a new spec
+    const parts = normalized.split('/');
+    const specs: Array<{ capacityKey: string; productHint: string }> = [];
+    let currentCapacityRaw = '';
+    let currentHintParts: string[] = [];
+
+    const flushSpec = (): void => {
+      if (currentCapacityRaw) {
+        specs.push({
+          capacityKey: this.normalizeCapacityKey(currentCapacityRaw),
+          productHint: currentHintParts.join(' ').trim().toLowerCase(),
+        });
+      }
+    };
+
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (/^\d+(\.\d+)?\s*(HP|TR)/i.test(trimmed)) {
+        flushSpec();
+        currentCapacityRaw = trimmed;
+        currentHintParts = [];
+      } else {
+        currentHintParts.push(trimmed);
+      }
+    }
+    flushSpec();
+
+    return specs.length > 0 ? specs : [{ capacityKey: this.normalizeCapacityKey(normalized), productHint: '' }];
+  }
+
+  private normalizeMigrationUnitType(value: unknown): string {
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (!raw) return '';
+    if (raw.includes('indoor')) return 'indoor';
+    if (raw.includes('outdoor')) return 'outdoor';
+    if (raw.includes('window')) return 'window';
+    if (raw.includes('set')) return 'set';
+    return raw;
+  }
+
+  private async loadSerialUnitTypeMap(serials: string[]): Promise<Map<string, string>> {
+    const normalizedSerials = [...new Set(
+      (serials ?? [])
+        .map((serial) => this.normalizeSerialNumber(serial).toLowerCase())
+        .filter((serial) => serial.length > 0),
+    )];
+
+    const map = new Map<string, string>();
+    if (normalizedSerials.length === 0) {
+      return map;
+    }
+
+    const serialColumns = await this.getTableColumns(this.databaseService, 'tblserial_numbers');
+    const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+    const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+
+    if (!serialNumberColumn || !serialUnitTypeColumn) {
+      return map;
+    }
+
+    const result = await this.databaseService.query<{ serial: string; unit_type: string | null }>(
+      `SELECT
+         LOWER(regexp_replace(BTRIM(COALESCE("${serialNumberColumn}"::text, '')), '\\s+', ' ', 'g')) AS serial,
+         COALESCE("${serialUnitTypeColumn}"::text, '') AS unit_type
+       FROM tblserial_numbers
+       WHERE LOWER(regexp_replace(BTRIM(COALESCE("${serialNumberColumn}"::text, '')), '\\s+', ' ', 'g')) = ANY($1::text[])`,
+      [normalizedSerials],
+    );
+
+    for (const row of result.rows) {
+      const serial = this.normalizeSerialNumber(row.serial).toLowerCase();
+      const unitType = this.normalizeMigrationUnitType(row.unit_type);
+      if (serial && unitType) {
+        map.set(serial, unitType);
+      }
+    }
+
+    return map;
+  }
+
+  private inferPaymentMethodFromRemarks(remarks: string): SalesPaymentMethod | undefined {
+    const text = String(remarks ?? '').trim().toLowerCase();
+    if (!text) return undefined;
+
+    if (text.includes('cash')) return 'Cash';
+    if (text.includes('bank transfer') || text.includes('online') || text.includes('gcash')) return 'Bank Transfer';
+    if (text.includes('terms with dp') || text.includes(' dp')) return 'Terms with DP';
+    if (text.includes('terms')) return 'Terms';
+    if (text.includes('cheque') || text.includes('check')) return 'Cheque';
+    if (text.includes('credit card') || text.includes('credit')) return 'Credit Card';
+    if (text.includes('installment')) return 'Installment';
+
+    return undefined;
+  }
+
+  private getMigrationOnlyModeFromRemarks(remarks: string): 'indoor' | 'outdoor' | null {
+    const text = String(remarks ?? '').trim().toLowerCase();
+    if (!text) return null;
+
+    if (text.includes('indoor only')) return 'indoor';
+    if (text.includes('outdoor only')) return 'outdoor';
+
+    return null;
+  }
+
+  private inferSalesTypeFromTeam(team: string): string {
+    const normalized = String(team ?? '').trim().toLowerCase();
+    if (normalized.includes('sub dealer') || normalized.includes('sub-dealer')) {
+      return 'sub-dealer';
+    }
+    return 'sales';
+  }
+
+  private async loadProductCapacityCatalog(): Promise<ProductCapacityCatalogItem[]> {
+    const result = await this.databaseService.query<{
+      productId: string;
+      capacityId: string;
+      brandName: string | null;
+      productName: string | null;
+      capacity: string | null;
+    }>(
+      `SELECT
+         p.id::text AS "productId",
+         c.id::text AS "capacityId",
+         COALESCE(to_jsonb(b)->>'name', to_jsonb(b)->>'brandName', to_jsonb(b)->>'brand_name', '') AS "brandName",
+         COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', '') AS "productName",
+         COALESCE(to_jsonb(c)->>'capacity', '') AS "capacity"
+       FROM tblcapacity c
+       JOIN tblproducts p
+         ON p.id::text = COALESCE(
+           to_jsonb(c)->>'prodId',
+           to_jsonb(c)->>'prod_id',
+           to_jsonb(c)->>'productId',
+           to_jsonb(c)->>'product_id'
+         )
+       LEFT JOIN tblbrands b
+         ON b.id::text = COALESCE(to_jsonb(p)->>'brandId', to_jsonb(p)->>'brand_id')`,
+    );
+
+    return result.rows
+      .map((row) => ({
+        productId: Number(row.productId),
+        capacityId: Number(row.capacityId),
+        brandName: String(row.brandName ?? '').trim(),
+        productName: String(row.productName ?? '').trim(),
+        capacity: String(row.capacity ?? '').trim(),
+      }))
+      .filter((row) => Number.isFinite(row.productId) && Number.isFinite(row.capacityId));
+  }
+
+  private async loadCustomerNameMap(): Promise<Map<string, string>> {
+    const result = await this.databaseService.query<{ id: string; name: string | null }>(
+      `SELECT
+         c.id::text AS id,
+         COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '') AS name
+       FROM tblcustomer c`,
+    );
+
+    const map = new Map<string, string>();
+    for (const row of result.rows) {
+      const key = String(row.name ?? '').trim().toLowerCase();
+      if (key) {
+        map.set(key, row.id);
+      }
+    }
+
+    return map;
+  }
+
+  private findBestCatalogMatch(
+    catalog: ProductCapacityCatalogItem[],
+    capacityKey: string,
+    productHint: string,
+  ): { match: ProductCapacityCatalogItem | null; ambiguous: boolean } {
+    const sameCapacity = catalog.filter((item) => this.normalizeCapacityKey(item.capacity) === capacityKey);
+    if (sameCapacity.length === 0) {
+      return { match: null, ambiguous: false };
+    }
+
+    if (!productHint) {
+      return { match: null, ambiguous: sameCapacity.length > 1 };
+    }
+
+    const normalizeMatcherText = (value: string): string =>
+      String(value ?? '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim()
+        .replace(/\s+/g, ' ');
+    const canonicalToken = (token: string): string => {
+      const normalized = String(token ?? '').toLowerCase().trim();
+      if (normalized.length > 4 && normalized.endsWith('es')) {
+        return normalized.slice(0, -2);
+      }
+      if (normalized.length > 3 && normalized.endsWith('s')) {
+        return normalized.slice(0, -1);
+      }
+      return normalized;
+    };
+    const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const normalizedHint = normalizeMatcherText(productHint);
+    const hintTokensRaw = normalizedHint
+      .split(' ')
+      .filter((token) => token.length > 0);
+    const hintTokens = [...new Set(hintTokensRaw.map(canonicalToken).filter((token) => token.length > 0))];
+    const hintTokenSet = new Set(hintTokens);
+    const hintNumericTokens = hintTokens.filter((token) => /^\d+$/.test(token));
+
+    const hintedBrandCandidates = [...new Set(
+      sameCapacity
+        .map((item) => normalizeMatcherText(item.brandName))
+        .filter((brand) => brand.length > 0)
+        .filter((brand) => {
+          const brandTokens = brand
+            .split(' ')
+            .map(canonicalToken)
+            .filter((token) => token.length > 0);
+          return brandTokens.some((token) => hintTokenSet.has(token));
+        }),
+    )];
+
+    const ranked = sameCapacity
+      .map((item) => {
+        const haystack = normalizeMatcherText(`${item.brandName} ${item.productName}`);
+        const candidateTokens = haystack
+          .split(' ')
+          .map(canonicalToken)
+          .filter((token) => token.length > 0);
+        const candidateTokenSet = new Set(candidateTokens);
+        const normalizedBrand = normalizeMatcherText(item.brandName);
+        const candidateBrandTokens = normalizedBrand
+          .split(' ')
+          .map(canonicalToken)
+          .filter((token) => token.length > 0);
+        let score = 0;
+
+        for (const token of hintTokens) {
+          const tokenRegex = new RegExp(`\\b${escapeRegex(token)}\\b`, 'i');
+          if (tokenRegex.test(haystack)) {
+            score += /^\d+$/.test(token) ? 8 : 6;
+          } else if (haystack.includes(token)) {
+            score += 2;
+          }
+        }
+
+        if (haystack === normalizedHint) {
+          score += 100;
+        } else if (haystack.startsWith(`${normalizedHint} `)) {
+          score += 40;
+        } else if (haystack.includes(` ${normalizedHint} `) || haystack.endsWith(` ${normalizedHint}`)) {
+          score += 30;
+        }
+
+        for (const numericToken of hintNumericTokens) {
+          if (!candidateTokenSet.has(numericToken)) {
+            score -= 15;
+          }
+        }
+
+        const extraNumericTokenCount = candidateTokens.filter(
+          (token) => /^\d+$/.test(token) && !hintTokenSet.has(token),
+        ).length;
+        if (extraNumericTokenCount > 0) {
+          score -= extraNumericTokenCount * 5;
+        }
+
+        if (hintedBrandCandidates.length > 0) {
+          const brandMatchedHint = hintedBrandCandidates.some((brand) => {
+            const hintedBrandTokens = brand
+              .split(' ')
+              .map(canonicalToken)
+              .filter((token) => token.length > 0);
+            return hintedBrandTokens.some((token) => candidateBrandTokens.includes(token));
+          });
+
+          if (brandMatchedHint) {
+            score += 30;
+          } else {
+            score -= 30;
+          }
+        }
+
+        return { item, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    if (ranked.length === 0 || ranked[0].score <= 0) {
+      return { match: null, ambiguous: false };
+    }
+
+    if (ranked.length > 1 && ranked[0].score === ranked[1].score) {
+      return { match: null, ambiguous: true };
+    }
+
+    return { match: ranked[0].item, ambiguous: false };
+  }
+
+  async previewDailyReleaseMigration(rows: Array<Record<string, unknown>>) {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return {
+        success: false,
+        message: 'No migration rows provided.',
+        summary: null,
+        items: [],
+      };
+    }
+
+    const aggregatedSources = this.aggregateMigrationSourceRows(rows);
+
+    const migrationSerials = aggregatedSources.flatMap((source) => {
+      const indoorParsed = this.splitMigrationSerialValues(source.indoorSerial);
+      const outdoorParsed = this.splitMigrationSerialValues(source.outdoorSerial);
+      return [
+        ...indoorParsed.valid,
+        ...outdoorParsed.valid,
+      ];
+    });
+
+    const [catalog, customerMap, serialUnitTypeMap] = await Promise.all([
+      this.loadProductCapacityCatalog(),
+      this.loadCustomerNameMap(),
+      this.loadSerialUnitTypeMap(migrationSerials),
+    ]);
+
+    const items: Array<Record<string, unknown>> = [];
+    let highConfidence = 0;
+    let reviewNeeded = 0;
+    let rejected = 0;
+    let matchedCustomers = 0;
+
+    for (const source of aggregatedSources) {
+      const issues: string[] = [];
+
+      if (!source.customerName) issues.push('Missing customer name.');
+      if (!source.unitHp) issues.push('Missing UNIT/HP value.');
+
+      const scheduleDateIso = this.toIsoDateOrNull(source.date);
+      if (!scheduleDateIso) {
+        issues.push('Invalid date value.');
+      }
+
+      // Parse potentially multiple product specs from UNIT/HP
+      const specs = this.parseMultipleUnitHp(source.unitHp);
+
+      // Split serials by comma/semicolon to support multi-product rows
+      const indoorParsed = this.splitMigrationSerialValues(source.indoorSerial);
+      const outdoorParsed = this.splitMigrationSerialValues(source.outdoorSerial);
+      const onlyMode = this.getMigrationOnlyModeFromRemarks(source.remarks);
+      let indoorSerials = [...indoorParsed.valid];
+      let outdoorSerials = [...outdoorParsed.valid];
+
+      if (onlyMode === 'indoor') {
+        if (indoorSerials.length === 0 && outdoorSerials.length > 0) {
+          indoorSerials = [...outdoorSerials];
+        }
+        outdoorSerials = [];
+      }
+
+      if (onlyMode === 'outdoor') {
+        if (outdoorSerials.length === 0 && indoorSerials.length > 0) {
+          outdoorSerials = [...indoorSerials];
+        }
+        indoorSerials = [];
+      }
+
+      if (indoorParsed.ignored.length > 0 && onlyMode === null) {
+        issues.push(`Ignored indoor placeholder value(s): ${indoorParsed.ignored.join(', ')}`);
+      }
+      if (outdoorParsed.ignored.length > 0 && onlyMode === null) {
+        issues.push(`Ignored outdoor placeholder value(s): ${outdoorParsed.ignored.join(', ')}`);
+      }
+
+      if (indoorSerials.length === 0 && outdoorSerials.length === 0) {
+        issues.push('At least one serial (indoor/outdoor) is required.');
+      }
+
+      // Match each spec against the product catalog
+      const specMatches = specs.map((spec) => {
+        if (!spec.capacityKey) {
+          issues.push('Could not parse capacity from UNIT/HP.');
+          return { spec, match: null as ProductCapacityCatalogItem | null, ambiguous: false };
+        }
+        const { match, ambiguous } = this.findBestCatalogMatch(catalog, spec.capacityKey, spec.productHint);
+        if (!match) {
+          issues.push(
+            ambiguous
+              ? `Multiple candidates matched for ${spec.capacityKey}; review required.`
+              : `No product-capacity match found for ${spec.capacityKey}.`,
+          );
+        }
+        return { spec, match, ambiguous };
+      });
+
+      // Warn when serial count lags behind product count on multi-product rows
+      if (specs.length > 1) {
+        if (indoorSerials.length > 0 && indoorSerials.length < specs.length) {
+          issues.push(`${specs.length} products detected but only ${indoorSerials.length} indoor serial(s) provided.`);
+        }
+        if (outdoorSerials.length > 0 && outdoorSerials.length < specs.length) {
+          issues.push(`${specs.length} products detected but only ${outdoorSerials.length} outdoor serial(s) provided.`);
+        }
+      }
+
+      const customerId = customerMap.get(source.customerName.toLowerCase()) ?? null;
+      if (customerId) matchedCustomers += 1;
+
+      const inferredPaymentMethod = this.inferPaymentMethodFromRemarks(source.remarks) ?? 'Cash';
+      const inferredPaymentStatus = this.getAutoPaymentStatus(inferredPaymentMethod);
+      const salesType = this.inferSalesTypeFromTeam(source.dailySalesTeam);
+
+      let confidence: 'high' | 'medium' | 'rejected' = 'high';
+      if (issues.length > 0) {
+        confidence = issues.some(
+          (issue) =>
+            issue.includes('required') ||
+            issue.includes('Invalid date') ||
+            issue.includes('No product-capacity match'),
+        )
+          ? 'rejected'
+          : 'medium';
+      }
+
+      if (confidence === 'high') highConfidence += 1;
+      if (confidence === 'medium') reviewNeeded += 1;
+      if (confidence === 'rejected') rejected += 1;
+
+      // Build one productItem per matched spec, pairing serials positionally
+      const builtProductItems = specMatches
+        .filter((sm) => sm.match !== null)
+        .map((sm, i) => {
+          const indoor = indoorSerials[i] ?? '';
+          const outdoor = outdoorSerials[i] ?? '';
+          const indoorKey = this.normalizeSerialNumber(indoor).toLowerCase();
+          const outdoorKey = this.normalizeSerialNumber(outdoor).toLowerCase();
+          const fallbackIndoorType = onlyMode === 'indoor' ? 'indoor' : (outdoor ? 'indoor' : 'window');
+          const indoorUnitType = indoor
+            ? (serialUnitTypeMap.get(indoorKey) ?? fallbackIndoorType)
+            : '';
+          const outdoorUnitType = outdoor
+            ? (serialUnitTypeMap.get(outdoorKey) ?? 'outdoor')
+            : '';
+
+          const serialNumbers: Record<string, unknown> = { status: 'installed' };
+          const unitTypeCounts = new Map<string, number>();
+
+          const pushSerial = (unitType: string, serialValue: string): void => {
+            if (!unitType || !serialValue) return;
+            const key = unitType.toLowerCase();
+            if (!Array.isArray(serialNumbers[key])) {
+              serialNumbers[key] = [];
+            }
+            (serialNumbers[key] as string[]).push(serialValue);
+            unitTypeCounts.set(key, (unitTypeCounts.get(key) ?? 0) + 1);
+          };
+
+          pushSerial(indoorUnitType, indoor);
+          pushSerial(outdoorUnitType, outdoor);
+
+          const unitTypesQty = [...unitTypeCounts.entries()].map(([label, value]) => ({ label, value }));
+          const totalSetQty = Math.max(...unitTypesQty.map((entry) => entry.value), 1);
+
+          return {
+            transType: 'sales',
+            productId: sm.match!.productId,
+            capacityId: sm.match!.capacityId,
+            unitPrice: 0,
+            sellPrice: 0,
+            discountPrice: 0,
+            unitTypesQty,
+            totalSetQty,
+            purchaseId: null,
+            salesId: null,
+            serialNumbers,
+          };
+        });
+
+      const mappedPayload =
+        builtProductItems.length > 0 && confidence !== 'rejected'
+          ? {
+              customer_id: customerId,
+              customer: {
+                name: source.customerName,
+                customer_type: salesType === 'sub-dealer' ? 'sub_dealer' : 'regular',
+              },
+              scheduleDate: scheduleDateIso,
+              salesType,
+              installer: source.dailySalesTeam || undefined,
+              remarks: source.remarks || undefined,
+              status: 'remitted',
+              paymentDetails: [
+                {
+                  method: inferredPaymentMethod,
+                  amount: 0,
+                  status: inferredPaymentStatus,
+                },
+              ],
+              productItems: builtProductItems,
+            }
+          : null;
+
+      const firstMatch = specMatches.find((sm) => sm.match !== null)?.match ?? null;
+      const allMatchedCatalogs = specMatches
+        .filter((sm) => sm.match !== null)
+        .map((sm) => ({
+          productId: sm.match!.productId,
+          capacityId: sm.match!.capacityId,
+          brandName: sm.match!.brandName,
+          productName: sm.match!.productName,
+          capacity: sm.match!.capacity,
+        }));
+
+      items.push({
+        rowNumber: source.rowNumber,
+        mergedRowNumbers: source.sourceRowNumbers,
+        raw: source,
+        extracted: {
+          specs: specs.map((s) => s.capacityKey).join(', '),
+          customerId,
+          salesType,
+          inferredPaymentMethod,
+          productCount: specs.length,
+        },
+        matchedCatalog: firstMatch
+          ? {
+              productId: firstMatch.productId,
+              capacityId: firstMatch.capacityId,
+              brandName: firstMatch.brandName,
+              productName: firstMatch.productName,
+              capacity: firstMatch.capacity,
+            }
+          : null,
+        matchedCatalogs: allMatchedCatalogs,
+        confidence,
+        issues,
+        mappedPayload,
+      });
+    }
+
+    return {
+      success: true,
+      summary: {
+        total: aggregatedSources.length,
+        highConfidence,
+        reviewNeeded,
+        rejected,
+        matchedCustomers,
+        newCustomers: aggregatedSources.length - matchedCustomers,
+      },
+      items,
+    };
   }
 
   private toPositiveIntegerOrNull(value: unknown): number | null {
@@ -640,6 +1453,285 @@ export class SalesOrderService {
     }
 
     return Math.min(100, Math.floor(parsed));
+  }
+
+  private async findAlreadyLinkedSerials(productItems: Array<{ serialNumbers?: unknown }>): Promise<string[]> {
+    const serialColumns = await this.getTableColumns(this.databaseService, 'tblserial_numbers');
+    const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+    const salesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
+
+    if (!serialNumberColumn || !salesIdColumn) {
+      return [];
+    }
+
+    const normalizedSerials = [...new Set(
+      productItems
+        .flatMap((item) => {
+          const serialMap = item?.serialNumbers;
+          if (!serialMap || typeof serialMap !== 'object') return [];
+
+          return Object.entries(serialMap as Record<string, unknown>)
+            .filter(([key]) => key.toLowerCase() !== 'status')
+            .flatMap(([, value]) => (Array.isArray(value) ? value : []));
+        })
+        .map((value) => this.normalizeSerialNumber(value).toLowerCase())
+        .filter((value) => value.length > 0),
+    )];
+
+    if (normalizedSerials.length === 0) {
+      return [];
+    }
+
+    const result = await this.databaseService.query<{ serial: string }>(
+      `SELECT "${serialNumberColumn}"::text AS serial
+       FROM tblserial_numbers
+       WHERE LOWER(regexp_replace(BTRIM(COALESCE("${serialNumberColumn}"::text, '')), '\\s+', ' ', 'g')) = ANY($1::text[])
+         AND BTRIM(COALESCE("${salesIdColumn}"::text, '')) <> ''`,
+      [normalizedSerials],
+    );
+
+    const linkedSerials: string[] = result.rows
+      .map((row) => this.normalizeSerialNumber(row.serial))
+      .filter((serial) => serial.length > 0);
+
+    return [...new Set(linkedSerials)];
+  }
+
+  async importDailyReleaseMigration(
+    rows: Array<Record<string, unknown>>,
+    userId?: number,
+    branchId?: number,
+    selectedMediumRowNumbers: number[] = [],
+    editedPayloads: Array<{ rowNumber: number; payload: Record<string, unknown> }> = [],
+  ) {
+    const preview = await this.previewDailyReleaseMigration(rows);
+    if (!preview.success || !preview.summary) {
+      return {
+        success: false,
+        batchFailed: true,
+        message: preview.message ?? 'Failed to prepare migration import.',
+        summary: null,
+        items: [],
+      };
+    }
+
+    const importItems = Array.isArray(preview.items) ? preview.items : [];
+
+    const selectedMediumSet = new Set(
+      (selectedMediumRowNumbers ?? [])
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0),
+    );
+
+    const editedPayloadMap = new Map<number, CreateSalesOrderDto>();
+    for (const entry of editedPayloads ?? []) {
+      const rowNumber = Number(entry?.rowNumber ?? 0);
+      if (!Number.isFinite(rowNumber) || rowNumber <= 0) {
+        continue;
+      }
+
+      const payload = (entry?.payload ?? null) as unknown as CreateSalesOrderDto | null;
+      if (!payload || typeof payload !== 'object') {
+        continue;
+      }
+
+      editedPayloadMap.set(rowNumber, payload);
+    }
+
+    // Separate accepted vs skipped-review items
+    const skippedDetails: Array<Record<string, unknown>> = [];
+    const toImport: typeof importItems = [];
+
+    for (const item of importItems) {
+      const rowNumber = Number(item.rowNumber ?? 0);
+      const confidence = String(item.confidence ?? '').toLowerCase();
+      const previewPayload = item.mappedPayload as CreateSalesOrderDto | null;
+      const editedPayload = editedPayloadMap.get(rowNumber) ?? null;
+      const mappedPayloadRaw = editedPayload ?? previewPayload;
+      const mappedPayload = mappedPayloadRaw
+        ? this.sanitizeMigrationPayloadSerials(mappedPayloadRaw)
+        : null;
+      const canImportMedium = confidence === 'medium' && selectedMediumSet.has(rowNumber);
+      const canImportEdited = editedPayload !== null;
+
+      if ((!canImportEdited && confidence !== 'high' && !canImportMedium) || !mappedPayload) {
+        skippedDetails.push({
+          rowNumber,
+          status: 'skipped-review',
+          message:
+            canImportEdited
+              ? 'Edited payload is missing required data.'
+              : confidence === 'medium'
+              ? 'Medium-confidence row not selected for import.'
+              : 'Row is not importable from preview.',
+        });
+      } else {
+        toImport.push({
+          ...item,
+          mappedPayload,
+        });
+      }
+    }
+
+    // ── Phase 1: Pre-validate ALL accepted rows before creating any ───────────
+    // Build serial → row mapping so we can attribute duplicates back to source rows
+    const serialToRows = new Map<string, number[]>();
+    for (const item of toImport) {
+      const rowNumber = Number(item.rowNumber ?? 0);
+      const payload = item.mappedPayload as CreateSalesOrderDto;
+      const productItems = Array.isArray(payload?.productItems) ? payload.productItems : [];
+      for (const pi of productItems) {
+        const serialMap = pi?.serialNumbers;
+        if (!serialMap || typeof serialMap !== 'object') continue;
+        for (const [key, value] of Object.entries(serialMap as Record<string, unknown>)) {
+          if (key.toLowerCase() === 'status') continue;
+          if (!Array.isArray(value)) continue;
+          for (const serial of value) {
+            const normalized = this.normalizeSerialNumber(String(serial ?? '')).toLowerCase();
+            if (!normalized) continue;
+            if (!serialToRows.has(normalized)) serialToRows.set(normalized, []);
+            serialToRows.get(normalized)!.push(rowNumber);
+          }
+        }
+      }
+    }
+
+    // Batch-check all serials in one query
+    const allProductItems = toImport.flatMap((item) => {
+      const payload = item.mappedPayload as CreateSalesOrderDto;
+      return Array.isArray(payload?.productItems) ? payload.productItems : [];
+    });
+    const duplicateSerials = await this.findAlreadyLinkedSerials(allProductItems);
+
+    // Map duplicates back to their rows
+    const rowValidationErrors = new Map<number, string[]>();
+    for (const dupSerial of duplicateSerials) {
+      const normalized = this.normalizeSerialNumber(dupSerial).toLowerCase();
+      const affectedRows = serialToRows.get(normalized) ?? [];
+      for (const rowNum of affectedRows) {
+        if (!rowValidationErrors.has(rowNum)) rowValidationErrors.set(rowNum, []);
+        rowValidationErrors.get(rowNum)!.push(`Serial already linked to an existing SO: ${dupSerial}`);
+      }
+    }
+
+    if (rowValidationErrors.size > 0) {
+      // At least one row failed validation — abort entire batch, no rows created
+      const failedDetails = toImport.map((item) => {
+        const rowNum = Number(item.rowNumber ?? 0);
+        const failures = rowValidationErrors.get(rowNum);
+        if (failures) {
+          return { rowNumber: rowNum, status: 'failed', message: failures.join('; ') };
+        }
+        return {
+          rowNumber: rowNum,
+          status: 'blocked',
+          message: 'Import blocked: other rows in this batch have validation errors.',
+        };
+      });
+
+      return {
+        success: false,
+        batchFailed: true,
+        message: `Batch aborted: ${rowValidationErrors.size} row(s) failed validation. No rows were created.`,
+        summary: {
+          total: toImport.length,
+          created: 0,
+          failed: rowValidationErrors.size,
+          blocked: toImport.length - rowValidationErrors.size,
+          aborted: 0,
+          skippedReview: skippedDetails.length,
+        },
+        items: [...skippedDetails, ...failedDetails],
+      };
+    }
+
+    // ── Phase 2: All validated — create rows; abort remaining on first failure ──
+    const creationDetails: Array<Record<string, unknown>> = [];
+    let batchFailed = false;
+    let batchFailedRowNumber: number | null = null;
+
+    for (const item of toImport) {
+      const rowNum = Number(item.rowNumber ?? 0);
+
+      if (batchFailed) {
+        creationDetails.push({
+          rowNumber: rowNum,
+          status: 'aborted',
+          message: `Import aborted: row ${batchFailedRowNumber} failed before this row could be processed.`,
+        });
+        continue;
+      }
+
+      try {
+        const mappedPayload = item.mappedPayload as CreateSalesOrderDto;
+        (mappedPayload as unknown as Record<string, unknown>)['allowCreateMissingSerials'] = true;
+
+        const createdResult = await this.create(mappedPayload, userId, branchId);
+        if (createdResult?.success) {
+          creationDetails.push({
+            rowNumber: rowNum,
+            status: 'created',
+            salesOrderId: createdResult?.data?.salesOrderId ?? null,
+            message: createdResult?.message ?? 'Sales order created.',
+          });
+        } else {
+          batchFailed = true;
+          batchFailedRowNumber = rowNum;
+          creationDetails.push({
+            rowNumber: rowNum,
+            status: 'failed',
+            message: createdResult?.message ?? 'Failed to create sales order.',
+          });
+        }
+      } catch (error) {
+        batchFailed = true;
+        batchFailedRowNumber = rowNum;
+        creationDetails.push({
+          rowNumber: rowNum,
+          status: 'failed',
+          message: error instanceof Error ? error.message : 'Unexpected migration import error.',
+        });
+      }
+    }
+
+    if (batchFailed) {
+      const alreadyCreated = creationDetails.filter((d) => d.status === 'created').length;
+      const failedCount = creationDetails.filter((d) => d.status === 'failed').length;
+      const abortedCount = creationDetails.filter((d) => d.status === 'aborted').length;
+      const warningNote = alreadyCreated > 0
+        ? ` Warning: ${alreadyCreated} row(s) were already committed to the database before the failure and cannot be auto-rolled back.`
+        : ' No rows were created.';
+
+      return {
+        success: false,
+        batchFailed: true,
+        message: `Batch failed.${warningNote}`,
+        summary: {
+          total: toImport.length,
+          created: alreadyCreated,
+          failed: failedCount,
+          blocked: 0,
+          aborted: abortedCount,
+          skippedReview: skippedDetails.length,
+        },
+        items: [...skippedDetails, ...creationDetails],
+      };
+    }
+
+    return {
+      success: true,
+      batchFailed: false,
+      message: 'Migration import completed successfully.',
+      summary: {
+        total: toImport.length,
+        created: toImport.length,
+        failed: 0,
+        blocked: 0,
+        aborted: 0,
+        skippedReview: skippedDetails.length,
+      },
+      items: [...skippedDetails, ...creationDetails],
+    };
   }
 
   private normalizeUnitTypesQty(value: unknown): Array<{ label: string; value: number }> {
@@ -1053,6 +2145,7 @@ export class SalesOrderService {
     let transferPOPayload: any = null;
     let transferPOBranchId: number | undefined = undefined;
     const payload = createSalesOrderDto;
+    const allowCreateMissingSerials = Boolean((payload as unknown as Record<string, unknown>)['allowCreateMissingSerials']);
     const status = String(payload.status ?? 'pending').trim() || (
       ['service', 'concern', 'sales and service'].includes(String(payload.salesType ?? '').toLowerCase())
         ? 'after_sales'
@@ -1300,6 +2393,17 @@ export class SalesOrderService {
 
         const serialColumns = await this.getTableColumns(client, 'tblserial_numbers');
         const serialCustomerIdColumn = this.pickColumn(serialColumns, ['customerId', 'customer_id']);
+        const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+        const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
+        const serialProductIdColumn = this.pickColumn(serialColumns, ['productId', 'product_id']);
+        const serialCapacityIdColumn = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
+        const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+        const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+        const serialBranchIdColumn = this.pickColumn(serialColumns, ['branchId', 'branch_id']);
+        const serialCreatedByColumn = this.pickColumn(serialColumns, ['created_by', 'createdBy']);
+        const serialDealerIdColumn = this.pickColumn(serialColumns, ['dealerId', 'dealer_id']);
+        const serialPoIdColumn = this.pickColumn(serialColumns, ['purchaseOrderId', 'purchase_order_id', 'po_id']);
+        const serialPoNoColumn = this.pickColumn(serialColumns, ['purchaseOrderNo', 'purchase_order_no', 'po_no']);
 
         const transactionItemColumns = await this.getTableColumns(client, 'tbltransaction_product_items');
         if (transactionItemColumns.length > 0) {
@@ -1375,7 +2479,34 @@ export class SalesOrderService {
                 );
 
                 if (existingSerialResult.rowCount === 0) {
-                  throw new Error(`Serial number ${normalizedSerial} was not found in inventory`);
+                  if (!allowCreateMissingSerials) {
+                    throw new Error(`Serial number ${normalizedSerial} was not found in inventory`);
+                  }
+
+                  if (!serialNumberColumn) {
+                    throw new Error('Serial number column is not configured in tblserial_numbers');
+                  }
+
+                  const insertRecord: Record<string, unknown> = {
+                    [serialNumberColumn]: normalizedSerial,
+                  };
+
+                  if (serialBranchIdColumn) insertRecord[serialBranchIdColumn] = branchId ?? null;
+                  if (serialSalesIdColumn) insertRecord[serialSalesIdColumn] = salesOrderId;
+                  if (serialProductIdColumn) insertRecord[serialProductIdColumn] = productId;
+                  if (serialCapacityIdColumn) insertRecord[serialCapacityIdColumn] = capacityId;
+                  if (serialUnitTypeColumn) insertRecord[serialUnitTypeColumn] = unitTypeKey;
+                  if (serialStatusColumn) insertRecord[serialStatusColumn] = serialStatus;
+                  if (serialCustomerIdColumn) insertRecord[serialCustomerIdColumn] = customerId;
+                  if (serialCreatedByColumn) insertRecord[serialCreatedByColumn] = userId ?? null;
+
+                  // Migration-created serials are intentionally unlinked to PO/dealer sources.
+                  if (serialDealerIdColumn) insertRecord[serialDealerIdColumn] = null;
+                  if (serialPoIdColumn) insertRecord[serialPoIdColumn] = null;
+                  if (serialPoNoColumn) insertRecord[serialPoNoColumn] = null;
+
+                  await this.runInsert(client, 'tblserial_numbers', insertRecord);
+                  continue;
                 }
 
                 const existingSerial = existingSerialResult.rows[0];
