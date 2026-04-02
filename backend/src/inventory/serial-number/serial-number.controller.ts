@@ -42,9 +42,22 @@ export class SerialNumberController {
     return normalizedTokenBranchId;
   }
 
+  @Post('insert-bulk')
+  @UseGuards(JwtAuthGuard)
+  insertBulk(
+    @Body() body: { serials: Array<{ serialNumber: string; unitType?: string; status?: string }> },
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const role = String(request.user?.roleName ?? '').trim().toLowerCase();
+    if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
+      return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
+    }
+    return this.serialNumberService.insertBulk(body.serials);
+  }
+
   @Post('csv-preview')
   csvPreview(
-    @Body() body: { rows: Array<{ serialNumber: string; status: string }> },
+    @Body() body: { rows: Array<{ serialNumber: string; unitType?: string; status: string }> },
     @Req() request: { user?: Record<string, unknown> },
   ) {
     const role = String(request.user?.roleName ?? '').trim().toLowerCase();

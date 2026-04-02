@@ -1450,10 +1450,57 @@ export class SerialNumberService {
     };
   }
 
-  async csvPreview(rows: Array<{ serialNumber: string; status: string }>) {
+  async insertBulk(serials: Array<{ serialNumber: string; unitType?: string; status?: string }>) {
+    if (!serials || serials.length === 0) {
+      return { success: false, message: 'No serials provided' };
+    }
+
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+    const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+    const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+
+    if (!serialNumberColumn) {
+      return { success: false, message: 'Serial number column not found' };
+    }
+
+    let inserted = 0;
+    let skipped = 0;
+
+    for (const s of serials) {
+      const sn = this.normalizeSerialNumber(s.serialNumber);
+      if (!sn) { skipped++; continue; }
+
+      // Check if already exists
+      const existing = await this.databaseService.query<{ id: number }>(
+        `SELECT id FROM tblserial_numbers
+         WHERE LOWER(regexp_replace(BTRIM(COALESCE("serialNumber", '')), '\\s+', ' ', 'g')) = LOWER($1)
+         LIMIT 1`,
+        [sn],
+      );
+      if (existing.rowCount > 0) { skipped++; continue; }
+
+      const record: Record<string, unknown> = { [serialNumberColumn]: sn };
+      if (serialStatusColumn) record[serialStatusColumn] = 'in-stock';
+      if (serialUnitTypeColumn) record[serialUnitTypeColumn] = this.normalizeUnitType(s.unitType ?? '');
+
+      await this.runInsert('tblserial_numbers', record);
+      inserted++;
+    }
+
+    return {
+      success: true,
+      message: `Inserted ${inserted} serial(s). Skipped ${skipped} (already exist or invalid).`,
+      inserted,
+      skipped,
+    };
+  }
+
+  async csvPreview(rows: Array<{ serialNumber: string; unitType?: string; status: string }>) {
     const normalized = (rows ?? [])
       .map((r) => ({
         serialNumber: this.normalizeSerialNumber(r.serialNumber),
+        csvUnitType: this.normalizeUnitType(r.unitType ?? ''),
         csvStatus: String(r.status ?? '').trim().toLowerCase(),
       }))
       .filter((r) => r.serialNumber.length > 0);
@@ -1504,18 +1551,24 @@ export class SerialNumberService {
       });
     }
 
-    const toInstall: Array<{ serialNumber: string; csvStatus: string; unitType: string; productName: string; capacityName: string }> = [];
+    const toInstall: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }> = [];
     const alreadyInstalled: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }> = [];
-    const notFound: Array<{ serialNumber: string; csvStatus: string }> = [];
+    const notFound: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }> = [];
     const otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }> = [];
+
+    // Unit type counts across all found serials
+    const unitTypeCounts: Record<string, number> = {};
 
     for (const row of unique) {
       const found = foundMap.get(row.serialNumber.toLowerCase());
 
       if (!found) {
-        notFound.push({ serialNumber: row.serialNumber, csvStatus: row.csvStatus });
+        notFound.push({ serialNumber: row.serialNumber, csvStatus: row.csvStatus, csvUnitType: row.csvUnitType });
         continue;
       }
+
+      const ut = found.unitType || row.csvUnitType.toUpperCase() || 'UNKNOWN';
+      unitTypeCounts[ut] = (unitTypeCounts[ut] ?? 0) + 1;
 
       if (found.dbStatus === 'installed') {
         alreadyInstalled.push({ serialNumber: found.serialNumber, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
@@ -1523,12 +1576,21 @@ export class SerialNumberService {
       }
 
       if (row.csvStatus === 'installed') {
-        toInstall.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
+        toInstall.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, csvUnitType: row.csvUnitType, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
         continue;
       }
 
       otherStatus.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, dbStatus: found.dbStatus, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
     }
+
+    // Total sets = total found serials / unit types per set (approximate: count distinct unitType labels)
+    const unitTypeLabels = Object.keys(unitTypeCounts);
+    const unitTypeCount = unitTypeLabels.length || 1;
+    const totalFoundSerials = toInstall.length + alreadyInstalled.length + otherStatus.length;
+    const totalSets = unitTypeCount > 1 ? Math.floor(totalFoundSerials / unitTypeCount) : totalFoundSerials;
+
+    // Remaining stocks = serials that are NOT installed (in-stock, reserved, etc.)
+    const remainingStocks = otherStatus.length + toInstall.length;
 
     return {
       success: true,
@@ -1538,6 +1600,9 @@ export class SerialNumberService {
         alreadyInstalled: alreadyInstalled.length,
         notFound: notFound.length,
         otherStatus: otherStatus.length,
+        totalSets,
+        unitTypeCounts,
+        remainingStocks,
       },
       toInstall,
       alreadyInstalled,

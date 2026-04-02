@@ -14,6 +14,7 @@ import {
   SalesOrderDetailUnitType,
   SalesOrderExpenseDetailsPayload,
   SalesOrderListItem,
+  SalesOrderMigrationPreviewItem,
   SalesOrderPayload,
   SalesOrderService,
   SalesOrderTransferDetailsPayload,
@@ -195,6 +196,36 @@ export class SalesOrderComponent {
   customerMode: 'existing' | 'new' = 'existing';
   uiMessage = '';
   uiError = '';
+  isMigrationModalOpen = false;
+  isMigrationPreviewLoading = false;
+  isMigrationImporting = false;
+  migrationPreviewError = '';
+  migrationPreviewFileName = '';
+  migrationSourceRows: Array<Record<string, unknown>> = [];
+  selectedMediumRowNumbers = new Set<number>();
+  migrationImportSummary: {
+    batchFailed: boolean;
+    message: string;
+    total: number;
+    created: number;
+    failed: number;
+    blocked: number;
+    aborted: number;
+    skippedReview: number;
+    failureDetails: Array<{ rowNumber: number; status: string; message: string }>;
+  } | null = null;
+  migrationPreviewSummary: {
+    total: number;
+    highConfidence: number;
+    reviewNeeded: number;
+    rejected: number;
+    matchedCustomers: number;
+    newCustomers: number;
+  } | null = null;
+  migrationPreviewItems: SalesOrderMigrationPreviewItem[] = [];
+  isMigrationDrawerMode = false;
+  migrationEditingRowNumber: number | null = null;
+  migrationEditedPayloadByRow: Record<number, SalesOrderPayload> = {};
   isSubmitting = false;
   isRemitting = false;
   customerOptions: SalesCustomerOption[] = [];
@@ -317,6 +348,399 @@ export class SalesOrderComponent {
     this.activeTab = tab;
     this.page = 1;
     await this.loadTabData(tab);
+  }
+
+  openMigrationModal(): void {
+    this.isMigrationModalOpen = true;
+    this.migrationPreviewError = '';
+  }
+
+  closeMigrationModal(): void {
+    this.isMigrationModalOpen = false;
+    this.migrationImportSummary = null;
+    this.selectedMediumRowNumbers.clear();
+    this.migrationEditedPayloadByRow = {};
+    this.closeMigrationRowEdit();
+  }
+
+  openMigrationRowEdit(item: SalesOrderMigrationPreviewItem): void {
+    const rowNumber = Number(item.rowNumber ?? 0);
+    if (!Number.isFinite(rowNumber) || rowNumber <= 0) {
+      this.migrationPreviewError = 'Invalid migration row selected.';
+      return;
+    }
+
+    const candidatePayload =
+      this.migrationEditedPayloadByRow[rowNumber] ??
+      ((item.mappedPayload as SalesOrderPayload | null) ?? null);
+
+    if (!candidatePayload) {
+      this.migrationPreviewError = 'This row has no importable payload yet. Fix mapping issues first.';
+      return;
+    }
+
+    this.migrationEditingRowNumber = rowNumber;
+    this.isMigrationDrawerMode = true;
+    this.migrationPreviewError = '';
+    this.isMigrationModalOpen = false;
+
+    this.resetForm();
+    this.drawerMode = 'create';
+    this.editingSalesId = null;
+    this.isDrawerOpen = true;
+    this.serialPageByUnitType = {};
+    this.uiMessage = '';
+    this.uiError = '';
+    this.applyMigrationPayloadToForm(candidatePayload);
+    this.captureDrawerBaselineSnapshot();
+  }
+
+  closeMigrationRowEdit(): void {
+    this.isMigrationDrawerMode = false;
+    this.migrationEditingRowNumber = null;
+  }
+
+  isMigrationRowEdited(rowNumber: number): boolean {
+    return Boolean(this.migrationEditedPayloadByRow[rowNumber]);
+  }
+
+  private applyMigrationPayloadToForm(payload: SalesOrderPayload): void {
+    const paymentDetails =
+      Array.isArray(payload.paymentDetails) && payload.paymentDetails.length > 0
+        ? payload.paymentDetails.map((payment) => ({
+            method: this.toPaymentMethod(payment?.method),
+            amount: Number(payment?.amount) || 0,
+            terms: String(payment?.terms ?? ''),
+            termsDueDate: this.toDateInputValue(String(payment?.termsDueDate ?? '')),
+            autoTermsDueDate: true,
+            status: String(payment?.status ?? ''),
+            referenceNo: String(payment?.referenceNo ?? ''),
+            paymentDate: this.toDateInputValue(String(payment?.paymentDate ?? '')),
+            issuedBy: String(payment?.issuedBy ?? ''),
+            ccCharge: String(payment?.ccCharge ?? ''),
+            checkNo: String(payment?.checkNo ?? ''),
+            bankName: String(payment?.bankName ?? ''),
+            bankAccount: String(payment?.bankAccount ?? ''),
+            postDated: String(payment?.postDated ?? ''),
+            downPayment: Number(payment?.downPayment) || 0,
+          }))
+        : [this.createEmptyPaymentItem()];
+
+    const productItems =
+      Array.isArray(payload.productItems) && payload.productItems.length > 0
+        ? payload.productItems.map((product: any) => {
+            const unitTypesFromPayload = Array.isArray(product?.unitTypesQty)
+              ? product.unitTypesQty
+              : [];
+            const serialNumbersRaw =
+              product?.serialNumbers && typeof product.serialNumbers === 'object'
+                ? (product.serialNumbers as Record<string, unknown>)
+                : {};
+
+            const serialNumbers: Record<string, string[]> = {};
+            for (const [key, value] of Object.entries(serialNumbersRaw)) {
+              if (key.toLowerCase() === 'status') continue;
+              if (!Array.isArray(value)) continue;
+              const normalized = value
+                .map((entry) => this.normalizeSerial(String(entry ?? '')))
+                .filter((entry) => entry.length > 0);
+              if (normalized.length > 0) {
+                serialNumbers[String(key).trim().toLowerCase()] = normalized;
+              }
+            }
+
+            const labelsFromPayload = unitTypesFromPayload
+              .map((entry: any) => String(entry?.label ?? '').trim().toLowerCase())
+              .filter((label: string, index: number, self: string[]) => label.length > 0 && self.indexOf(label) === index);
+            const labelsFromSerial = Object.keys(serialNumbers).filter((label, index, self) => self.indexOf(label) === index);
+            const labels =
+              labelsFromPayload.length > 0
+                ? labelsFromPayload
+                : labelsFromSerial.length > 0
+                  ? labelsFromSerial
+                  : ['set'];
+
+            const qtyMap = new Map<string, number>();
+            for (const entry of unitTypesFromPayload) {
+              const label = String(entry?.label ?? '').trim().toLowerCase();
+              if (!label) continue;
+              qtyMap.set(label, Math.max(0, Math.floor(Number(entry?.value) || 0)));
+            }
+
+            const fallbackQty = Math.max(0, Math.floor(Number(product?.totalSetQty) || 0));
+            const unitTypes = labels.map((label: string) => {
+              const serials = Array.isArray(serialNumbers[label]) ? serialNumbers[label] : [];
+              const value = qtyMap.get(label) ?? (serials.length > 0 ? serials.length : fallbackQty);
+              return this.createUnitTypeEntry(label, value, serials);
+            });
+
+            return {
+              productId: String(product?.productId ?? ''),
+              capacityId: String(product?.capacityId ?? ''),
+              unitPrice: Number(product?.unitPrice) || 0,
+              sellPrice: Number(product?.sellPrice) || 0,
+              discountPrice: Number(product?.discountPrice) || 0,
+              unitTypes,
+              totalSetQty: Math.max(0, Math.floor(Number(product?.totalSetQty) || 0)),
+            };
+          })
+        : [this.createEmptyProductItem()];
+
+    const serviceItems =
+      Array.isArray(payload.serviceItems) && payload.serviceItems.length > 0
+        ? payload.serviceItems.map((item: any) => ({
+            serviceName: String(item?.serviceName ?? ''),
+            unitPrice: Number(item?.serviceCost) || 0,
+            qty: Number(item?.serviceDurationHours) || 0,
+            total: Number(item?.serviceCost) || 0,
+          }))
+        : [this.createEmptyServiceItem()];
+
+    const customer = payload.customer ?? {};
+    this.customerMode = payload.customer_id ? 'existing' : 'new';
+    this.form = {
+      ...this.form,
+      customer_id: payload.customer_id ?? '',
+      totalAmount: Number(payload.totalAmount) || 0,
+      scheduleDate: this.toDateInputValue(String(payload.scheduleDate ?? '')),
+      salesType: String(payload.salesType ?? this.getSalesTypeFromActiveTab()),
+      projectName: String(payload.projectName ?? ''),
+      projectCode: String(payload.projectCode ?? ''),
+      installer: String(payload.installer ?? ''),
+      remarks: String(payload.remarks ?? ''),
+      transferDetails: payload.transferDetails ?? this.form.transferDetails,
+      concernDetails: payload.concernDetails ?? this.form.concernDetails,
+      expenseDetails:
+        Array.isArray(payload.expenseDetails) && payload.expenseDetails.length > 0
+          ? payload.expenseDetails
+          : [this.createEmptyExpenseItem()],
+      customer: {
+        name: String((customer as any).name ?? ''),
+        address: String((customer as any).address ?? ''),
+        contact_person: String((customer as any).contact_person ?? ''),
+        contact_number: String((customer as any).contact_number ?? ''),
+        email: String((customer as any).email ?? ''),
+        tin_number: String((customer as any).tin_number ?? ''),
+      },
+      paymentDetails,
+      productItems,
+      serviceItems,
+      status: String(payload.status ?? 'pending'),
+    };
+
+    this.customerSearch = this.form.customer.name ?? '';
+    this.activeProductTabIndex = 0;
+    this.activeServiceTabIndex = 0;
+    this.selectedUnitTypeByProduct = {};
+    this.form.productItems.forEach((_: unknown, index: number) => this.ensureSelectedUnitType(index));
+    this.recalculateTotalAmount();
+  }
+
+  private async refreshMigrationPreview(): Promise<void> {
+    this.isMigrationPreviewLoading = true;
+    this.migrationPreviewError = '';
+    this.migrationImportSummary = null;
+    this.selectedMediumRowNumbers.clear();
+
+    try {
+      const result = await this.salesOrderService.previewDailyReleaseMigration(this.migrationSourceRows);
+      if (!result.success) {
+        this.migrationPreviewError = result.message ?? 'Failed to preview migration CSV.';
+        this.migrationPreviewSummary = null;
+        this.migrationPreviewItems = [];
+        return;
+      }
+
+      this.migrationPreviewSummary = result.summary;
+      this.migrationPreviewItems = result.items ?? [];
+    } catch (error) {
+      this.migrationPreviewError =
+        error instanceof Error ? error.message : 'Failed to refresh migration preview.';
+      this.migrationPreviewSummary = null;
+      this.migrationPreviewItems = [];
+    } finally {
+      this.isMigrationPreviewLoading = false;
+    }
+  }
+
+  async onMigrationFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    this.migrationPreviewError = '';
+    this.migrationPreviewFileName = file.name;
+    this.isMigrationPreviewLoading = true;
+
+    try {
+      const content = await file.text();
+      const rows = this.parseMigrationCsv(content);
+      this.migrationSourceRows = rows;
+      this.migrationImportSummary = null;
+      this.selectedMediumRowNumbers.clear();
+      this.migrationEditedPayloadByRow = {};
+
+      if (rows.length === 0) {
+        this.migrationPreviewError = 'No valid rows found in CSV.';
+        this.migrationPreviewSummary = null;
+        this.migrationPreviewItems = [];
+        return;
+      }
+
+      await this.refreshMigrationPreview();
+    } catch (error) {
+      this.migrationPreviewError =
+        error instanceof Error ? error.message : 'Failed to read migration CSV.';
+      this.migrationPreviewSummary = null;
+      this.migrationPreviewItems = [];
+      this.migrationSourceRows = [];
+      this.selectedMediumRowNumbers.clear();
+    } finally {
+      this.isMigrationPreviewLoading = false;
+      input.value = '';
+    }
+  }
+
+  async importMigrationHighConfidence(): Promise<void> {
+    if (this.isMigrationImporting || this.isMigrationPreviewLoading) return;
+    if (!this.migrationSourceRows.length) {
+      this.migrationPreviewError = 'Upload and preview a CSV first.';
+      return;
+    }
+
+    this.isMigrationImporting = true;
+    this.migrationPreviewError = '';
+    this.uiError = '';
+    this.uiMessage = '';
+
+    try {
+      const selectedMediumRows = [...this.selectedMediumRowNumbers];
+      const editedPayloads = Object.entries(this.migrationEditedPayloadByRow)
+        .map(([rowNumber, payload]) => ({ rowNumber: Number(rowNumber), payload }))
+        .filter((entry) => Number.isFinite(entry.rowNumber) && entry.rowNumber > 0);
+
+      const result = await this.salesOrderService.importDailyReleaseMigration(
+        this.migrationSourceRows,
+        selectedMediumRows,
+        editedPayloads,
+      );
+      if (!result.summary) {
+        this.migrationPreviewError = result.message ?? 'Migration import failed.';
+        return;
+      }
+
+      const failureDetails = (result.items ?? []).filter(
+        (d) => d.status === 'failed' || d.status === 'blocked' || d.status === 'aborted',
+      );
+
+      this.migrationImportSummary = {
+        batchFailed: result.batchFailed ?? !result.success,
+        message: result.message ?? '',
+        total: result.summary.total,
+        created: result.summary.created,
+        failed: result.summary.failed,
+        blocked: result.summary.blocked,
+        aborted: result.summary.aborted,
+        skippedReview: result.summary.skippedReview,
+        failureDetails,
+      };
+
+      if (result.success) {
+        this.uiMessage = `Migration import done: ${result.summary.created} row(s) created.`;
+        await this.loadTabData(this.activeTab);
+      } else {
+        this.uiError = result.message ?? 'Migration batch failed.';
+      }
+    } catch (error) {
+      this.migrationPreviewError = error instanceof Error ? error.message : 'Migration import failed.';
+    } finally {
+      this.isMigrationImporting = false;
+    }
+  }
+
+  toggleMediumRowSelection(rowNumber: number, checked: boolean): void {
+    if (!Number.isFinite(rowNumber) || rowNumber <= 0) return;
+
+    if (checked) {
+      this.selectedMediumRowNumbers.add(rowNumber);
+    } else {
+      this.selectedMediumRowNumbers.delete(rowNumber);
+    }
+  }
+
+  isMediumRowSelected(rowNumber: number): boolean {
+    return this.selectedMediumRowNumbers.has(rowNumber);
+  }
+
+  getImportCandidateCount(): number {
+    const high = this.migrationPreviewSummary?.highConfidence ?? 0;
+    return high + this.selectedMediumRowNumbers.size;
+  }
+
+  private parseMigrationCsv(content: string): Array<Record<string, unknown>> {
+    const lines = String(content ?? '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (lines.length <= 1) return [];
+
+    const headers = this.parseCsvLine(lines[0]);
+    const rows: Array<Record<string, unknown>> = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = this.parseCsvLine(lines[i]);
+      if (cols.every((col) => !String(col ?? '').trim())) continue;
+
+      const row: Record<string, unknown> = {};
+      for (let c = 0; c < headers.length; c++) {
+        row[String(headers[c] ?? '').trim()] = String(cols[c] ?? '').trim();
+      }
+      rows.push(row);
+    }
+
+    return rows;
+  }
+
+  private parseCsvLine(line: string): string[] {
+    const out: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        const next = line[i + 1];
+        if (inQuotes && next === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+        continue;
+      }
+
+      if (ch === ',' && !inQuotes) {
+        out.push(current);
+        current = '';
+        continue;
+      }
+
+      current += ch;
+    }
+
+    out.push(current);
+    return out;
+  }
+
+  getMigrationConfidenceClass(confidence: string): string {
+    if (confidence === 'high') {
+      return 'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-400';
+    }
+    if (confidence === 'medium') {
+      return 'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400';
+    }
+    return 'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400';
   }
 
   getTabs(): Array<{ key: SalesTab; label: string }> {
@@ -1183,6 +1607,7 @@ export class SalesOrderComponent {
 
   openCreateDrawer(): void {
     this.resetForm();
+    this.closeMigrationRowEdit();
     this.drawerMode = 'create';
     this.editingSalesId = null;
     this.form.salesType = this.getSalesTypeFromActiveTab();
@@ -1214,6 +1639,7 @@ export class SalesOrderComponent {
       };
 
     this.resetForm();
+    this.closeMigrationRowEdit();
     this.drawerMode = 'edit';
     this.editingSalesId = orderId;
     this.isDrawerOpen = true;
@@ -1249,8 +1675,14 @@ export class SalesOrderComponent {
       return;
     }
 
+    const shouldReturnToMigrationModal = this.isMigrationDrawerMode;
     this.isDrawerOpen = false;
     this.closeGuardDialog();
+
+    if (shouldReturnToMigrationModal) {
+      this.closeMigrationRowEdit();
+      this.isMigrationModalOpen = true;
+    }
   }
 
   requestCloseDrawer(): void {
@@ -1784,7 +2216,55 @@ export class SalesOrderComponent {
       value: Math.max(0, Math.floor(Number(entry.value) || 0)),
     }));
 
+    item.totalSetQty = item.unitTypes.reduce(
+      (maxQty: number, entry: SalesUnitTypeFormItem) => Math.max(maxQty, Number(entry.value) || 0),
+      0,
+    );
+
     this.recalculateTotalAmount();
+  }
+
+  private syncMigrationDrawerQuantitiesFromSerials(): void {
+    if (!this.isMigrationDrawerMode) {
+      return;
+    }
+
+    this.form.productItems = (this.form.productItems ?? []).map((item: SalesProductFormItem) => {
+      const nextUnitTypes = (item.unitTypes ?? []).map((entry: SalesUnitTypeFormItem) => {
+        const parsed = this.parseSerials(entry.serialInput)
+          .map((serial) => this.normalizeSerial(serial))
+          .filter((serial, index, self) => serial.length > 0 && self.indexOf(serial) === index);
+
+        const mergedSerials = [...new Set([
+          ...((entry.serials ?? []).map((serial) => this.normalizeSerial(serial)).filter((serial) => serial.length > 0)),
+          ...parsed,
+        ])];
+
+        const computedValue = Math.max(
+          0,
+          Math.floor(Number(entry.value) || 0),
+          mergedSerials.length,
+        );
+
+        return {
+          ...entry,
+          serials: mergedSerials,
+          serialInput: mergedSerials.join('\n'),
+          value: computedValue,
+        };
+      });
+
+      const computedTotalSetQty = nextUnitTypes.reduce(
+        (maxQty: number, entry: SalesUnitTypeFormItem) => Math.max(maxQty, Number(entry.value) || 0),
+        0,
+      );
+
+      return {
+        ...item,
+        unitTypes: nextUnitTypes,
+        totalSetQty: computedTotalSetQty,
+      };
+    });
   }
 
   onTotalSetQtyChange(productIndex: number): void {
@@ -2026,6 +2506,8 @@ export class SalesOrderComponent {
   }
 
   async saveDesignForm(): Promise<void> {
+    this.syncMigrationDrawerQuantitiesFromSerials();
+
     // For transfer SO, only require serials for every product/unit if status is for-delivery or remitted AND not in create mode
     const salesType = this.form.salesType;
     const status = (this.form.status || '').toLowerCase();
@@ -2103,6 +2585,22 @@ export class SalesOrderComponent {
     }
 
     const payload = this.buildPayload();
+
+    if (this.isMigrationDrawerMode) {
+      const rowNumber = Number(this.migrationEditingRowNumber ?? 0);
+      if (!Number.isFinite(rowNumber) || rowNumber <= 0) {
+        this.uiError = 'Invalid migration row reference.';
+        return;
+      }
+
+      this.migrationEditedPayloadByRow[rowNumber] = payload;
+      this.uiError = '';
+      this.uiMessage = `Migration row ${rowNumber} payload updated.`;
+      this.closeDrawer(true);
+      await this.refreshMigrationPreview();
+      return;
+    }
+
     this.uiError = '';
     this.uiMessage = '';
     this.isSubmitting = true;

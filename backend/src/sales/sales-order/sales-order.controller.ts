@@ -20,6 +20,8 @@ import { UpdateSalesOrderDto } from './dto/update-sales-order.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { ListSalesOrderQueryDto } from './dto/list-sales-order-query.dto';
 import { AddMaterialItemDto } from './dto/add-material-item.dto';
+import { CreateSalesOrderMigrationPreviewDto } from './dto/create-sales-order-migration-preview.dto';
+import { CreateSalesOrderMigrationImportDto } from './dto/create-sales-order-migration-import.dto';
 import { MaterialTransactionsService } from 'src/inventory/material-transactions/material-transactions.service';
 
 @Controller('sales-order')
@@ -58,6 +60,30 @@ export class SalesOrderController {
       createSalesOrderDto,
       Number.isFinite(userId) ? userId : undefined,
       Number.isFinite(branchId) ? branchId : undefined,
+    );
+  }
+
+  @Post('migration/preview')
+  migrationPreview(@Body() body: CreateSalesOrderMigrationPreviewDto) {
+    return this.salesOrderService.previewDailyReleaseMigration(body.rows ?? []);
+  }
+
+  @Post('migration/import')
+  migrationImport(
+    @Body() body: CreateSalesOrderMigrationImportDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    const branchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+
+    return this.salesOrderService.importDailyReleaseMigration(
+      body.rows ?? [],
+      Number.isFinite(userId) ? userId : undefined,
+      Number.isFinite(branchId) ? branchId : undefined,
+      body.selectedMediumRowNumbers ?? [],
+      body.editedPayloads ?? [],
     );
   }
 

@@ -122,6 +122,66 @@ export interface SalesOrderApiResponse {
   };
 }
 
+export interface SalesOrderMigrationPreviewItem {
+  rowNumber: number;
+  mergedRowNumbers?: number[];
+  raw: Record<string, unknown>;
+  extracted: {
+    capacityKey?: string;
+    productHint?: string;
+    customerId?: string | null;
+    salesType?: string;
+    inferredPaymentMethod?: string;
+    unitTypeLabel?: string;
+  };
+  matchedCatalog: {
+    productId: number;
+    capacityId: number;
+    brandName: string;
+    productName: string;
+    capacity: string;
+  } | null;
+  matchedCatalogs?: Array<{
+    productId: number;
+    capacityId: number;
+    brandName: string;
+    productName: string;
+    capacity: string;
+  }>;
+  confidence: 'high' | 'medium' | 'rejected';
+  issues: string[];
+  mappedPayload: Record<string, unknown> | null;
+}
+
+export interface SalesOrderMigrationPreviewResponse {
+  success: boolean;
+  message?: string;
+  summary: {
+    total: number;
+    highConfidence: number;
+    reviewNeeded: number;
+    rejected: number;
+    matchedCustomers: number;
+    newCustomers: number;
+  } | null;
+  items: SalesOrderMigrationPreviewItem[];
+}
+
+export interface SalesOrderMigrationImportResponse {
+  success: boolean;
+  batchFailed?: boolean;
+  message?: string;
+  summary: {
+    total: number;
+    created: number;
+    failed: number;
+    blocked: number;
+    aborted: number;
+    skippedReview: number;
+  } | null;
+  items: Array<{ rowNumber: number; status: string; salesOrderId?: number | null; message: string }>;
+}
+
 export interface SalesOrderListItem {
   id: number;
   soNumber: string;
@@ -536,6 +596,24 @@ export class SalesOrderService {
     };
   }
 
+  async previewDailyReleaseMigration(rows: Array<Record<string, unknown>>): Promise<SalesOrderMigrationPreviewResponse> {
+    const response = await apiClient.post<SalesOrderMigrationPreviewResponse>('/sales-order/migration/preview', { rows });
+    return response.data;
+  }
+
+  async importDailyReleaseMigration(
+    rows: Array<Record<string, unknown>>,
+    selectedMediumRowNumbers: number[] = [],
+    editedPayloads: Array<{ rowNumber: number; payload: SalesOrderPayload }> = [],
+  ): Promise<SalesOrderMigrationImportResponse> {
+    const response = await apiClient.post<SalesOrderMigrationImportResponse>('/sales-order/migration/import', {
+      rows,
+      selectedMediumRowNumbers,
+      editedPayloads,
+    });
+    return response.data;
+  }
+
   async getSalesOrderById(id: number): Promise<SalesOrderDetailItem> {
     const response = await apiClient.get<SalesOrderDetailResponse>(`/sales-order/${id}`);
     if (!response.data.success) {
@@ -794,13 +872,21 @@ export class SalesOrderService {
     return response.data;
   }
 
-  async previewCsvSerials(rows: Array<{ serialNumber: string; status: string }>): Promise<{
+  async insertBulkSerials(serials: Array<{ serialNumber: string; unitType?: string; status?: string }>): Promise<{ success: boolean; message?: string; inserted?: number; skipped?: number }> {
+    const response = await apiClient.post('/serial-number/insert-bulk', { serials });
+    return response.data;
+  }
+
+  async previewCsvSerials(rows: Array<{ serialNumber: string; unitType?: string; status: string }>): Promise<{
     success: boolean;
     message?: string;
-    summary?: { total: number; toInstall: number; alreadyInstalled: number; notFound: number; otherStatus: number };
-    toInstall?: Array<{ serialNumber: string; csvStatus: string; unitType: string; productName: string; capacityName: string }>;
+    summary?: {
+      total: number; toInstall: number; alreadyInstalled: number; notFound: number; otherStatus: number;
+      totalSets: number; unitTypeCounts: Record<string, number>; remainingStocks: number;
+    };
+    toInstall?: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
     alreadyInstalled?: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }>;
-    notFound?: Array<{ serialNumber: string; csvStatus: string }>;
+    notFound?: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }>;
     otherStatus?: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
   }> {
     const response = await apiClient.post('/serial-number/csv-preview', { rows });
