@@ -232,6 +232,8 @@ export class SalesOrderComponent {
   customerSearch = '';
   isCustomerDropdownOpen = false;
   catalogProducts: ProductOption[] = [];
+  productSearchQuery = '';
+  isProductDropdownOpen = false;
   activeProductTabIndex = 0;
   activeServiceTabIndex = 0;
   readonly serialsPerPage = 10;
@@ -530,6 +532,7 @@ export class SalesOrderComponent {
 
     this.customerSearch = this.form.customer.name ?? '';
     this.activeProductTabIndex = 0;
+    this.syncProductSearchQuery();
     this.activeServiceTabIndex = 0;
     this.selectedUnitTypeByProduct = {};
     this.form.productItems.forEach((_: unknown, index: number) => this.ensureSelectedUnitType(index));
@@ -873,6 +876,66 @@ export class SalesOrderComponent {
     return this.customerOptions.filter((item) =>
       String(item.name ?? '').toLowerCase().includes(normalizedQuery),
     );
+  }
+
+  syncProductSearchQuery(): void {
+    const item = this.form.productItems[this.activeProductTabIndex];
+    if (!item?.productId) {
+      this.productSearchQuery = '';
+      return;
+    }
+    const found = this.catalogProducts.find((p) => String(p.id) === String(item.productId));
+    this.productSearchQuery = found
+      ? `${found.name}${found.brandName ? ' (' + found.brandName + ')' : ''}`
+      : '';
+  }
+
+  onProductSearchFocus(): void {
+    this.isProductDropdownOpen = true;
+  }
+
+  onProductSearchBlur(): void {
+    setTimeout(() => {
+      this.isProductDropdownOpen = false;
+    }, 150);
+  }
+
+  onProductSearchChange(value: string): void {
+    this.productSearchQuery = value;
+    this.isProductDropdownOpen = true;
+    const index = this.activeProductTabIndex;
+    const nextItems = [...this.form.productItems];
+    nextItems[index] = {
+      ...nextItems[index],
+      productId: '',
+      capacityId: '',
+      sellPrice: '',
+      unitPrice: 0,
+    };
+    this.form.productItems = nextItems;
+    this.recalculateTotalAmount();
+  }
+
+  selectProductFromSearch(product: ProductOption, index: number): void {
+    const nextItems = [...this.form.productItems];
+    nextItems[index] = {
+      ...nextItems[index],
+      productId: String(product.id),
+    };
+    this.form.productItems = nextItems;
+    this.productSearchQuery = `${product.name}${product.brandName ? ' (' + product.brandName + ')' : ''}`;
+    this.isProductDropdownOpen = false;
+    this.onProductChanged(index);
+  }
+
+  getFilteredCatalogProducts(): ProductOption[] {
+    const q = String(this.productSearchQuery ?? '').trim().toLowerCase();
+    if (!q) return this.catalogProducts;
+    return this.catalogProducts.filter((p) => {
+      const name = String(p.name ?? '').toLowerCase();
+      const brand = String(p.brandName ?? '').toLowerCase();
+      return name.includes(q) || brand.includes(q) || `${name} (${brand})`.includes(q);
+    });
   }
 
   getRowActionLabel(): 'Edit' {
@@ -1937,6 +2000,8 @@ export class SalesOrderComponent {
   addProductItem(): void {
     this.form.productItems = [...this.form.productItems, this.createEmptyProductItem()];
     this.activeProductTabIndex = this.form.productItems.length - 1;
+    this.productSearchQuery = '';
+    this.isProductDropdownOpen = false;
     this.ensureSelectedUnitType(this.activeProductTabIndex);
     this.recalculateTotalAmount();
   }
@@ -2141,6 +2206,7 @@ export class SalesOrderComponent {
 
   setActiveProductTab(index: number): void {
     this.activeProductTabIndex = index;
+    this.syncProductSearchQuery();
     this.ensureSelectedUnitType(index);
     if (this.drawerMode === 'edit') {
       const selectedUnit = this.getSelectedUnitTypeLabel(index);
