@@ -749,12 +749,40 @@
               <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
                   <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product Name</label>
-                  <select [(ngModel)]="activeItem.productId" [name]="'productId_' + activeProductTabIndex" (ngModelChange)="onProductChanged(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
-                    <option value="">Select Product</option>
-                    @for (product of catalogProducts; track product.id) {
-                      <option [value]="product.id">{{ product.name }}{{ product.brandName ? ' (' + product.brandName + ')' : '' }}</option>
+                  <div class="relative">
+                    <input
+                      type="text"
+                      [ngModel]="productSearchQuery"
+                      (ngModelChange)="onProductSearchChange($event)"
+                      [name]="'productSearch_' + activeProductTabIndex"
+                      placeholder="Search product..."
+                      autocomplete="off"
+                      (focus)="onProductSearchFocus()"
+                      (blur)="onProductSearchBlur()"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                      required
+                    />
+                    <input type="hidden" [(ngModel)]="activeItem.productId" [name]="'productId_' + activeProductTabIndex" required />
+
+                    @if (isProductDropdownOpen) {
+                      <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                        @if (getFilteredCatalogProducts().length === 0) {
+                          <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">No products found.</p>
+                        } @else {
+                          @for (product of getFilteredCatalogProducts(); track product.id) {
+                            <button
+                              type="button"
+                              (mousedown)="$event.preventDefault()"
+                              (click)="selectProductFromSearch(product, activeProductTabIndex)"
+                              class="flex w-full items-center px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                            >
+                              <span>{{ product.name }}{{ product.brandName ? ' (' + product.brandName + ')' : '' }}</span>
+                            </button>
+                          }
+                        }
+                      </div>
                     }
-                  </select>
+                  </div>
                 </div>
 
                 <div>

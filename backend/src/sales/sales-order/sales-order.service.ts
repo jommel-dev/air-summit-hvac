@@ -1007,22 +1007,13 @@ export class SalesOrderService {
       if (confidence === 'medium') reviewNeeded += 1;
       if (confidence === 'rejected') rejected += 1;
 
-      // Build one productItem per matched spec, pairing serials positionally
+      const assignAllSerialsToSingleProduct = specs.length === 1;
+
+      // Build one productItem per matched spec. For grouped duplicate rows that still map
+      // to a single product spec, preserve the full merged serial list on that one item.
       const builtProductItems = specMatches
         .filter((sm) => sm.match !== null)
         .map((sm, i) => {
-          const indoor = indoorSerials[i] ?? '';
-          const outdoor = outdoorSerials[i] ?? '';
-          const indoorKey = this.normalizeSerialNumber(indoor).toLowerCase();
-          const outdoorKey = this.normalizeSerialNumber(outdoor).toLowerCase();
-          const fallbackIndoorType = onlyMode === 'indoor' ? 'indoor' : (outdoor ? 'indoor' : 'window');
-          const indoorUnitType = indoor
-            ? (serialUnitTypeMap.get(indoorKey) ?? fallbackIndoorType)
-            : '';
-          const outdoorUnitType = outdoor
-            ? (serialUnitTypeMap.get(outdoorKey) ?? 'outdoor')
-            : '';
-
           const serialNumbers: Record<string, unknown> = { status: 'installed' };
           const unitTypeCounts = new Map<string, number>();
 
@@ -1036,8 +1027,29 @@ export class SalesOrderService {
             unitTypeCounts.set(key, (unitTypeCounts.get(key) ?? 0) + 1);
           };
 
-          pushSerial(indoorUnitType, indoor);
-          pushSerial(outdoorUnitType, outdoor);
+          const indoorSerialsForItem = assignAllSerialsToSingleProduct
+            ? indoorSerials
+            : [indoorSerials[i] ?? ''];
+          const outdoorSerialsForItem = assignAllSerialsToSingleProduct
+            ? outdoorSerials
+            : [outdoorSerials[i] ?? ''];
+
+          for (const indoor of indoorSerialsForItem) {
+            const indoorKey = this.normalizeSerialNumber(indoor).toLowerCase();
+            const fallbackIndoorType = onlyMode === 'indoor' ? 'indoor' : (outdoorSerialsForItem.length > 0 ? 'indoor' : 'window');
+            const indoorUnitType = indoor
+              ? (serialUnitTypeMap.get(indoorKey) ?? fallbackIndoorType)
+              : '';
+            pushSerial(indoorUnitType, indoor);
+          }
+
+          for (const outdoor of outdoorSerialsForItem) {
+            const outdoorKey = this.normalizeSerialNumber(outdoor).toLowerCase();
+            const outdoorUnitType = outdoor
+              ? (serialUnitTypeMap.get(outdoorKey) ?? 'outdoor')
+              : '';
+            pushSerial(outdoorUnitType, outdoor);
+          }
 
           const unitTypesQty = [...unitTypeCounts.entries()].map(([label, value]) => ({ label, value }));
           const totalSetQty = Math.max(...unitTypesQty.map((entry) => entry.value), 1);
