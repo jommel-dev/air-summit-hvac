@@ -950,8 +950,8 @@ export class SalesOrderService {
     });
 
     const serialToSourceRows = new Map<string, number[]>();
-    for (const source of aggregatedSources) {
-      const sourceRows = [...new Set(source.sourceRowNumbers ?? [source.rowNumber])];
+    for (let index = 0; index < rows.length; index++) {
+      const source = this.normalizeMigrationSourceRow(rows[index] ?? {}, index + 1);
       const indoorParsed = this.splitMigrationSerialValues(source.indoorSerial);
       const outdoorParsed = this.splitMigrationSerialValues(source.outdoorSerial);
       const rowSerials = [...new Set([...indoorParsed.valid, ...outdoorParsed.valid])];
@@ -966,7 +966,7 @@ export class SalesOrderService {
           serialToSourceRows.set(normalized, []);
         }
 
-        serialToSourceRows.get(normalized)!.push(...sourceRows);
+        serialToSourceRows.get(normalized)!.push(source.rowNumber);
       }
     }
 
