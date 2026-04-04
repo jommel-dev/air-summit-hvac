@@ -660,6 +660,56 @@ export class SalesOrderService {
     return map;
   }
 
+  private async loadSerialInventoryDetails(serials: string[]): Promise<Map<string, { serial: string; status: string; salesId: string | null }>> {
+    const normalizedSerials = [...new Set(
+      (serials ?? [])
+        .map((serial) => this.normalizeSerialNumber(serial).toLowerCase())
+        .filter((serial) => serial.length > 0),
+    )];
+
+    const map = new Map<string, { serial: string; status: string; salesId: string | null }>();
+    if (normalizedSerials.length === 0) {
+      return map;
+    }
+
+    const serialColumns = await this.getTableColumns(this.databaseService, 'tblserial_numbers');
+    const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+    const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+    const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
+
+    if (!serialNumberColumn) {
+      return map;
+    }
+
+    const statusSelect = serialStatusColumn ? `COALESCE("${serialStatusColumn}"::text, '')` : `''`;
+    const salesIdSelect = serialSalesIdColumn ? `"${serialSalesIdColumn}"::text` : `NULL`;
+
+    const result = await this.databaseService.query<{ serial: string; status: string; sales_id: string | null }>(
+      `SELECT
+         LOWER(regexp_replace(BTRIM(COALESCE("${serialNumberColumn}"::text, '')), '\\s+', ' ', 'g')) AS serial,
+         ${statusSelect} AS status,
+         ${salesIdSelect} AS sales_id
+       FROM tblserial_numbers
+       WHERE LOWER(regexp_replace(BTRIM(COALESCE("${serialNumberColumn}"::text, '')), '\\s+', ' ', 'g')) = ANY($1::text[])`,
+      [normalizedSerials],
+    );
+
+    for (const row of result.rows) {
+      const normalizedSerial = this.normalizeSerialNumber(row.serial).toLowerCase();
+      if (!normalizedSerial) {
+        continue;
+      }
+
+      map.set(normalizedSerial, {
+        serial: row.serial,
+        status: String(row.status ?? '').trim().toLowerCase(),
+        salesId: row.sales_id,
+      });
+    }
+
+    return map;
+  }
+
   private inferPaymentMethodFromRemarks(remarks: string): SalesPaymentMethod | undefined {
     const text = String(remarks ?? '').trim().toLowerCase();
     if (!text) return undefined;
@@ -899,10 +949,32 @@ export class SalesOrderService {
       ];
     });
 
-    const [catalog, customerMap, serialUnitTypeMap] = await Promise.all([
+    const serialToSourceRows = new Map<string, number[]>();
+    for (const source of aggregatedSources) {
+      const sourceRows = [...new Set(source.sourceRowNumbers ?? [source.rowNumber])];
+      const indoorParsed = this.splitMigrationSerialValues(source.indoorSerial);
+      const outdoorParsed = this.splitMigrationSerialValues(source.outdoorSerial);
+      const rowSerials = [...new Set([...indoorParsed.valid, ...outdoorParsed.valid])];
+
+      for (const serial of rowSerials) {
+        const normalized = this.normalizeSerialNumber(serial).toLowerCase();
+        if (!normalized) {
+          continue;
+        }
+
+        if (!serialToSourceRows.has(normalized)) {
+          serialToSourceRows.set(normalized, []);
+        }
+
+        serialToSourceRows.get(normalized)!.push(...sourceRows);
+      }
+    }
+
+    const [catalog, customerMap, serialUnitTypeMap, serialInventoryDetails] = await Promise.all([
       this.loadProductCapacityCatalog(),
       this.loadCustomerNameMap(),
       this.loadSerialUnitTypeMap(migrationSerials),
+      this.loadSerialInventoryDetails(migrationSerials),
     ]);
 
     const items: Array<Record<string, unknown>> = [];
@@ -957,6 +1029,47 @@ export class SalesOrderService {
         issues.push('At least one serial (indoor/outdoor) is required.');
       }
 
+      const serialsByLabel: Array<{ label: string; values: string[] }> = [
+        { label: 'Indoor', values: indoorSerials },
+        { label: 'Outdoor', values: outdoorSerials },
+      ];
+
+      for (const entry of serialsByLabel) {
+        for (const serial of [...new Set(entry.values)]) {
+          const normalized = this.normalizeSerialNumber(serial).toLowerCase();
+          if (!normalized) {
+            continue;
+          }
+
+          const duplicateRows = [...new Set(serialToSourceRows.get(normalized) ?? [])].sort((a, b) => a - b);
+          if (duplicateRows.length > 1) {
+            issues.push(
+              `${entry.label} serial ${serial} appears multiple times in migration rows ${duplicateRows.join(', ')}. Only one SO can own a serial.`,
+            );
+            continue;
+          }
+
+          const existingSerial = serialInventoryDetails.get(normalized);
+          if (!existingSerial) {
+            continue;
+          }
+
+          const statusLabel = existingSerial.status || 'unknown';
+          if (existingSerial.salesId) {
+            issues.push(
+              `${entry.label} serial ${serial} already exists in inventory with status '${statusLabel}' and is linked to SO ${existingSerial.salesId}.`,
+            );
+            continue;
+          }
+
+          if (statusLabel && statusLabel !== 'in-stock') {
+            issues.push(
+              `${entry.label} serial ${serial} already exists in inventory with status '${statusLabel}'. Review before import.`,
+            );
+          }
+        }
+      }
+
       // Match each spec against the product catalog
       const specMatches = specs.map((spec) => {
         if (!spec.capacityKey) {
@@ -997,7 +1110,9 @@ export class SalesOrderService {
           (issue) =>
             issue.includes('required') ||
             issue.includes('Invalid date') ||
-            issue.includes('No product-capacity match'),
+            issue.includes('No product-capacity match') ||
+            issue.includes('Only one SO can own a serial') ||
+            issue.includes('is linked to SO'),
         )
           ? 'rejected'
           : 'medium';
@@ -1617,12 +1732,27 @@ export class SalesOrderService {
 
     // Map duplicates back to their rows
     const rowValidationErrors = new Map<number, string[]>();
+
+    for (const [normalizedSerial, rawRows] of serialToRows.entries()) {
+      const uniqueRows = [...new Set(rawRows)].sort((a, b) => a - b);
+      if (uniqueRows.length <= 1) {
+        continue;
+      }
+
+      for (const rowNum of uniqueRows) {
+        if (!rowValidationErrors.has(rowNum)) rowValidationErrors.set(rowNum, []);
+        rowValidationErrors.get(rowNum)!.push(
+          `Serial ${normalizedSerial.toUpperCase()} is used multiple times in this migration batch (rows ${uniqueRows.join(', ')}). Only one SO can own a serial.`,
+        );
+      }
+    }
+
     for (const dupSerial of duplicateSerials) {
       const normalized = this.normalizeSerialNumber(dupSerial).toLowerCase();
       const affectedRows = serialToRows.get(normalized) ?? [];
       for (const rowNum of affectedRows) {
         if (!rowValidationErrors.has(rowNum)) rowValidationErrors.set(rowNum, []);
-        rowValidationErrors.get(rowNum)!.push(`Serial already linked to an existing SO: ${dupSerial}`);
+        rowValidationErrors.get(rowNum)!.push(`Serial ${dupSerial} already exists in inventory and is linked to another sales order.`);
       }
     }
 
