@@ -3302,6 +3302,7 @@ export class SalesOrderComponent {
     }
 
     this.activeProductTabIndex = 0;
+    this.syncProductSearchQuery();
     this.selectedUnitTypeByProduct = {};
     this.form.productItems.forEach((_: unknown, index: number) => this.ensureSelectedUnitType(index));
     this.recalculateTotalAmount();
@@ -3409,8 +3410,10 @@ export class SalesOrderComponent {
     try {
       const products = await this.salesOrderService.getProducts();
       this.catalogProducts = Array.isArray(products) ? products : [];
+      this.syncProductSearchQuery();
     } catch {
       this.catalogProducts = [];
+      this.syncProductSearchQuery();
     }
 
     try {
