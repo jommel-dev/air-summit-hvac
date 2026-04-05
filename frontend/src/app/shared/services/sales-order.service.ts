@@ -202,7 +202,7 @@ export interface SalesOrderListItem {
 export interface SalesCustomerDetail {
   id: string;
   name: string;
-  customer_type: 'regular' | 'sub_dealer';
+  customer_type: 'regular' | 'sub_dealer' | 'dealer';
   current_balance: number;
   credit_limit?: number;
   payment_terms: number;

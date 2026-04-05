@@ -57,6 +57,8 @@ type ProductCapacityCatalogItem = {
 
 @Injectable()
 export class SalesOrderService {
+  private readonly defaultMigrationBranchId = 1;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly materialStockService: MaterialStockService,
@@ -276,7 +278,7 @@ export class SalesOrderService {
     }
 
     const raw = String(value).trim();
-    const ddMmYyyyMatch = raw.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    const ddMmYyyyMatch = raw.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/);
     if (ddMmYyyyMatch) {
       const day = Number(ddMmYyyyMatch[1]);
       const month = Number(ddMmYyyyMatch[2]);
@@ -799,6 +801,30 @@ export class SalesOrderService {
     return map;
   }
 
+  private async loadBranchNameMap(): Promise<Map<string, { id: number; branchName: string }>> {
+    const result = await this.databaseService.query<{ id: number; branchName: string | null }>(
+      `SELECT
+         id,
+         COALESCE("branchName", '') AS "branchName"
+       FROM tblbranches`,
+    );
+
+    const map = new Map<string, { id: number; branchName: string }>();
+    for (const row of result.rows) {
+      const key = String(row.branchName ?? '').trim().toLowerCase();
+      if (!key) {
+        continue;
+      }
+
+      map.set(key, {
+        id: Number(row.id),
+        branchName: String(row.branchName ?? '').trim(),
+      });
+    }
+
+    return map;
+  }
+
   private findBestCatalogMatch(
     catalog: ProductCapacityCatalogItem[],
     capacityKey: string,
@@ -970,9 +996,10 @@ export class SalesOrderService {
       }
     }
 
-    const [catalog, customerMap, serialUnitTypeMap, serialInventoryDetails] = await Promise.all([
+    const [catalog, customerMap, branchMap, serialUnitTypeMap, serialInventoryDetails] = await Promise.all([
       this.loadProductCapacityCatalog(),
       this.loadCustomerNameMap(),
+      this.loadBranchNameMap(),
       this.loadSerialUnitTypeMap(migrationSerials),
       this.loadSerialInventoryDetails(migrationSerials),
     ]);
@@ -982,6 +1009,7 @@ export class SalesOrderService {
     let reviewNeeded = 0;
     let rejected = 0;
     let matchedCustomers = 0;
+    let matchedBranches = 0;
 
     for (const source of aggregatedSources) {
       const issues: string[] = [];
@@ -1098,7 +1126,14 @@ export class SalesOrderService {
       }
 
       const customerId = customerMap.get(source.customerName.toLowerCase()) ?? null;
-      if (customerId) matchedCustomers += 1;
+      const matchedBranch = customerId
+        ? null
+        : (branchMap.get(source.customerName.toLowerCase()) ?? null);
+      if (customerId) {
+        matchedCustomers += 1;
+      } else if (matchedBranch) {
+        matchedBranches += 1;
+      }
 
       const inferredPaymentMethod = this.inferPaymentMethodFromRemarks(source.remarks) ?? 'Cash';
       const inferredPaymentStatus = this.getAutoPaymentStatus(inferredPaymentMethod);
@@ -1186,26 +1221,43 @@ export class SalesOrderService {
 
       const mappedPayload =
         builtProductItems.length > 0 && confidence !== 'rejected'
-          ? {
-              customer_id: customerId,
-              customer: {
-                name: source.customerName,
-                customer_type: salesType === 'sub-dealer' ? 'sub_dealer' : 'regular',
-              },
-              scheduleDate: scheduleDateIso,
-              salesType,
-              installer: source.dailySalesTeam || undefined,
-              remarks: source.remarks || undefined,
-              status: 'remitted',
-              paymentDetails: [
-                {
-                  method: inferredPaymentMethod,
-                  amount: 0,
-                  status: inferredPaymentStatus,
+          ? matchedBranch
+            ? {
+                migrationMode: 'branch-assignment',
+                branchId: matchedBranch.id,
+                branchName: matchedBranch.branchName,
+                scheduleDate: scheduleDateIso,
+                installer: source.dailySalesTeam || undefined,
+                salesName: source.salesName || undefined,
+                remarks: source.remarks || undefined,
+                productItems: builtProductItems.map((item) => ({
+                  ...item,
+                  serialNumbers: {
+                    ...(item.serialNumbers as Record<string, unknown>),
+                    status: 'in-stock',
+                  },
+                })),
+              }
+            : {
+                customer_id: customerId,
+                customer: {
+                  name: source.customerName,
+                  customer_type: salesType === 'sub-dealer' ? 'sub_dealer' : 'regular',
                 },
-              ],
-              productItems: builtProductItems,
-            }
+                scheduleDate: scheduleDateIso,
+                salesType,
+                installer: source.dailySalesTeam || undefined,
+                remarks: source.remarks || undefined,
+                status: 'remitted',
+                paymentDetails: [
+                  {
+                    method: inferredPaymentMethod,
+                    amount: 0,
+                    status: inferredPaymentStatus,
+                  },
+                ],
+                productItems: builtProductItems,
+              }
           : null;
 
       const firstMatch = specMatches.find((sm) => sm.match !== null)?.match ?? null;
@@ -1226,6 +1278,8 @@ export class SalesOrderService {
         extracted: {
           specs: specs.map((s) => s.capacityKey).join(', '),
           customerId,
+          branchId: matchedBranch?.id ?? null,
+          importMode: matchedBranch ? 'branch-assignment' : 'sales-order',
           salesType,
           inferredPaymentMethod,
           productCount: specs.length,
@@ -1254,7 +1308,8 @@ export class SalesOrderService {
         reviewNeeded,
         rejected,
         matchedCustomers,
-        newCustomers: aggregatedSources.length - matchedCustomers,
+        matchedBranches,
+        newCustomers: aggregatedSources.length - matchedCustomers - matchedBranches,
       },
       items,
     };
@@ -1624,6 +1679,190 @@ export class SalesOrderService {
     return [...new Set(linkedSerials)];
   }
 
+  private async importMigrationBranchAssignment(
+    payload: CreateSalesOrderDto,
+    userId?: number,
+    fallbackBranchId?: number,
+  ): Promise<{ success: boolean; message: string; branchId?: number | null; processedSerials?: number }> {
+    const payloadRecord = payload as unknown as Record<string, unknown>;
+    const targetBranchId =
+      this.toOptionalNumber(payloadRecord['branchId']) ??
+      (Number.isFinite(Number(fallbackBranchId)) && Number(fallbackBranchId) > 0
+        ? Number(fallbackBranchId)
+        : this.defaultMigrationBranchId);
+
+    if (targetBranchId === null) {
+      return {
+        success: false,
+        message: 'Branch-assignment migration row is missing a valid branchId.',
+      };
+    }
+
+    const productItems = Array.isArray(payload?.productItems) ? payload.productItems : [];
+    if (productItems.length === 0) {
+      return {
+        success: false,
+        message: 'Branch-assignment migration row has no product items.',
+      };
+    }
+
+    try {
+      const processedSerials = await this.databaseService.withTransaction(async (client) => {
+        const serialColumns = await this.getTableColumns(client, 'tblserial_numbers');
+        const serialCustomerIdColumn = this.pickColumn(serialColumns, ['customerId', 'customer_id']);
+        const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+        const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
+        const serialProductIdColumn = this.pickColumn(serialColumns, ['productId', 'product_id']);
+        const serialCapacityIdColumn = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
+        const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+        const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+        const serialBranchIdColumn = this.pickColumn(serialColumns, ['branchId', 'branch_id']);
+        const serialCreatedByColumn = this.pickColumn(serialColumns, ['created_by', 'createdBy']);
+        const serialDealerIdColumn = this.pickColumn(serialColumns, ['dealerId', 'dealer_id']);
+        const serialPoIdColumn = this.pickColumn(serialColumns, ['purchaseOrderId', 'purchase_order_id', 'po_id']);
+        const serialPoNoColumn = this.pickColumn(serialColumns, ['purchaseOrderNo', 'purchase_order_no', 'po_no']);
+
+        if (!serialNumberColumn) {
+          throw new Error('Serial number column is not configured in tblserial_numbers');
+        }
+
+        let count = 0;
+
+        for (const item of productItems) {
+          const productId = this.toOptionalNumber(item.productId);
+          const capacityId = this.toOptionalNumber(item.capacityId);
+
+          if (productId === null || capacityId === null) {
+            throw new Error('productId and capacityId are required for branch-assignment migration items');
+          }
+
+          const serialPayload =
+            item.serialNumbers && typeof item.serialNumbers === 'object'
+              ? (item.serialNumbers as Record<string, unknown>)
+              : {};
+
+          for (const [unitTypeKey, values] of Object.entries(serialPayload)) {
+            if (unitTypeKey.toLowerCase() === 'status') {
+              continue;
+            }
+
+            const serialList = Array.isArray(values) ? values : [];
+            for (const serialRaw of serialList) {
+              const normalizedSerial = this.normalizeSerialNumber(serialRaw);
+              if (!normalizedSerial) {
+                continue;
+              }
+
+              const existingSerialResult = await client.query<{ id: number; sales_id: string | null }>(
+                `SELECT
+                   sn.id,
+                   sn."salesId"::text AS sales_id
+                 FROM tblserial_numbers sn
+                 WHERE LOWER(
+                   regexp_replace(BTRIM(COALESCE(sn."serialNumber", '')), '\\s+', ' ', 'g')
+                 ) = LOWER($1)
+                 LIMIT 1`,
+                [normalizedSerial],
+              );
+
+              if (existingSerialResult.rowCount === 0) {
+                const insertRecord: Record<string, unknown> = {
+                  [serialNumberColumn]: normalizedSerial,
+                };
+
+                if (serialBranchIdColumn) insertRecord[serialBranchIdColumn] = targetBranchId;
+                if (serialSalesIdColumn) insertRecord[serialSalesIdColumn] = null;
+                if (serialProductIdColumn) insertRecord[serialProductIdColumn] = productId;
+                if (serialCapacityIdColumn) insertRecord[serialCapacityIdColumn] = capacityId;
+                if (serialUnitTypeColumn) insertRecord[serialUnitTypeColumn] = unitTypeKey;
+                if (serialStatusColumn) insertRecord[serialStatusColumn] = 'in-stock';
+                if (serialCustomerIdColumn) insertRecord[serialCustomerIdColumn] = null;
+                if (serialCreatedByColumn) insertRecord[serialCreatedByColumn] = userId ?? null;
+                if (serialDealerIdColumn) insertRecord[serialDealerIdColumn] = null;
+                if (serialPoIdColumn) insertRecord[serialPoIdColumn] = null;
+                if (serialPoNoColumn) insertRecord[serialPoNoColumn] = null;
+
+                await this.runInsert(client, 'tblserial_numbers', insertRecord);
+                count += 1;
+                continue;
+              }
+
+              const existingSerial = existingSerialResult.rows[0];
+              if (existingSerial.sales_id) {
+                throw new Error(
+                  `Serial number ${normalizedSerial} is already linked to sales order ${existingSerial.sales_id}`,
+                );
+              }
+
+              if (serialCustomerIdColumn) {
+                await client.query(
+                  `UPDATE tblserial_numbers
+                   SET
+                     "branchId" = $1,
+                     "salesId" = NULL,
+                     "productId" = $2,
+                     "capacityId" = $3,
+                     "unitType" = $4,
+                     status = $5,
+                     "${serialCustomerIdColumn}" = NULL,
+                     created_by = COALESCE($6, created_by)
+                   WHERE id = $7`,
+                  [
+                    targetBranchId,
+                    productId,
+                    capacityId,
+                    unitTypeKey,
+                    'in-stock',
+                    userId ?? null,
+                    existingSerial.id,
+                  ],
+                );
+              } else {
+                await client.query(
+                  `UPDATE tblserial_numbers
+                   SET
+                     "branchId" = $1,
+                     "salesId" = NULL,
+                     "productId" = $2,
+                     "capacityId" = $3,
+                     "unitType" = $4,
+                     status = $5,
+                     created_by = COALESCE($6, created_by)
+                   WHERE id = $7`,
+                  [
+                    targetBranchId,
+                    productId,
+                    capacityId,
+                    unitTypeKey,
+                    'in-stock',
+                    userId ?? null,
+                    existingSerial.id,
+                  ],
+                );
+              }
+
+              count += 1;
+            }
+          }
+        }
+
+        return count;
+      });
+
+      return {
+        success: true,
+        message: `Assigned ${processedSerials} serial(s) to branch ${targetBranchId} without creating a sales order.`,
+        branchId: targetBranchId,
+        processedSerials,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to import branch-assignment migration row.',
+      };
+    }
+  }
+
   async importDailyReleaseMigration(
     rows: Array<Record<string, unknown>>,
     userId?: number,
@@ -1791,6 +2030,10 @@ export class SalesOrderService {
     const creationDetails: Array<Record<string, unknown>> = [];
     let batchFailed = false;
     let batchFailedRowNumber: number | null = null;
+    const effectiveBranchId =
+      Number.isFinite(Number(branchId)) && Number(branchId) > 0
+        ? Number(branchId)
+        : this.defaultMigrationBranchId;
 
     for (const item of toImport) {
       const rowNum = Number(item.rowNumber ?? 0);
@@ -1806,14 +2049,26 @@ export class SalesOrderService {
 
       try {
         const mappedPayload = item.mappedPayload as CreateSalesOrderDto;
-        (mappedPayload as unknown as Record<string, unknown>)['allowCreateMissingSerials'] = true;
+        const migrationMode = String(
+          ((mappedPayload as unknown as Record<string, unknown>)['migrationMode'] ?? ''),
+        )
+          .trim()
+          .toLowerCase();
 
-        const createdResult = await this.create(mappedPayload, userId, branchId);
+        const createdResult =
+          migrationMode === 'branch-assignment'
+            ? await this.importMigrationBranchAssignment(mappedPayload, userId, effectiveBranchId)
+            : await (() => {
+                (mappedPayload as unknown as Record<string, unknown>)['allowCreateMissingSerials'] = true;
+                return this.create(mappedPayload, userId, effectiveBranchId);
+              })();
+
         if (createdResult?.success) {
           creationDetails.push({
             rowNumber: rowNum,
             status: 'created',
-            salesOrderId: createdResult?.data?.salesOrderId ?? null,
+            salesOrderId:
+              'data' in createdResult ? createdResult.data?.salesOrderId ?? null : null,
             message: createdResult?.message ?? 'Sales order created.',
           });
         } else {

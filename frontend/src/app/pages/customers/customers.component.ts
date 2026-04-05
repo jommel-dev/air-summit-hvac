@@ -16,6 +16,7 @@ import {
   SalesStatementOfAccountItem,
   SalesOrderService,
 } from '../../shared/services/sales-order.service';
+import { PurchaseOrderService, VendorDetail } from '../../shared/services/purchase-order.service';
 import { RbacService } from '../../shared/services/rbac.service';
 import { BusinessSettingsService, BusinessProfileSettings } from '../../shared/services/business-settings.service';
 
@@ -70,10 +71,33 @@ export class CustomersComponent implements OnInit {
 
   constructor(
     private readonly salesOrderService: SalesOrderService,
+    private readonly purchaseOrderService: PurchaseOrderService,
     private readonly rbacService: RbacService,
     private readonly sanitizer: DomSanitizer,
     private readonly businessSettingsService: BusinessSettingsService,
   ) {}
+
+  private mapVendorToStakeholder(vendor: VendorDetail): SalesCustomerDetail {
+    return {
+      id: String(vendor.id ?? ''),
+      name: String(vendor.name ?? '').trim(),
+      customer_type: 'dealer',
+      current_balance: 0,
+      credit_limit: 0,
+      payment_terms: 0,
+      address: String(vendor.address ?? '').trim(),
+      contact_person: String(vendor.contact_person ?? '').trim(),
+      contact_number: String(vendor.contact_number ?? '').trim(),
+      email: String(vendor.email ?? '').trim(),
+      tin_number: String(vendor.tin_number ?? '').trim(),
+      created_at: vendor.created_at ?? null,
+      updated_at: vendor.updated_at ?? null,
+    };
+  }
+
+  isDealerStakeholder(customer: SalesCustomerDetail | Partial<SalesCustomerDetail> | null | undefined = this.selectedCustomer): boolean {
+    return String(customer?.customer_type ?? '').trim().toLowerCase() === 'dealer';
+  }
 
   ngOnInit(): void {
     void this.loadCustomers();
@@ -87,7 +111,7 @@ export class CustomersComponent implements OnInit {
   get tabLabel(): string {
     if (this.activeTab === 'sub_dealer') return 'Sub-Dealers';
     if (this.activeTab === 'dealer') return 'Dealers';
-    return 'Regular Customers';
+    return 'Stakeholders';
   }
 
   async loadCustomers(): Promise<void> {
@@ -95,13 +119,18 @@ export class CustomersComponent implements OnInit {
     this.isLoading = true;
     this.uiError = '';
     try {
-      // Dealers tab uses vendor list — placeholder for now, show empty
       if (this.activeTab === 'dealer') {
-        this.customers = [];
-        this.total = 0;
-        this.totalPages = 1;
+        const response = await this.purchaseOrderService.listVendorStakeholders({
+          search: this.search.trim() || undefined,
+          page: this.page,
+          limit: this.limit,
+        });
+        this.customers = response.items.map((item) => this.mapVendorToStakeholder(item));
+        this.total = response.meta.total;
+        this.totalPages = response.meta.totalPages;
         return;
       }
+
       const params: CustomerQueryParams = {
         search: this.search.trim() || undefined,
         type: this.activeTab as 'regular' | 'sub_dealer',
@@ -161,6 +190,16 @@ export class CustomersComponent implements OnInit {
     this.detailTab = 'orders';
     this.soaForm = { periodFrom: this.defaultPeriodFrom(), periodTo: this.defaultPeriodTo(), dueDate: '', notes: '' };
     this.isDrawerOpen = true;
+    if (this.isDealerStakeholder(customer)) {
+      this.orders = [];
+      this.soPayments = [];
+      this.settlements = [];
+      this.concerns = [];
+      this.statements = [];
+      this.paymentSummary = { totalCharges: 0, totalManualPayments: 0, outstandingBalance: 0 };
+      this.isDetailLoading = false;
+      return;
+    }
     void this.loadCustomerDetails(customer.id);
   }
 
@@ -179,7 +218,7 @@ export class CustomersComponent implements OnInit {
   private createEmptyForm(): Partial<SalesCustomerDetail> {
     return {
       name: '',
-      customer_type: this.activeTab === 'dealer' ? 'regular' : (this.activeTab as 'regular' | 'sub_dealer'),
+      customer_type: this.activeTab,
       current_balance: 0,
       payment_terms: 0,
       address: '',
@@ -191,6 +230,34 @@ export class CustomersComponent implements OnInit {
   }
 
   async saveCustomer(): Promise<void> {
+    if (this.activeTab === 'dealer' || this.isDealerStakeholder(this.form)) {
+      const payload = {
+        name: String(this.form.name ?? '').trim(),
+        address: String(this.form.address ?? '').trim(),
+        contactPerson: String(this.form.contact_person ?? '').trim(),
+        contactNumber: String(this.form.contact_number ?? '').trim(),
+        email: String(this.form.email ?? '').trim(),
+        tinNumber: String(this.form.tin_number ?? '').trim(),
+      };
+      if (!payload.name) { this.uiError = 'Name is required'; return; }
+      this.isSaving = true;
+      this.uiError = '';
+      try {
+        if (this.modalMode === 'edit' && this.editingCustomer) {
+          await this.purchaseOrderService.updateVendor(this.editingCustomer.id, payload);
+        } else {
+          await this.purchaseOrderService.createVendor(payload);
+        }
+        this.isModalOpen = false;
+        void this.loadCustomers();
+      } catch (error: unknown) {
+        this.uiError = (error as Error)?.message || 'Failed to save';
+      } finally {
+        this.isSaving = false;
+      }
+      return;
+    }
+
     const payload = {
       name: String(this.form.name ?? '').trim(),
       address: String(this.form.address ?? '').trim(),
@@ -222,6 +289,11 @@ export class CustomersComponent implements OnInit {
   async deleteCustomer(customer: SalesCustomerDetail): Promise<void> {
     if (!confirm(`Delete "${customer.name}"? This cannot be undone.`)) return;
     try {
+      if (this.isDealerStakeholder(customer)) {
+        await this.purchaseOrderService.deleteVendor(customer.id);
+        void this.loadCustomers();
+        return;
+      }
       await this.salesOrderService.deleteCustomer(customer.id);
       void this.loadCustomers();
     } catch (error: unknown) {

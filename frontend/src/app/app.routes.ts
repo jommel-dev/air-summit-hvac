@@ -51,7 +51,7 @@ export const routes: Routes = [
           menu: 'customers',
           permission: 'canRead',
         },
-        title: 'Customers',
+        title: 'Stakeholders',
       },
       {
         path: 'schedule-today-sales-order',
