@@ -366,6 +366,12 @@ export class SalesOrderComponent {
   }
 
   openMigrationRowEdit(item: SalesOrderMigrationPreviewItem): void {
+    if (this.isMigrationBranchAssignmentRow(item)) {
+      this.migrationPreviewError =
+        'This row is configured for direct branch assignment, so it does not open in the Sales Order editor.';
+      return;
+    }
+
     const rowNumber = Number(item.rowNumber ?? 0);
     if (!Number.isFinite(rowNumber) || rowNumber <= 0) {
       this.migrationPreviewError = 'Invalid migration row selected.';
@@ -404,6 +410,11 @@ export class SalesOrderComponent {
 
   isMigrationRowEdited(rowNumber: number): boolean {
     return Boolean(this.migrationEditedPayloadByRow[rowNumber]);
+  }
+
+  isMigrationBranchAssignmentRow(item: SalesOrderMigrationPreviewItem): boolean {
+    const mappedPayload = (item.mappedPayload ?? null) as Record<string, unknown> | null;
+    return String(mappedPayload?.['migrationMode'] ?? '').trim().toLowerCase() === 'branch-assignment';
   }
 
   private applyMigrationPayloadToForm(payload: SalesOrderPayload): void {
