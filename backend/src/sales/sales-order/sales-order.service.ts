@@ -1125,14 +1125,14 @@ export class SalesOrderService {
         }
       }
 
-      const customerId = customerMap.get(source.customerName.toLowerCase()) ?? null;
-      const matchedBranch = customerId
+      const matchedBranch = branchMap.get(source.customerName.toLowerCase()) ?? null;
+      const customerId = matchedBranch
         ? null
-        : (branchMap.get(source.customerName.toLowerCase()) ?? null);
-      if (customerId) {
-        matchedCustomers += 1;
-      } else if (matchedBranch) {
+        : (customerMap.get(source.customerName.toLowerCase()) ?? null);
+      if (matchedBranch) {
         matchedBranches += 1;
+      } else if (customerId) {
+        matchedCustomers += 1;
       }
 
       const inferredPaymentMethod = this.inferPaymentMethodFromRemarks(source.remarks) ?? 'Cash';
