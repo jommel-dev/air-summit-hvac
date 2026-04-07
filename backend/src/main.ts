@@ -1,5 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
+import { ApiExceptionFilter } from './common/filters/api-exception.filter';
+import { ApiErrorResponseInterceptor } from './common/interceptors/api-error-response.interceptor';
 
 async function bootstrap() {
   console.log('🚀 Starting HVAC Backend...');
@@ -10,6 +12,8 @@ async function bootstrap() {
   console.log('CORS_ORIGINS:', process.env.CORS_ORIGINS || 'http://localhost:4200');
 
   const app = await NestFactory.create(AppModule);
+  app.useGlobalFilters(new ApiExceptionFilter());
+  app.useGlobalInterceptors(new ApiErrorResponseInterceptor());
 
   const corsOrigins = String(process.env.CORS_ORIGINS || 'http://localhost:4200')
     .split(',')
