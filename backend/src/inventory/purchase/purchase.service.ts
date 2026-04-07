@@ -1810,14 +1810,26 @@ export class PurchaseService {
              '[]'::jsonb
            ) AS "unitTypesQty",
            COALESCE(
-             NULLIF(
-               COALESCE(
+             CASE
+               WHEN COALESCE(
                  to_jsonb(tpi)->>'totalSetQty',
                  to_jsonb(tpi)->>'total_set_qty',
                  ''
-               ),
-               ''
-             )::int,
+               ) ~ '^-?\\d+$'
+                 AND ABS(
+                   COALESCE(
+                     to_jsonb(tpi)->>'totalSetQty',
+                     to_jsonb(tpi)->>'total_set_qty',
+                     '0'
+                   )::numeric
+                 ) <= 2147483647
+                 THEN COALESCE(
+                   to_jsonb(tpi)->>'totalSetQty',
+                   to_jsonb(tpi)->>'total_set_qty',
+                   '0'
+                 )::int
+               ELSE 0
+             END,
              0
            )::text AS "totalSetQty",
            COALESCE(
@@ -3147,6 +3159,13 @@ export class PurchaseService {
                 to_jsonb(tpi)->>'total_set_qty',
                 ''
               ) ~ '^-?\\d+$'
+                AND ABS(
+                  COALESCE(
+                    to_jsonb(tpi)->>'totalSetQty',
+                    to_jsonb(tpi)->>'total_set_qty',
+                    '0'
+                  )::numeric
+                ) <= 2147483647
                 THEN COALESCE(
                   to_jsonb(tpi)->>'totalSetQty',
                   to_jsonb(tpi)->>'total_set_qty',
@@ -3307,14 +3326,26 @@ export class PurchaseService {
                   '[]'::jsonb
                 ),
                 'totalSetQty', COALESCE(
-                  NULLIF(
-                    COALESCE(
+                  CASE
+                    WHEN COALESCE(
                       to_jsonb(tpi)->>'totalSetQty',
                       to_jsonb(tpi)->>'total_set_qty',
                       ''
-                    ),
-                    ''
-                  )::int,
+                    ) ~ '^-?\\d+$'
+                      AND ABS(
+                        COALESCE(
+                          to_jsonb(tpi)->>'totalSetQty',
+                          to_jsonb(tpi)->>'total_set_qty',
+                          '0'
+                        )::numeric
+                      ) <= 2147483647
+                      THEN COALESCE(
+                        to_jsonb(tpi)->>'totalSetQty',
+                        to_jsonb(tpi)->>'total_set_qty',
+                        '0'
+                      )::int
+                    ELSE 0
+                  END,
                   0
                 ),
                 'purchaseId', COALESCE(
