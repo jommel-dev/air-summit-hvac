@@ -345,12 +345,30 @@
               <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div>
                   <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product Name</label>
-                  <select [(ngModel)]="activeItem.productId" [name]="'productId_' + activeProductTabIndex" (ngModelChange)="onProductChanged(activeProductTabIndex)" [disabled]="isMasterDataDrawerMode() || isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
-                    <option value="">Select Product</option>
-                    @for (product of catalogProducts; track product.id) {
-                      <option [value]="product.id">{{ product.name }}{{ product.brandName ? ' (' + product.brandName + ')' : '' }}</option>
-                    }
-                  </select>
+                  <div class="relative">
+                    <input
+                      type="text"
+                      [ngModel]="getProductSearchValue(activeProductTabIndex)"
+                      [name]="'productSearch_' + activeProductTabIndex"
+                      (ngModelChange)="onProductSearchChange(activeProductTabIndex, $event)"
+                      (focus)="onProductComboboxFocus(activeProductTabIndex)"
+                      (blur)="onProductComboboxBlur(activeProductTabIndex)"
+                      [readonly]="isMasterDataDrawerMode() || isTransferPOViewOnly"
+                      autocomplete="off"
+                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                      required
+                      placeholder="Type to search product..."
+                    />
+                    <ul *ngIf="isProductDropdownOpenByItem[activeProductTabIndex] && getFilteredProductOptions(activeProductTabIndex).length > 0" class="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-gray-300 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                      <li
+                        *ngFor="let product of getFilteredProductOptions(activeProductTabIndex)"
+                        (mousedown)="selectProduct(activeProductTabIndex, product.id)"
+                        class="cursor-pointer px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+                      >
+                        {{ product.name }}<span *ngIf="product.brandName" class="ml-2 text-xs text-gray-400">({{ product.brandName }})</span>
+                      </li>
+                    </ul>
+                  </div>
                 </div>
 
                 <div>
@@ -420,12 +438,81 @@
                                 [name]="'scanInput_' + activeProductTabIndex + '_' + unitType.label"
                                 (ngModelChange)="onSerialScanInputChange(activeProductTabIndex, unitType.label, $event)"
                                 (keydown.enter)="$event.preventDefault(); scanSerialForSelectedUnit(activeProductTabIndex, true)"
-                                placeholder="Enter serial number"
+                                placeholder="Scan or type serial number"
                                 class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
                               />
+                              <button
+                                type="button"
+                                (click)="openManualSerialDialog(activeProductTabIndex, unitType.label)"
+                                [disabled]="unitType.isScanning"
+                                class="shrink-0 rounded-lg border border-brand-300 bg-brand-500 px-3 py-2 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-60"
+                              >
+                                {{ unitType.isScanning ? 'Adding...' : 'Manual Add' }}
+                              </button>
                             </div>
                           }
 
+
+@if (isManualSerialDialogOpen) {
+  <div class="fixed inset-0 z-100030 bg-black/50 backdrop-blur-sm"></div>
+  <div class="fixed inset-0 z-100031 flex items-center justify-center px-4">
+    <div class="w-full max-w-md rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+      <div class="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-800">
+        <h3 class="text-base font-semibold text-gray-900 dark:text-white">Manual Serial Entry</h3>
+        <button
+          type="button"
+          (click)="closeManualSerialDialog()"
+          class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300"
+        >
+          Close
+        </button>
+      </div>
+
+      <div class="space-y-4 px-6 py-5">
+        <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">
+          Add a serial number manually for
+          <span class="font-semibold text-gray-900 dark:text-white">{{ manualSerialDialogUnitLabel }}</span>.
+        </p>
+
+        <div class="space-y-2">
+          <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            Serial Number
+          </label>
+          <input
+            type="text"
+            [(ngModel)]="manualSerialInput"
+            [ngModelOptions]="{ standalone: true }"
+            (ngModelChange)="manualSerialError = ''"
+            (keydown.enter)="$event.preventDefault(); confirmManualSerialDialog()"
+            placeholder="Type serial number"
+            class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none ring-0 placeholder:text-gray-400 focus:border-primary-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+          />
+        </div>
+
+        @if (manualSerialError) {
+          <p class="text-xs text-error-600 dark:text-error-400">{{ manualSerialError }}</p>
+        }
+      </div>
+
+      <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button
+          type="button"
+          (click)="closeManualSerialDialog()"
+          class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          (click)="confirmManualSerialDialog()"
+          class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
+        >
+          Add Serial
+        </button>
+      </div>
+    </div>
+  </div>
+}
                           @if (unitType.scanError) {
                             <p class="text-xs text-error-600 dark:text-error-400">{{ unitType.scanError }}</p>
                           }

@@ -2494,6 +2494,18 @@ export class InventoryComponent implements OnInit {
     return this.rbacService.isAdminOrSuperAdmin();
   }
 
+  get notFoundInsertableSerials(): Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }> {
+    return (this.csvPreviewResult?.notFound ?? []).filter(
+      (entry) => String(entry.csvStatus ?? '').trim().toLowerCase() !== 'installed',
+    );
+  }
+
+  get notFoundInstalledReviewCount(): number {
+    return (this.csvPreviewResult?.notFound ?? []).filter(
+      (entry) => String(entry.csvStatus ?? '').trim().toLowerCase() === 'installed',
+    ).length;
+  }
+
   openCsvModal(): void {
     this.isCsvModalOpen = true;
     this.csvPreviewResult = null;
@@ -2617,10 +2629,14 @@ export class InventoryComponent implements OnInit {
 
   async insertNotFoundAsInStock(): Promise<void> {
     if (!this.csvPreviewResult || this.isCsvInsertingNotFound) return;
-    const serials = this.csvPreviewResult.notFound;
+    const serials = this.notFoundInsertableSerials;
     if (serials.length === 0) { this.csvConfirmError = 'No serials to insert.'; return; }
     if (this.csvNotFoundTargetStatus !== 'in-stock') {
       this.csvConfirmError = 'Not-found serials can only be inserted as in-stock.';
+      return;
+    }
+    if (!this.selectedProductId || !this.selectedCapacityId) {
+      this.csvConfirmError = 'Select a product and capacity before inserting not-found serials.';
       return;
     }
     this.isCsvInsertingNotFound = true;
@@ -2628,11 +2644,26 @@ export class InventoryComponent implements OnInit {
     this.csvConfirmError = '';
     try {
       const result = await this.salesOrderService.insertBulkSerials(
-        serials.map((s) => ({ serialNumber: s.serialNumber, unitType: s.csvUnitType, status: 'in-stock' }))
+        serials.map((s) => ({
+          serialNumber: s.serialNumber,
+          unitType: s.csvUnitType,
+          status: 'in-stock',
+          productId: this.selectedProductId!,
+          capacityId: this.selectedCapacityId!,
+        }))
       );
       if (!result.success) { this.csvConfirmError = result.message ?? 'Failed to insert serials'; return; }
       this.csvConfirmMessage = result.message ?? `Inserted ${result.inserted} serial(s) as in-stock`;
-      this.csvPreviewResult = { ...this.csvPreviewResult, summary: { ...this.csvPreviewResult.summary, notFound: 0 }, notFound: [] };
+      this.csvPreviewResult = {
+        ...this.csvPreviewResult,
+        summary: {
+          ...this.csvPreviewResult.summary,
+          notFound: this.notFoundInstalledReviewCount,
+        },
+        notFound: this.csvPreviewResult.notFound.filter(
+          (entry) => String(entry.csvStatus ?? '').trim().toLowerCase() === 'installed',
+        ),
+      };
       if (this.selectedProductId && this.selectedCapacityId) await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
     } catch { this.csvConfirmError = 'Failed to insert serial numbers.'; }
     finally { this.isCsvInsertingNotFound = false; }

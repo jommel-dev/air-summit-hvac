@@ -45,7 +45,7 @@ export class SerialNumberController {
   @Post('insert-bulk')
   @UseGuards(JwtAuthGuard)
   insertBulk(
-    @Body() body: { serials: Array<{ serialNumber: string; unitType?: string; status?: string }> },
+    @Body() body: { serials: Array<{ serialNumber: string; unitType?: string; status?: string; productId?: number; capacityId?: number }> },
     @Req() request: { user?: Record<string, unknown> },
   ) {
     const role = String(request.user?.roleName ?? '').trim().toLowerCase();
