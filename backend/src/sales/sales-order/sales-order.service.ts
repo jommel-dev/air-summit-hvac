@@ -525,18 +525,22 @@ export class SalesOrderService {
   }
 
   private normalizeCapacityKey(raw: string): string {
-    const source = String(raw ?? '').trim().toUpperCase();
-    const hpMatch = source.match(/(\d+(?:\.\d+)?)\s*HP/);
-    if (hpMatch) {
-      return `${hpMatch[1]}HP`;
+    const source = String(raw ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
+    const capacityMatch = source.match(/^(\d+(?:\.\d+)?)\s*(HP|TR)\b$/);
+    if (!capacityMatch) {
+      return '';
     }
 
-    const trMatch = source.match(/(\d+(?:\.\d+)?)\s*TR/);
-    if (trMatch) {
-      return `${trMatch[1]}TR`;
+    const numericValue = Number(capacityMatch[1]);
+    if (!Number.isFinite(numericValue)) {
+      return '';
     }
 
-    return source.replace(/\s+/g, '');
+    const normalizedNumber = Number.isInteger(numericValue)
+      ? numericValue.toFixed(1)
+      : `${numericValue}`;
+
+    return `${normalizedNumber}${capacityMatch[2]}`;
   }
 
   private parseUnitHp(raw: string): { capacityKey: string; productHint: string } {
