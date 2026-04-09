@@ -2518,6 +2518,16 @@ export class InventoryComponent implements OnInit {
     input?.click();
   }
 
+  downloadCsvTemplate(): void {
+    const rows = [
+      'serialNumber,unitType,status',
+      'AC-IN-0001,Indoor,in-stock',
+      'AC-OUT-0001,Outdoor,in-stock',
+    ];
+
+    this.downloadCsvFile(rows, 'inventory-serial-upload-template.csv');
+  }
+
   async onCsvFileSelected(event: Event): Promise<void> {
     const file = (event.target as HTMLInputElement).files?.[0];
     if (!file) return;
@@ -2643,11 +2653,15 @@ export class InventoryComponent implements OnInit {
     for (const s of this.csvPreviewResult.otherStatus) {
       rows.push(`${s.serialNumber},${s.unitType},${s.csvStatus},${s.dbStatus},Other Status,${s.productName},${s.capacityName}`);
     }
+    this.downloadCsvFile(rows, `serial-summary-${new Date().toISOString().slice(0, 10)}.csv`);
+  }
+
+  private downloadCsvFile(rows: string[], filename: string): void {
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `serial-summary-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
   }

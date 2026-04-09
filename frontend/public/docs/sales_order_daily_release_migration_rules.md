@@ -20,6 +20,8 @@
 - if not, payload still includes `customer.name` for create-on-import flow
 4. `UNIT/HP` -> `productItems[0].productId` + `capacityId`
 - parser extracts capacity key from left side (`1.5HP`, `3TR`)
+- integer capacities are normalized, so `1HP` matches `1.0HP`
+- capacity values must include the unit suffix like `HP` or `TR`; bare `1` will be rejected
 - parser uses right side hint (brand/product words) to match catalog
 5. `SALES NAME` -> `installer`
 6. `INDOOR SERIAL`, `OUTDOOR SERIAL` -> `productItems[0].serialNumbers`
