@@ -872,7 +872,7 @@ export class SalesOrderService {
     return response.data;
   }
 
-  async insertBulkSerials(serials: Array<{ serialNumber: string; unitType?: string; status?: string }>): Promise<{ success: boolean; message?: string; inserted?: number; skipped?: number }> {
+  async insertBulkSerials(serials: Array<{ serialNumber: string; unitType?: string; status?: string; productId?: number; capacityId?: number }>): Promise<{ success: boolean; message?: string; inserted?: number; skipped?: number }> {
     const response = await apiClient.post('/serial-number/insert-bulk', { serials });
     return response.data;
   }

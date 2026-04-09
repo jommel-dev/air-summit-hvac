@@ -33,6 +33,11 @@ type PendingSerialRemoval = {
   serialNumber: string;
 };
 
+type ManualSerialDialogState = {
+  productIndex: number;
+  unitLabel: string;
+};
+
 interface PurchaseProductFormItem {
   productId: string;
   capacityId: string;
@@ -131,6 +136,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   poGuardDialogMode: PurchaseOrderGuardDialogMode | null = null;
   poIdleCountdownSeconds = 0;
   pendingSerialRemoval: PendingSerialRemoval | null = null;
+  manualSerialDialogState: ManualSerialDialogState | null = null;
+  manualSerialInput = '';
+  manualSerialError = '';
   sendingForApprovalIds = new Set<number>();
   approvingPurchaseIds = new Set<number>();
   cancellingPurchaseIds = new Set<number>();
@@ -143,6 +151,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   vendorOptions: VendorOption[] = [];
   vendorSearch = '';
   isVendorDropdownOpen = false;
+  productSearchByItem: Record<number, string> = {};
+  isProductDropdownOpenByItem: Record<number, boolean> = {};
   activeProductTabIndex = 0;
   selectedUnitTypeByProduct: Record<number, string> = {};
   scannedSerialTablePageByKey: Record<string, number> = {};
@@ -301,6 +311,14 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     return this.poGuardDialogMode !== null;
   }
 
+  get isManualSerialDialogOpen(): boolean {
+    return this.manualSerialDialogState !== null;
+  }
+
+  get manualSerialDialogUnitLabel(): string {
+    return this.manualSerialDialogState?.unitLabel ?? '';
+  }
+
   get poGuardDialogTitle(): string {
     switch (this.poGuardDialogMode) {
       case 'idle-warning':
@@ -411,6 +429,76 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     setTimeout(() => {
       this.isVendorDropdownOpen = false;
     }, 150);
+  }
+
+  onProductComboboxFocus(index: number): void {
+    if (this.isMasterDataDrawerMode() || this.isTransferPOViewOnly) {
+      return;
+    }
+
+    this.isProductDropdownOpenByItem[index] = true;
+    this.productSearchByItem[index] = this.getProductSearchValue(index);
+  }
+
+  onProductComboboxBlur(index: number): void {
+    setTimeout(() => {
+      this.isProductDropdownOpenByItem[index] = false;
+      this.productSearchByItem[index] = this.getProductSearchValue(index);
+    }, 150);
+  }
+
+  onProductSearchChange(index: number, value: string): void {
+    this.productSearchByItem[index] = String(value ?? '');
+    this.isProductDropdownOpenByItem[index] = true;
+  }
+
+  selectProduct(index: number, productId: string | number): void {
+    const item = this.createForm.productItems[index];
+    if (!item) {
+      return;
+    }
+
+    item.productId = String(productId ?? '').trim();
+    this.productSearchByItem[index] = this.getProductDisplayLabel(item.productId);
+    this.isProductDropdownOpenByItem[index] = false;
+    this.onProductChanged(index);
+  }
+
+  getProductSearchValue(index: number): string {
+    const typedValue = this.productSearchByItem[index];
+    if (typedValue !== undefined) {
+      return typedValue;
+    }
+
+    const item = this.createForm.productItems[index];
+    if (!item?.productId) {
+      return '';
+    }
+
+    return this.getProductDisplayLabel(item.productId);
+  }
+
+  getFilteredProductOptions(index: number): ProductOption[] {
+    const normalizedQuery = String(this.productSearchByItem[index] ?? '').trim().toLowerCase();
+    if (!normalizedQuery) {
+      return this.catalogProducts;
+    }
+
+    return this.catalogProducts.filter((item) => {
+      const name = String(item.name ?? '').trim().toLowerCase();
+      const brandName = String(item.brandName ?? '').trim().toLowerCase();
+      const combined = `${name} ${brandName}`.trim();
+      return name.includes(normalizedQuery) || brandName.includes(normalizedQuery) || combined.includes(normalizedQuery);
+    });
+  }
+
+  getProductDisplayLabel(productId: string): string {
+    const product = this.catalogProducts.find((item) => String(item.id) === String(productId));
+    if (!product) {
+      return '';
+    }
+
+    return `${product.name}${product.brandName ? ` (${product.brandName})` : ''}`;
   }
 
   getFilteredVendorOptions(): VendorOption[] {
@@ -1327,6 +1415,61 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.poGuardDialogMode = 'remove-serial-confirm';
   }
 
+  openManualSerialDialog(productIndex: number, unitLabel: string): void {
+    if (this.isFormDrawerBusy || this.drawerMode !== 'edit') {
+      return;
+    }
+
+    const unitEntry = this.getUnitEntry(productIndex, unitLabel);
+    if (!unitEntry) {
+      return;
+    }
+
+    this.manualSerialDialogState = {
+      productIndex,
+      unitLabel,
+    };
+    this.manualSerialInput = '';
+    this.manualSerialError = '';
+  }
+
+  closeManualSerialDialog(focusScanInput = true): void {
+    const dialogState = this.manualSerialDialogState;
+
+    this.manualSerialDialogState = null;
+    this.manualSerialInput = '';
+    this.manualSerialError = '';
+
+    if (focusScanInput && dialogState) {
+      this.focusSerialScanInput(dialogState.productIndex, dialogState.unitLabel);
+    }
+  }
+
+  async confirmManualSerialDialog(): Promise<void> {
+    const dialogState = this.manualSerialDialogState;
+    if (!dialogState) {
+      return;
+    }
+
+    const unitEntry = this.getUnitEntry(dialogState.productIndex, dialogState.unitLabel);
+    if (!unitEntry) {
+      this.closeManualSerialDialog(false);
+      return;
+    }
+
+    unitEntry.scanError = '';
+    unitEntry.scanSuccess = '';
+    const manualSerialValue = this.manualSerialInput;
+    this.closeManualSerialDialog(false);
+    this.processSerialForUnit(
+      dialogState.productIndex,
+      dialogState.unitLabel,
+      manualSerialValue,
+      'Enter serial number before adding',
+      false,
+    );
+  }
+
   async confirmRemoveScannedSerial(): Promise<void> {
     const pendingRemoval = this.pendingSerialRemoval;
     this.poGuardDialogMode = null;
@@ -1564,9 +1707,14 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       totalAmount: 0,
     };
     this.vendorSearch = '';
+    this.productSearchByItem = {};
+    this.isProductDropdownOpenByItem = {};
     this.activeProductTabIndex = 0;
     this.selectedUnitTypeByProduct = {};
     this.scannedSerialTablePageByKey = {};
+    this.manualSerialDialogState = null;
+    this.manualSerialInput = '';
+    this.manualSerialError = '';
     this.queuedSerialScans = [];
     this.activeSerialFlushCount = 0;
     this.serialFlushFailureCount = 0;
@@ -1579,6 +1727,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.stopPoSessionGuard();
     this.stopQueuedSerialAutoFlush();
     this.clearQueuedSerialFlushTimer();
+    this.manualSerialDialogState = null;
+    this.manualSerialInput = '';
+    this.manualSerialError = '';
     this.queuedSerialScans = [];
     this.activeSerialFlushCount = 0;
     this.serialFlushFailureCount = 0;
@@ -2028,6 +2179,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   addProductItem(): void {
     this.createForm.productItems = [...this.createForm.productItems, this.createEmptyProductItem()];
     this.activeProductTabIndex = this.createForm.productItems.length - 1;
+    this.syncProductComboboxState();
     this.ensureSelectedUnitType(this.activeProductTabIndex);
     this.recalculateTotalAmount();
   }
@@ -2049,6 +2201,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         return [itemIndex, label];
       }),
     );
+    this.syncProductComboboxState();
     this.scannedSerialTablePageByKey = {};
     this.activeProductTabIndex = Math.max(0, Math.min(this.activeProductTabIndex, this.createForm.productItems.length - 1));
     this.ensureSelectedUnitType(this.activeProductTabIndex);
@@ -2069,6 +2222,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       unitTypes: nextUnitTypes,
     };
     this.createForm.productItems = nextItems;
+    this.syncProductComboboxState();
     this.scannedSerialTablePageByKey = {};
     this.ensureSelectedUnitType(index);
     this.recalculateTotalAmount();
@@ -2368,14 +2522,44 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       delete this.serialScanTimers[timerKey];
     }
 
-    const serialNumber = this.normalizeSerial(unitEntry.scanInput);
+    this.processSerialForUnit(
+      productIndex,
+      unitLabel,
+      unitEntry.scanInput,
+      'Enter serial number before scanning',
+      showEmptyError,
+    );
+  }
+
+  private processSerialForUnit(
+    productIndex: number,
+    unitLabel: string,
+    rawSerialInput: string,
+    emptyMessage: string,
+    showEmptyError: boolean,
+  ): void {
+    const item = this.createForm.productItems[productIndex];
+    if (!item) {
+      return;
+    }
+
+    const unitEntry = item.unitTypes.find((entry) => entry.label === unitLabel);
+    if (!unitEntry) {
+      return;
+    }
+
+    const serialNumber = this.normalizeSerial(rawSerialInput);
     unitEntry.scanError = '';
     unitEntry.scanSuccess = '';
 
     if (!serialNumber) {
       if (showEmptyError) {
-        unitEntry.scanError = 'Enter serial number before scanning';
+        unitEntry.scanError = emptyMessage;
       }
+      return;
+    }
+
+    if (this.drawerMode !== 'edit' || this.editingPurchaseId === null) {
       return;
     }
 
@@ -3090,6 +3274,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     };
 
     this.vendorSearch = detail.vendorName ?? fallbackItem.vendorName ?? '';
+    this.syncProductComboboxState();
     if (detail.vendorId && !this.vendorOptions.some((vendor) => vendor.id === detail.vendorId)) {
       this.vendorOptions = [
         { id: detail.vendorId, name: detail.vendorName || detail.vendorId },
@@ -3415,6 +3600,15 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       ],
       totalSetQty: 1,
     };
+  }
+
+  private syncProductComboboxState(): void {
+    this.productSearchByItem = Object.fromEntries(
+      this.createForm.productItems.map((item, index) => [String(index), item.productId ? this.getProductDisplayLabel(item.productId) : '']),
+    );
+    this.isProductDropdownOpenByItem = Object.fromEntries(
+      this.createForm.productItems.map((_, index) => [String(index), false]),
+    );
   }
 
   private createEmptyPaymentItem(): PurchasePaymentFormItem {

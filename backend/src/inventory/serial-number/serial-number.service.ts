@@ -1450,7 +1450,7 @@ export class SerialNumberService {
     };
   }
 
-  async insertBulk(serials: Array<{ serialNumber: string; unitType?: string; status?: string }>) {
+  async insertBulk(serials: Array<{ serialNumber: string; unitType?: string; status?: string; productId?: number; capacityId?: number }>) {
     if (!serials || serials.length === 0) {
       return { success: false, message: 'No serials provided' };
     }
@@ -1459,9 +1459,98 @@ export class SerialNumberService {
     const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
     const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
     const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+    const serialProductIdColumn = this.pickColumn(serialColumns, ['productId', 'product_id']);
+    const serialCapacityIdColumn = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
 
     if (!serialNumberColumn) {
       return { success: false, message: 'Serial number column not found' };
+    }
+
+    const requestedProductIds = [...new Set(
+      (serials ?? [])
+        .map((serial) => Number(serial.productId))
+        .filter((value) => Number.isFinite(value) && value > 0),
+    )];
+
+    const requestedCapacityIds = [...new Set(
+      (serials ?? [])
+        .map((serial) => Number(serial.capacityId))
+        .filter((value) => Number.isFinite(value) && value > 0),
+    )];
+
+    if (requestedProductIds.length > 0) {
+      const existingProducts = await this.databaseService.query<{ id: string }>(
+        `SELECT id::text AS id FROM tblproducts WHERE id = ANY($1::int[])`,
+        [requestedProductIds],
+      );
+      const existingProductIds = new Set(existingProducts.rows.map((row) => Number(row.id)));
+      const missingProductId = requestedProductIds.find((value) => !existingProductIds.has(value));
+      if (missingProductId !== undefined) {
+        return { success: false, message: `Product ID ${missingProductId} does not exist` };
+      }
+    }
+
+    if (requestedCapacityIds.length > 0) {
+      const existingCapacities = await this.databaseService.query<{ id: string }>(
+        `SELECT id::text AS id FROM tblcapacity WHERE id = ANY($1::int[])`,
+        [requestedCapacityIds],
+      );
+      const existingCapacityIds = new Set(existingCapacities.rows.map((row) => Number(row.id)));
+      const missingCapacityId = requestedCapacityIds.find((value) => !existingCapacityIds.has(value));
+      if (missingCapacityId !== undefined) {
+        return { success: false, message: `Capacity ID ${missingCapacityId} does not exist` };
+      }
+    }
+
+    const requestedProductCapacityPairs = [...new Set(
+      (serials ?? [])
+        .map((serial) => ({
+          productId: Number(serial.productId),
+          capacityId: Number(serial.capacityId),
+        }))
+        .filter((entry) => Number.isFinite(entry.productId) && entry.productId > 0 && Number.isFinite(entry.capacityId) && entry.capacityId > 0)
+        .map((entry) => `${entry.productId}::${entry.capacityId}`),
+    )];
+
+    if (requestedProductCapacityPairs.length > 0) {
+      const capacityProductRows = await this.databaseService.query<{ id: string; productId: string | null }>(
+        `SELECT
+           c.id::text AS id,
+           COALESCE(
+             to_jsonb(c)->>'productId',
+             to_jsonb(c)->>'product_id',
+             to_jsonb(c)->>'prodId',
+             to_jsonb(c)->>'prod_id',
+             null
+           ) AS "productId"
+         FROM tblcapacity c
+         WHERE c.id = ANY($1::int[])`,
+        [requestedCapacityIds],
+      );
+
+      const capacityToProductMap = new Map<number, number>();
+      for (const row of capacityProductRows.rows) {
+        const capacityId = Number(row.id);
+        const productId = Number(row.productId);
+        if (Number.isFinite(capacityId) && capacityId > 0 && Number.isFinite(productId) && productId > 0) {
+          capacityToProductMap.set(capacityId, productId);
+        }
+      }
+
+      for (const pair of requestedProductCapacityPairs) {
+        const [productIdText, capacityIdText] = pair.split('::');
+        const productId = Number(productIdText);
+        const capacityId = Number(capacityIdText);
+        const linkedProductId = capacityToProductMap.get(capacityId);
+
+        if (!linkedProductId) {
+          return { success: false, message: `Capacity ID ${capacityId} is missing its linked product` };
+        }
+
+        if (linkedProductId !== productId) {
+          return { success: false, message: `Capacity ID ${capacityId} does not belong to Product ID ${productId}` };
+        }
+      }
     }
 
     let inserted = 0;
@@ -1470,6 +1559,16 @@ export class SerialNumberService {
     for (const s of serials) {
       const sn = this.normalizeSerialNumber(s.serialNumber);
       if (!sn) { skipped++; continue; }
+
+      const productId = Number(s.productId);
+      const capacityId = Number(s.capacityId);
+      const hasProductId = Number.isFinite(productId) && productId > 0;
+      const hasCapacityId = Number.isFinite(capacityId) && capacityId > 0;
+
+      if (hasProductId !== hasCapacityId) {
+        skipped++;
+        continue;
+      }
 
       // Check if already exists
       const existing = await this.databaseService.query<{ id: number }>(
@@ -1483,6 +1582,8 @@ export class SerialNumberService {
       const record: Record<string, unknown> = { [serialNumberColumn]: sn };
       if (serialStatusColumn) record[serialStatusColumn] = 'in-stock';
       if (serialUnitTypeColumn) record[serialUnitTypeColumn] = this.normalizeUnitType(s.unitType ?? '');
+      if (serialProductIdColumn && hasProductId) record[serialProductIdColumn] = productId;
+      if (serialCapacityIdColumn && hasCapacityId) record[serialCapacityIdColumn] = capacityId;
 
       await this.runInsert('tblserial_numbers', record);
       inserted++;
