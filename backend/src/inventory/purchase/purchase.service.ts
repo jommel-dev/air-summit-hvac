@@ -1875,6 +1875,7 @@ export class PurchaseService {
              to_jsonb(sn)->>'capId',
              to_jsonb(sn)->>'cap_id'
            ) AS "capacityId",
+           COALESCE(to_jsonb(sn)->>'status', '') AS status,
            COALESCE(
              to_jsonb(sn)->>'unitType',
              to_jsonb(sn)->>'unit_type'
@@ -1894,9 +1895,10 @@ export class PurchaseService {
         const productId = String(serialRow.productId ?? '').trim();
         const capacityId = String(serialRow.capacityId ?? '').trim();
         const serialNumber = this.normalizeSerialNumber(serialRow.serialNumber);
+        const serialStatus = String((serialRow as { status?: string | null }).status ?? '').trim().toLowerCase();
         const unitType = String(serialRow.unitType ?? 'set').trim().toLowerCase() || 'set';
 
-        if (!serialNumber) {
+        if (!serialNumber || serialStatus === 'installed') {
           continue;
         }
 
@@ -2767,10 +2769,15 @@ export class PurchaseService {
                   continue;
                 }
 
-                const existingSerialResult = await client.query<{ id: number; purchase_id: string | null }>(
+                const existingSerialResult = await client.query<{
+                  id: number;
+                  purchase_id: string | null;
+                  status: string | null;
+                }>(
                   `SELECT
                      sn.id,
-                     sn."purchaseId"::text AS purchase_id
+                     sn."purchaseId"::text AS purchase_id,
+                     COALESCE(sn."status"::text, '') AS status
                    FROM tblserial_numbers sn
                    WHERE LOWER(
                      regexp_replace(BTRIM(COALESCE(sn."serialNumber", '')), '\\s+', ' ', 'g')
@@ -2818,6 +2825,10 @@ export class PurchaseService {
                     throw new Error(
                       `Serial number ${normalizedSerial} is already linked to purchase ${existingSerial.purchase_id}`,
                     );
+                  }
+
+                  if (String(existingSerial.status ?? '').trim().toLowerCase() === 'installed') {
+                    continue;
                   }
 
                   const updateColumns = Object.keys(serialRecord);
