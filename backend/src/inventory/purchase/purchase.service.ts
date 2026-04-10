@@ -2144,6 +2144,7 @@ export class PurchaseService {
             downPayment: this.toOptionalNumber(payment.downPayment) ?? 0,
           })),
           productItems: mappedProductItems,
+          unresolvedLinkedSerialNumbers: unresolvedSerialsByUnitType,
           createdAt: purchase.createdAt,
           isTransferPO,
           originatingSalesOrder,

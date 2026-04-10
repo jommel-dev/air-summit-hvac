@@ -98,6 +98,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   editingPoNumber = '';
   editingPurchaseStatus = '';
   isTransferPO: boolean = false;
+  unresolvedLinkedSerialNumbersByUnitType: Record<string, string[]> = {};
   originatingSalesOrder: {
     id: number;
     soNumber: string | null;
@@ -1343,6 +1344,19 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     return unitType.serials;
   }
 
+  get unresolvedLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
+    return Object.entries(this.unresolvedLinkedSerialNumbersByUnitType)
+      .filter(([_, serials]) => Array.isArray(serials) && serials.length > 0)
+      .map(([unitType, serials]) => ({ unitType, serials }));
+  }
+
+  get totalUnresolvedLinkedSerialCount(): number {
+    return this.unresolvedLinkedSerialEntries.reduce(
+      (total, entry) => total + entry.serials.length,
+      0,
+    );
+  }
+
   async closeCreateDrawer(): Promise<void> {
     if (this.drawerMode === 'edit') {
       const flushed = await this.flushAllQueuedSerialScans();
@@ -1708,6 +1722,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       productItems: [this.createEmptyProductItem()],
       totalAmount: 0,
     };
+    this.unresolvedLinkedSerialNumbersByUnitType = {};
     this.vendorSearch = '';
     this.productSearchByItem = {};
     this.isProductDropdownOpenByItem = {};
@@ -1732,6 +1747,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.manualSerialDialogState = null;
     this.manualSerialInput = '';
     this.manualSerialError = '';
+    this.unresolvedLinkedSerialNumbersByUnitType = {};
     this.queuedSerialScans = [];
     this.activeSerialFlushCount = 0;
     this.serialFlushFailureCount = 0;
@@ -1920,6 +1936,17 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           unitType: unitType.label,
           serialNumber,
         });
+      }
+    }
+
+    if (this.isMasterDataDrawerMode()) {
+      for (const entry of this.unresolvedLinkedSerialEntries) {
+        for (const serialNumber of entry.serials) {
+          rows.push({
+            unitType: `Unmapped - ${entry.unitType}`,
+            serialNumber,
+          });
+        }
       }
     }
 
@@ -3050,7 +3077,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private buildPurchasePayload(): CreatePurchaseRequestPayload {
     const vendorId = this.resolveExistingVendorId();
     const vendorName = this.createForm.vendorName.trim();
-    const useExistingVendor = this.vendorMode === 'existing';
+    const useExistingVendor = !!vendorId;
     const vendorPayload = vendorName
       ? {
           name: vendorName,
@@ -3102,18 +3129,17 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   private validatePurchaseForm(): string | null {
-    const useExistingVendor = this.vendorMode === 'existing';
     const vendorName = this.createForm.vendorName.trim();
     const resolvedExistingVendorId = this.resolveExistingVendorId();
 
-    if (useExistingVendor) {
-      if (!resolvedExistingVendorId) {
-        return 'Select an existing vendor from the dropdown, or switch to New Vendor.';
-      }
+    if (!vendorName) {
+      return 'Dealer name is required.';
+    }
 
+    if (resolvedExistingVendorId) {
       this.createForm.vendorId = resolvedExistingVendorId;
-    } else if (!vendorName) {
-      return 'Vendor name is required.';
+    } else {
+      this.createForm.vendorId = '';
     }
 
     if (this.createForm.productItems.length === 0) {
@@ -3274,6 +3300,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       productItems,
       totalAmount: Number(detail.totalAmount) || Number(fallbackItem.totalAmount) || 0,
     };
+
+    this.unresolvedLinkedSerialNumbersByUnitType =
+      detail.unresolvedLinkedSerialNumbers && typeof detail.unresolvedLinkedSerialNumbers === 'object'
+        ? this.normalizeSerialNumbersByUnitType(detail.unresolvedLinkedSerialNumbers)
+        : {};
 
     this.vendorSearch = detail.vendorName ?? fallbackItem.vendorName ?? '';
     this.syncProductComboboxState();
