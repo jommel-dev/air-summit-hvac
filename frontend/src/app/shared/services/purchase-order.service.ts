@@ -62,6 +62,7 @@ export interface PurchaseOrderDetailItem {
   status: string;
   paymentDetails: PurchaseOrderDetailPayment[];
   productItems: PurchaseOrderDetailProductItem[];
+  unresolvedLinkedSerialNumbers?: Record<string, string[]>;
   createdAt: string | null;
   isTransferPO?: boolean;
   originatingSalesOrder?: {

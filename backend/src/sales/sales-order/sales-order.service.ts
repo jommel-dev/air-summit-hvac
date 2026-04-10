@@ -1757,10 +1757,19 @@ export class SalesOrderService {
                 continue;
               }
 
-              const existingSerialResult = await client.query<{ id: number; sales_id: string | null }>(
+              const existingSerialResult = await client.query<{
+                id: number;
+                sales_id: string | null;
+                purchase_id: string | null;
+              }>(
                 `SELECT
                    sn.id,
-                   sn."salesId"::text AS sales_id
+                   COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id') AS sales_id,
+                   COALESCE(
+                     to_jsonb(sn)->>'purchaseId',
+                     to_jsonb(sn)->>'purchase_id',
+                     to_jsonb(sn)->>'po_id'
+                   ) AS purchase_id
                  FROM tblserial_numbers sn
                  WHERE LOWER(
                    regexp_replace(BTRIM(COALESCE(sn."serialNumber", '')), '\\s+', ' ', 'g')
@@ -1798,14 +1807,17 @@ export class SalesOrderService {
                 );
               }
 
+              const preservePurchaseLinkedMapping =
+                String(existingSerial.purchase_id ?? '').trim().length > 0;
+
               if (serialCustomerIdColumn) {
                 await client.query(
                   `UPDATE tblserial_numbers
                    SET
                      "branchId" = $1,
                      "salesId" = NULL,
-                     "productId" = $2,
-                     "capacityId" = $3,
+                     "productId" = CASE WHEN $8 THEN "productId" ELSE $2 END,
+                     "capacityId" = CASE WHEN $8 THEN "capacityId" ELSE $3 END,
                      "unitType" = $4,
                      status = $5,
                      "${serialCustomerIdColumn}" = NULL,
@@ -1819,6 +1831,7 @@ export class SalesOrderService {
                     'in-stock',
                     userId ?? null,
                     existingSerial.id,
+                    preservePurchaseLinkedMapping,
                   ],
                 );
               } else {
@@ -1827,8 +1840,8 @@ export class SalesOrderService {
                    SET
                      "branchId" = $1,
                      "salesId" = NULL,
-                     "productId" = $2,
-                     "capacityId" = $3,
+                     "productId" = CASE WHEN $8 THEN "productId" ELSE $2 END,
+                     "capacityId" = CASE WHEN $8 THEN "capacityId" ELSE $3 END,
                      "unitType" = $4,
                      status = $5,
                      created_by = COALESCE($6, created_by)
@@ -1841,6 +1854,7 @@ export class SalesOrderService {
                     'in-stock',
                     userId ?? null,
                     existingSerial.id,
+                    preservePurchaseLinkedMapping,
                   ],
                 );
               }
@@ -2867,10 +2881,19 @@ export class SalesOrderService {
                   continue;
                 }
 
-                const existingSerialResult = await client.query<{ id: number; sales_id: string | null }>(
+                const existingSerialResult = await client.query<{
+                  id: number;
+                  sales_id: string | null;
+                  purchase_id: string | null;
+                }>(
                   `SELECT
                      sn.id,
-                     sn."salesId"::text AS sales_id
+                     COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id') AS sales_id,
+                     COALESCE(
+                       to_jsonb(sn)->>'purchaseId',
+                       to_jsonb(sn)->>'purchase_id',
+                       to_jsonb(sn)->>'po_id'
+                     ) AS purchase_id
                    FROM tblserial_numbers sn
                    WHERE LOWER(
                      regexp_replace(BTRIM(COALESCE(sn."serialNumber", '')), '\\s+', ' ', 'g')
@@ -2920,14 +2943,17 @@ export class SalesOrderService {
                   );
                 }
 
+                const preservePurchaseLinkedMapping =
+                  String(existingSerial.purchase_id ?? '').trim().length > 0;
+
                 if (serialCustomerIdColumn) {
                   await client.query(
                     `UPDATE tblserial_numbers
                      SET
                        "branchId" = COALESCE($1, "branchId"),
                        "salesId" = $2,
-                       "productId" = $3,
-                       "capacityId" = $4,
+                       "productId" = CASE WHEN $10 THEN "productId" ELSE $3 END,
+                       "capacityId" = CASE WHEN $10 THEN "capacityId" ELSE $4 END,
                        "unitType" = $5,
                        status = $6,
                        "${serialCustomerIdColumn}" = $7,
@@ -2943,6 +2969,7 @@ export class SalesOrderService {
                       customerId,
                       userId ?? null,
                       existingSerial.id,
+                      preservePurchaseLinkedMapping,
                     ],
                   );
                 } else {
@@ -2951,8 +2978,8 @@ export class SalesOrderService {
                      SET
                        "branchId" = COALESCE($1, "branchId"),
                        "salesId" = $2,
-                       "productId" = $3,
-                       "capacityId" = $4,
+                       "productId" = CASE WHEN $9 THEN "productId" ELSE $3 END,
+                       "capacityId" = CASE WHEN $9 THEN "capacityId" ELSE $4 END,
                        "unitType" = $5,
                        status = $6,
                        created_by = COALESCE($7, created_by)
@@ -2966,6 +2993,7 @@ export class SalesOrderService {
                       serialStatus,
                       userId ?? null,
                       existingSerial.id,
+                      preservePurchaseLinkedMapping,
                     ],
                   );
                 }
