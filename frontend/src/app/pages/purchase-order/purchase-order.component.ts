@@ -1268,7 +1268,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.startPoSessionGuard();
 
     try {
-      const detail = await this.purchaseOrderService.getPurchaseById(item.id);
+      const detail = await this.purchaseOrderService.getPurchaseById(item.id, {
+        includeInstalled: this.activeTab === 'master-data',
+      });
 
       if (!detail) {
         this.createError = 'Failed to load purchase order details';

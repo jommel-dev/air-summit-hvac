@@ -1645,7 +1645,12 @@ export class PurchaseService {
     }
   }
 
-  async findOne(id: number) {
+  async findOne(
+    id: number,
+    options?: {
+      includeInstalled?: boolean;
+    },
+  ) {
     if (!Number.isFinite(id) || id <= 0) {
       return {
         success: false,
@@ -1891,6 +1896,7 @@ export class PurchaseService {
 
       const serialMap = new Map<string, Record<string, string[]>>();
       const unresolvedSerialsByUnitType: Record<string, string[]> = {};
+      const includeInstalled = options?.includeInstalled === true;
       for (const serialRow of serialResult.rows) {
         const productId = String(serialRow.productId ?? '').trim();
         const capacityId = String(serialRow.capacityId ?? '').trim();
@@ -1898,7 +1904,7 @@ export class PurchaseService {
         const serialStatus = String((serialRow as { status?: string | null }).status ?? '').trim().toLowerCase();
         const unitType = String(serialRow.unitType ?? 'set').trim().toLowerCase() || 'set';
 
-        if (!serialNumber || serialStatus === 'installed') {
+        if (!serialNumber || (!includeInstalled && serialStatus === 'installed')) {
           continue;
         }
 
