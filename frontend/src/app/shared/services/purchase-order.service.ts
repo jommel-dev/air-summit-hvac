@@ -327,8 +327,17 @@ export class PurchaseOrderService {
     return response.data;
   }
 
-  async getPurchaseById(id: number): Promise<PurchaseOrderDetailItem | null> {
-    const response = await apiClient.get<PurchaseOrderDetailResponse>(`/purchase/${id}`);
+  async getPurchaseById(
+    id: number,
+    options?: {
+      includeInstalled?: boolean;
+    },
+  ): Promise<PurchaseOrderDetailItem | null> {
+    const response = await apiClient.get<PurchaseOrderDetailResponse>(`/purchase/${id}`, {
+      params: {
+        includeInstalled: options?.includeInstalled === true ? 'true' : undefined,
+      },
+    });
     if (!response.data.success) {
       return null;
     }

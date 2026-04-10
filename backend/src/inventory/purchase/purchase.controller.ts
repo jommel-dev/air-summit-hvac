@@ -101,8 +101,15 @@ export class PurchaseController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.purchaseService.findOne(+id);
+  findOne(
+    @Param('id') id: string,
+    @Query('includeInstalled') includeInstalled?: string,
+  ) {
+    const shouldIncludeInstalled =
+      String(includeInstalled ?? '').trim().toLowerCase() === 'true';
+    return this.purchaseService.findOne(+id, {
+      includeInstalled: shouldIncludeInstalled,
+    });
   }
 
   @Patch(':id')

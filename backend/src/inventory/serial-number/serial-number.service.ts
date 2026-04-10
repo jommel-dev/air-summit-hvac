@@ -352,6 +352,52 @@ export class SerialNumberService {
     return `purchase order #${normalizedPurchaseId}`;
   }
 
+  private async getSalesOrderReference(
+    salesId: number | string | null | undefined,
+  ): Promise<string | null> {
+    const normalizedSalesId = String(salesId ?? '').trim();
+    if (!normalizedSalesId) {
+      return null;
+    }
+
+    for (const tableName of ['tblsales_order', 'tblsales_orders']) {
+      try {
+        const result = await this.databaseService.query<{ soNumber: string | null }>(
+          `SELECT COALESCE(
+             to_jsonb(so)->>'so_number',
+             to_jsonb(so)->>'soNumber',
+             to_jsonb(so)->>'so_no',
+             to_jsonb(so)->>'soNo'
+           ) AS "soNumber"
+           FROM ${tableName} so
+           WHERE so.id::text = $1
+           LIMIT 1`,
+          [normalizedSalesId],
+        );
+
+        if (result.rowCount === 0) {
+          continue;
+        }
+
+        const soNumber = String(result.rows[0]?.soNumber ?? '').trim();
+        return soNumber ? `SO ${soNumber}` : `sales order #${normalizedSalesId}`;
+      } catch (error: unknown) {
+        const errorCode =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? String((error as { code?: unknown }).code ?? '')
+            : '';
+
+        if (errorCode === '42P01') {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    return `sales order #${normalizedSalesId}`;
+  }
+
   private async buildProductMismatchMessage(input: {
     expectedProductId: number | null;
     expectedCapacityId: number | null;
@@ -1928,9 +1974,12 @@ export class SerialNumberService {
 
     // If serial is already assigned to a different SO, block
     if (Number.isFinite(currentSalesId) && currentSalesId > 0 && currentSalesId !== salesId) {
+      const salesReference = await this.getSalesOrderReference(currentSalesId);
       return {
         success: false,
-        message: `Serial number already assigned to salesId ${currentSalesId}`,
+        message: salesReference
+          ? `Serial number is already assigned to ${salesReference}`
+          : `Serial number is already assigned to sales order #${currentSalesId}`,
       };
     }
 
@@ -2421,9 +2470,12 @@ export class SerialNumberService {
     }
 
     if (Number.isFinite(currentSalesId) && currentSalesId > 0) {
+      const salesReference = await this.getSalesOrderReference(currentSalesId);
       return {
         success: false,
-        message: `Serial number already assigned to salesId ${currentSalesId}`,
+        message: salesReference
+          ? `Serial number is already assigned to ${salesReference}`
+          : `Serial number is already assigned to sales order #${currentSalesId}`,
       };
     }
 
@@ -2432,9 +2484,12 @@ export class SerialNumberService {
       currentPurchaseId > 0 &&
       currentPurchaseId !== purchaseId
     ) {
+      const purchaseReference = await this.getPurchaseOrderReference(currentPurchaseId);
       return {
         success: false,
-        message: `Serial number already linked to purchaseId ${currentPurchaseId}`,
+        message: purchaseReference
+          ? `Serial number is already linked to ${purchaseReference}`
+          : `Serial number is already linked to purchase order #${currentPurchaseId}`,
       };
     }
 
