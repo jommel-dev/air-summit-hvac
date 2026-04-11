@@ -104,11 +104,15 @@ export class PurchaseController {
   findOne(
     @Param('id') id: string,
     @Query('includeInstalled') includeInstalled?: string,
+    @Query('preferPoLinkedSerials') preferPoLinkedSerials?: string,
   ) {
     const shouldIncludeInstalled =
       String(includeInstalled ?? '').trim().toLowerCase() === 'true';
+    const shouldPreferPoLinkedSerials =
+      String(preferPoLinkedSerials ?? '').trim().toLowerCase() === 'true';
     return this.purchaseService.findOne(+id, {
       includeInstalled: shouldIncludeInstalled,
+      preferPoLinkedSerials: shouldPreferPoLinkedSerials,
     });
   }
 

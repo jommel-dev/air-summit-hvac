@@ -62,6 +62,7 @@ export interface PurchaseOrderDetailItem {
   status: string;
   paymentDetails: PurchaseOrderDetailPayment[];
   productItems: PurchaseOrderDetailProductItem[];
+  poLinkedSerialNumbers?: Record<string, string[]>;
   unresolvedLinkedSerialNumbers?: Record<string, string[]>;
   createdAt: string | null;
   isTransferPO?: boolean;
@@ -332,11 +333,13 @@ export class PurchaseOrderService {
     id: number,
     options?: {
       includeInstalled?: boolean;
+      preferPoLinkedSerials?: boolean;
     },
   ): Promise<PurchaseOrderDetailItem | null> {
     const response = await apiClient.get<PurchaseOrderDetailResponse>(`/purchase/${id}`, {
       params: {
         includeInstalled: options?.includeInstalled === true ? 'true' : undefined,
+        preferPoLinkedSerials: options?.preferPoLinkedSerials === true ? 'true' : undefined,
       },
     });
     if (!response.data.success) {

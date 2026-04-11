@@ -90,6 +90,7 @@ type PurchaseProductRow = {
 
 type PurchaseSerialRow = {
   serialNumber: string | null;
+  status?: string | null;
   productId: string | null;
   capacityId: string | null;
   unitType: string | null;
@@ -1649,6 +1650,7 @@ export class PurchaseService {
     id: number,
     options?: {
       includeInstalled?: boolean;
+      preferPoLinkedSerials?: boolean;
     },
   ) {
     if (!Number.isFinite(id) || id <= 0) {
@@ -1895,8 +1897,10 @@ export class PurchaseService {
       );
 
       const serialMap = new Map<string, Record<string, string[]>>();
+      const poLinkedSerialNumbers: Record<string, string[]> = {};
       const unresolvedSerialsByUnitType: Record<string, string[]> = {};
       const includeInstalled = options?.includeInstalled === true;
+      const preferPoLinkedSerials = options?.preferPoLinkedSerials === true;
       for (const serialRow of serialResult.rows) {
         const productId = String(serialRow.productId ?? '').trim();
         const capacityId = String(serialRow.capacityId ?? '').trim();
@@ -1906,6 +1910,14 @@ export class PurchaseService {
 
         if (!serialNumber || (!includeInstalled && serialStatus === 'installed')) {
           continue;
+        }
+
+        if (!Array.isArray(poLinkedSerialNumbers[unitType])) {
+          poLinkedSerialNumbers[unitType] = [];
+        }
+
+        if (!poLinkedSerialNumbers[unitType].includes(serialNumber)) {
+          poLinkedSerialNumbers[unitType].push(serialNumber);
         }
 
         if (!productId || !capacityId) {
@@ -1953,7 +1965,7 @@ export class PurchaseService {
           purchaseId: this.toOptionalNumber(product.purchaseId) ?? id,
           salesId: this.toOptionalNumber(product.salesId),
           status: product.status ?? 'pending',
-          serialNumbers: serialMap.get(serialKey) ?? {},
+          serialNumbers: preferPoLinkedSerials ? {} : (serialMap.get(serialKey) ?? {}),
         };
       });
 
@@ -2144,6 +2156,7 @@ export class PurchaseService {
             downPayment: this.toOptionalNumber(payment.downPayment) ?? 0,
           })),
           productItems: mappedProductItems,
+          poLinkedSerialNumbers,
           unresolvedLinkedSerialNumbers: unresolvedSerialsByUnitType,
           createdAt: purchase.createdAt,
           isTransferPO,
