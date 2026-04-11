@@ -1543,12 +1543,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   hasAnyScannedSerials(): boolean {
-    const activeItem = this.getActiveProductItem();
-    if (!activeItem) {
-      return false;
-    }
-
-    return activeItem.unitTypes.some((unitType) => unitType.serials.length > 0);
+    return this.buildScannedSerialExportRows().length > 0;
   }
 
   async exportScannedSerialsAsExcel(): Promise<void> {
