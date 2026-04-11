@@ -15,11 +15,29 @@ import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { ListPurchaseQueryDto } from './dto/list-purchase-query.dto';
 import { DeletePurchaseWithAuthDto } from './dto/delete-purchase-with-auth.dto';
+import { AuditActorContext } from 'src/audit-log/audit-log.service';
 
 @Controller('purchase')
 @UseGuards(JwtAuthGuard)
 export class PurchaseController {
   constructor(private readonly purchaseService: PurchaseService) {}
+
+  private buildAuditContext(
+    request: { user?: Record<string, unknown>; ip?: string },
+  ): AuditActorContext {
+    const userId = Number(request.user?.sub);
+    const branchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+
+    return {
+      userId: Number.isFinite(userId) ? userId : undefined,
+      username: String(request.user?.username ?? '').trim() || undefined,
+      roleName: String(request.user?.roleName ?? request.user?.role_name ?? '').trim() || undefined,
+      branchId: Number.isFinite(branchId) ? branchId : undefined,
+      ipAddress: String(request.ip ?? '').trim() || undefined,
+    };
+  }
 
   private withEffectiveBranchScope(
     query: ListPurchaseQueryDto,
@@ -53,6 +71,7 @@ export class PurchaseController {
         createPurchaseDto,
         normalizedUserId,
         normalizedBranchId,
+        this.buildAuditContext(request),
       );
     } catch (error) {
       return {
@@ -160,6 +179,7 @@ export class PurchaseController {
       payload,
       Number.isFinite(userId) ? userId : undefined,
       Number.isFinite(branchId) ? branchId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -190,24 +210,26 @@ export class PurchaseController {
   @Patch(':id/verify-receive')
   verifyAndReceive(
     @Param('id') id: string,
-    @Req() request: { user?: { sub?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     return this.purchaseService.verifyAndReceive(
       +id,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
   @Patch(':id/approve')
   approve(
     @Param('id') id: string,
-    @Req() request: { user?: { sub?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     return this.purchaseService.approve(
       +id,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 

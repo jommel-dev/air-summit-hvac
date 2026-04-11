@@ -8,9 +8,10 @@ import { MaterialStockModule } from 'src/inventory/material-stock/material-stock
 import { MaterialTransactionsModule } from 'src/inventory/material-transactions/material-transactions.module';
 import { MaterialsModule } from 'src/inventory/materials/materials.module';
 import { PurchaseModule } from 'src/inventory/purchase/purchase.module';
+import { AuditLogModule } from 'src/audit-log/audit-log.module';
 
 @Module({
-  imports: [DatabaseModule, MaterialStockModule, MaterialTransactionsModule, MaterialsModule, PurchaseModule],
+  imports: [DatabaseModule, MaterialStockModule, MaterialTransactionsModule, MaterialsModule, PurchaseModule, AuditLogModule],
   controllers: [SalesOrderController],
   providers: [SalesOrderService, JwtAuthGuard],
 })

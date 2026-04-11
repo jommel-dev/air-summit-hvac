@@ -1243,28 +1243,150 @@
           <button
             type="button"
             (click)="printDeliveryReceiptFromDrawer()"
-              [disabled]="isSubmitting || isRemitting || !editingSalesId || printingOrderIds.has(editingSalesId)"
+              [disabled]="isSubmitting || isRemitting || isSendingForDelivery || !editingSalesId || printingOrderIds.has(editingSalesId)"
             class="rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 transition hover:bg-brand-50 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
           >
               {{ editingSalesId && printingOrderIds.has(editingSalesId) ? 'Printing...' : 'Print DR' }}
           </button>
+          @if (canSendForDeliveryFromDrawer()) {
+            <button
+              type="button"
+              (click)="sendForDelivery()"
+              [disabled]="isSendingForDelivery || isSubmitting || isRemitting"
+              class="rounded-lg border border-warning-300 px-4 py-2 text-sm font-medium text-warning-700 transition hover:bg-warning-50 disabled:opacity-60 dark:border-warning-700 dark:text-warning-400 dark:hover:bg-warning-500/10"
+            >
+              {{ isSendingForDelivery ? 'Sending...' : 'Send for Delivery' }}
+            </button>
+          }
           @if (activeTab !== 'sales-receivable' && activeTab !== 'remitted-sales') {
             <button
               type="button"
               (click)="remitSales()"
-              [disabled]="isRemitting || isSubmitting"
+              [disabled]="isRemitting || isSubmitting || isSendingForDelivery"
               class="rounded-lg border border-success-300 px-4 py-2 text-sm font-medium text-success-700 transition hover:bg-success-50 disabled:opacity-60 dark:border-success-700 dark:text-success-400 dark:hover:bg-success-500/10"
             >
               {{ isRemitting ? 'Remitting...' : 'Remit Sales' }}
             </button>
           }
         }
-        <button type="submit" [disabled]="isSubmitting" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
+        <button type="submit" [disabled]="isSubmitting || isSendingForDelivery" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-60">
           {{ isSubmitting ? 'Saving...' : (isMigrationDrawerMode ? 'Use This Payload For Migration' : (drawerMode === 'create' ? 'Create Sales Order' : 'Update Sales Order')) }}
         </button>
       </div>
     </form>
   </aside>
+
+  @if (isReturnModalOpen) {
+    <div class="fixed inset-0 z-100006 bg-gray-950/55 backdrop-blur-sm" (click)="closeReturnModal()"></div>
+    <div class="fixed inset-0 z-100007 flex items-center justify-center p-4">
+      <div class="w-full max-w-2xl overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <div class="border-b border-gray-200 bg-linear-to-r from-warning-50 via-white to-rose-50 px-6 py-5 dark:border-gray-800 dark:from-warning-500/10 dark:via-gray-900 dark:to-rose-500/10">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-warning-700 dark:text-warning-300">Return Units</p>
+          <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">
+            Return SO {{ pendingReturnOrder?.soNumber || pendingReturnOrder?.id }}
+          </h3>
+          <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
+            If this is a defective return, select one or more affected indoor or outdoor serial numbers.
+          </p>
+        </div>
+
+        <div class="space-y-5 px-6 py-5">
+          @if (returnModalError) {
+            <div class="rounded-2xl border border-error-200 bg-error-50/80 px-4 py-3 text-sm text-error-700 dark:border-error-500/20 dark:bg-error-500/10 dark:text-error-200">
+              {{ returnModalError }}
+            </div>
+          }
+
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Return Reason</label>
+            <textarea
+              [(ngModel)]="returnForm.remarks"
+              name="returnRemarks"
+              rows="3"
+              placeholder="Describe why the units were returned"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            ></textarea>
+          </div>
+
+          <label class="flex items-start gap-3 rounded-2xl border border-warning-200 bg-warning-50/60 px-4 py-3 text-sm text-warning-900 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-100">
+            <input
+              type="checkbox"
+              [ngModel]="returnForm.isDefective"
+              (ngModelChange)="onReturnDefectiveChange($event)"
+              name="returnIsDefective"
+              class="mt-1 h-4 w-4 rounded border-warning-400 text-warning-600 focus:ring-warning-500"
+            />
+            <span>
+              Mark selected returned serials as defective. You can choose multiple serial numbers.
+            </span>
+          </label>
+
+          @if (isReturnModalLoading) {
+            <div class="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4 text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-800/60 dark:text-gray-300">
+              Loading linked serial numbers...
+            </div>
+          } @else if (returnForm.isDefective) {
+            <div class="space-y-4">
+              <div class="flex items-center justify-between">
+                <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Select Defective Serial Numbers</h4>
+                <span class="text-xs text-gray-500 dark:text-gray-400">Selected: {{ selectedReturnedSerialNumbers.size }} serial(s)</span>
+              </div>
+
+              @if (returnSerialGroups.length > 0) {
+                <div class="max-h-80 space-y-4 overflow-y-auto pr-1">
+                  @for (group of returnSerialGroups; track group.unitLabel) {
+                    <section class="rounded-2xl border border-gray-200 bg-gray-50/80 p-4 dark:border-gray-800 dark:bg-gray-800/40">
+                      <div class="mb-3 flex items-center gap-2">
+                        <span class="rounded-full border border-warning-300 bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-warning-700 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-300">
+                          {{ group.unitLabel }}
+                        </span>
+                      </div>
+
+                      <div class="grid gap-2 sm:grid-cols-2">
+                        @for (serial of group.serials; track serial) {
+                          <label class="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+                            <input
+                              type="checkbox"
+                              [checked]="isReturnedSerialSelected(serial)"
+                              (change)="toggleReturnedSerialSelection(serial, $any($event.target).checked)"
+                              class="h-4 w-4 rounded border-warning-400 text-warning-600 focus:ring-warning-500"
+                            />
+                            <span class="font-mono text-xs">{{ serial }}</span>
+                          </label>
+                        }
+                      </div>
+                    </section>
+                  }
+                </div>
+              } @else {
+                <div class="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+                  No linked indoor or outdoor serial numbers were found for this sales order.
+                </div>
+              }
+            </div>
+          }
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          <button
+            type="button"
+            (click)="closeReturnModal()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            (click)="confirmReturnedUnits()"
+            [disabled]="isReturnModalLoading || returningOrderIds.has(pendingReturnOrder?.id ?? -1)"
+            class="rounded-lg border border-warning-300 bg-warning-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-warning-600 disabled:opacity-60 dark:border-warning-500/40 dark:bg-warning-500 dark:hover:bg-warning-600"
+          >
+            {{ returningOrderIds.has(pendingReturnOrder?.id ?? -1) ? 'Processing...' : 'Confirm Return' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
 
   @if (isGuardDialogOpen) {
     <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="cancelGuardDialog()"></div>

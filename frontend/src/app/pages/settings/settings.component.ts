@@ -14,10 +14,15 @@ import {
   RoleApiItem,
   UserManagementService,
 } from '../../shared/services/user-management.service';
+import {
+  AuditLogDetailResponse,
+  AuditLogFrontendService,
+  AuditLogListItem,
+} from '../../shared/services/audit-log.service';
 import axios from 'axios';
 import { apiClient } from '../../shared/services/api-client';
 
-type SettingsTab = 'system' | 'branches' | 'print-settings' | 'rbac-configs';
+type SettingsTab = 'system' | 'branches' | 'print-settings' | 'rbac-configs' | 'audit-logs';
 
 interface SettingsPermissionOption {
   key: string;
@@ -73,12 +78,25 @@ export class SettingsComponent implements OnInit {
   isLoadingRolePermissions = false;
   isCreatingPermissionKey = false;
   isSavingRolePermissions = false;
+  isLoadingAuditLogs = false;
+  isLoadingAuditLogDetail = false;
   rbacError = '';
+  auditLogError = '';
   rbacSearch = '';
+  auditLogSearch = '';
+  auditLogActionFilter = '';
+  auditLogEntityTypeFilter = '';
   roles: Array<{ id: number; name: string }> = [];
   selectedRoleId: number | '' = '';
   permissionOptions: SettingsPermissionOption[] = [];
   rolePermissionKeys: string[] = [];
+  auditLogs: AuditLogListItem[] = [];
+  selectedAuditLog: AuditLogListItem | null = null;
+  isAuditLogDrawerOpen = false;
+  auditLogCurrentPage = 1;
+  auditLogPageSize = 15;
+  auditLogTotal = 0;
+  auditLogTotalPages = 1;
   newPermissionForm: CreatePermissionKeyPayload = {
     key: '',
     label: '',
@@ -171,6 +189,7 @@ export class SettingsComponent implements OnInit {
     private readonly rbacService: RbacService,
     private readonly salesOrderService: SalesOrderService,
     private readonly userManagementService: UserManagementService,
+    private readonly auditLogService: AuditLogFrontendService,
   ) {}
 
   ngOnInit(): void {
@@ -186,6 +205,7 @@ export class SettingsComponent implements OnInit {
     { key: 'branches', label: 'Branches' },
     { key: 'print-settings', label: 'Print Settings' },
     { key: 'rbac-configs', label: 'RBAC Configs' },
+    { key: 'audit-logs', label: 'Audit Logs' },
   ];
 
   get canReadSettings(): boolean {
@@ -237,6 +257,160 @@ export class SettingsComponent implements OnInit {
 
   setActiveTab(tab: SettingsTab): void {
     this.activeTab = tab;
+    if (tab === 'audit-logs') {
+      void this.loadAuditLogs(1);
+    }
+  }
+
+  get auditLogActionOptions(): string[] {
+    return Array.from(
+      new Set(
+        this.auditLogs
+          .map((item) => String(item.action ?? '').trim())
+          .filter((item) => item.length > 0),
+      ),
+    ).sort((left, right) => left.localeCompare(right));
+  }
+
+  get auditLogEntityTypeOptions(): string[] {
+    return Array.from(
+      new Set(
+        this.auditLogs
+          .map((item) => String(item.entityType ?? '').trim())
+          .filter((item) => item.length > 0),
+      ),
+    ).sort((left, right) => left.localeCompare(right));
+  }
+
+  async loadAuditLogs(page = 1): Promise<void> {
+    this.isLoadingAuditLogs = true;
+    this.auditLogError = '';
+
+    try {
+      const response = await this.auditLogService.getAuditLogs({
+        page,
+        limit: this.auditLogPageSize,
+        search: this.auditLogSearch.trim() || undefined,
+        action: this.auditLogActionFilter || undefined,
+        entityType: this.auditLogEntityTypeFilter || undefined,
+      });
+
+      if (!response.success) {
+        this.auditLogs = [];
+        this.auditLogError = response.message ?? 'Failed to load audit logs.';
+        return;
+      }
+
+      this.auditLogs = Array.isArray(response.items) ? response.items : [];
+      this.auditLogCurrentPage = response.meta?.page ?? page;
+      this.auditLogPageSize = response.meta?.limit ?? this.auditLogPageSize;
+      this.auditLogTotal = response.meta?.total ?? 0;
+      this.auditLogTotalPages = response.meta?.totalPages ?? 1;
+    } catch (error: unknown) {
+      this.auditLogs = [];
+      this.auditLogError = this.resolveErrorMessage(error, 'Failed to load audit logs.');
+    } finally {
+      this.isLoadingAuditLogs = false;
+    }
+  }
+
+  async applyAuditLogFilters(): Promise<void> {
+    await this.loadAuditLogs(1);
+  }
+
+  async openAuditLogDrawer(item: AuditLogListItem): Promise<void> {
+    this.isAuditLogDrawerOpen = true;
+    this.isLoadingAuditLogDetail = true;
+    this.auditLogError = '';
+    this.selectedAuditLog = item;
+
+    try {
+      const response: AuditLogDetailResponse = await this.auditLogService.getAuditLog(item.id);
+      if (!response.success || !response.item) {
+        this.auditLogError = response.message ?? 'Failed to load audit log details.';
+        return;
+      }
+
+      this.selectedAuditLog = response.item;
+    } catch (error: unknown) {
+      this.auditLogError = this.resolveErrorMessage(error, 'Failed to load audit log details.');
+    } finally {
+      this.isLoadingAuditLogDetail = false;
+    }
+  }
+
+  closeAuditLogDrawer(): void {
+    this.isAuditLogDrawerOpen = false;
+    this.isLoadingAuditLogDetail = false;
+    this.selectedAuditLog = null;
+  }
+
+  formatAuditTimestamp(value: string | null | undefined): string {
+    const raw = String(value ?? '').trim();
+    if (!raw) {
+      return '-';
+    }
+
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) {
+      return raw;
+    }
+
+    return date.toLocaleString('en-PH', {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  formatAuditAction(value: string | null | undefined): string {
+    return String(value ?? '')
+      .trim()
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase()) || 'Unknown Action';
+  }
+
+  formatAuditEntityType(value: string | null | undefined): string {
+    return String(value ?? '')
+      .trim()
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase()) || 'Unknown Entity';
+  }
+
+  getAuditActorLabel(item: AuditLogListItem | null | undefined): string {
+    if (!item) {
+      return '-';
+    }
+
+    const username = String(item.username ?? '').trim();
+    const roleName = String(item.roleName ?? '').trim();
+    if (username && roleName) {
+      return `${username} • ${roleName}`;
+    }
+    if (username) {
+      return username;
+    }
+    if (roleName) {
+      return roleName;
+    }
+
+    return 'System / Unknown actor';
+  }
+
+  getAuditDescription(item: AuditLogListItem | null | undefined): string {
+    const description = String(item?.description ?? item?.metadata?.description ?? '').trim();
+    if (description) {
+      return description;
+    }
+
+    return `${this.formatAuditAction(item?.action)} ${this.formatAuditEntityType(item?.entityType)}`;
+  }
+
+  getAuditChanges(item: AuditLogListItem | null | undefined): Array<{ field: string; oldValue: unknown; newValue: unknown }> {
+    const changes = item?.metadata?.changes;
+    return Array.isArray(changes) ? changes : [];
   }
 
   async loadRbacConfig(): Promise<void> {

@@ -1,11 +1,29 @@
 import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { DashboardService } from './dashboard.service';
+import { AuditActorContext } from 'src/audit-log/audit-log.service';
 
 @Controller('dashboard')
 @UseGuards(JwtAuthGuard)
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
+
+  private buildAuditContext(
+    request: { user?: Record<string, unknown>; ip?: string },
+  ): AuditActorContext {
+    const userId = Number(request.user?.sub);
+    const branchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+
+    return {
+      userId: Number.isFinite(userId) ? userId : undefined,
+      username: String(request.user?.username ?? '').trim() || undefined,
+      roleName: String(request.user?.roleName ?? request.user?.role_name ?? '').trim() || undefined,
+      branchId: Number.isFinite(branchId) ? branchId : undefined,
+      ipAddress: String(request.ip ?? '').trim() || undefined,
+    };
+  }
 
   @Get('overview')
   getOverview(@Req() request: { user?: Record<string, unknown> }) {
@@ -88,6 +106,7 @@ export class DashboardController {
       Number.isFinite(effectiveBranchId) && effectiveBranchId > 0
         ? effectiveBranchId
         : undefined,
+      this.buildAuditContext(request),
     );
   }
 
