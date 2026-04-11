@@ -106,6 +106,11 @@ interface SalesPendingSerialRemoval {
   serialNumber: string;
 }
 
+interface SalesReturnSerialOptionGroup {
+  unitLabel: string;
+  serials: string[];
+}
+
 
 @Component({
   selector: 'app-sales-order',
@@ -192,6 +197,16 @@ export class SalesOrderComponent {
   isGuardDialogOpen = false;
   pendingSerialRemoval: SalesPendingSerialRemoval | null = null;
   pendingRefreshEvent: BeforeUnloadEvent | null = null;
+  isReturnModalOpen = false;
+  pendingReturnOrder: SalesOrderRow | null = null;
+  isReturnModalLoading = false;
+  returnModalError = '';
+  returnSerialGroups: SalesReturnSerialOptionGroup[] = [];
+  returnForm = {
+    remarks: '',
+    isDefective: false,
+  };
+  selectedReturnedSerialNumbers = new Set<string>();
   editingSalesId: number | null = null;
   customerMode: 'existing' | 'new' = 'existing';
   uiMessage = '';
@@ -228,6 +243,7 @@ export class SalesOrderComponent {
   migrationEditedPayloadByRow: Record<number, SalesOrderPayload> = {};
   isSubmitting = false;
   isRemitting = false;
+  isSendingForDelivery = false;
   customerOptions: SalesCustomerOption[] = [];
   customerSearch = '';
   isCustomerDropdownOpen = false;
@@ -963,45 +979,222 @@ export class SalesOrderComponent {
       return;
     }
 
-    const rawRemarks = window.prompt('Enter reason for returned units:');
-    if (rawRemarks === null) {
+    this.pendingReturnOrder = order;
+    this.isReturnModalOpen = true;
+    this.isReturnModalLoading = true;
+    this.returnModalError = '';
+    this.returnForm = {
+      remarks: '',
+      isDefective: false,
+    };
+    this.selectedReturnedSerialNumbers = new Set<string>();
+    this.returnSerialGroups = [];
+
+    try {
+      const detail = await this.salesOrderService.getSalesOrderById(order.id);
+      this.returnSerialGroups = this.buildReturnSerialGroups(detail);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.returnModalError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to load sales order serials';
+      } else {
+        this.returnModalError = 'Failed to load sales order serials';
+      }
+    } finally {
+      this.isReturnModalLoading = false;
+    }
+  }
+
+  closeReturnModal(): void {
+    if (this.isReturnModalLoading || this.returningOrderIds.has(this.pendingReturnOrder?.id ?? -1)) {
       return;
     }
 
-    const remarks = rawRemarks.trim();
+    this.isReturnModalOpen = false;
+    this.pendingReturnOrder = null;
+    this.returnModalError = '';
+    this.returnSerialGroups = [];
+    this.returnForm = {
+      remarks: '',
+      isDefective: false,
+    };
+    this.selectedReturnedSerialNumbers = new Set<string>();
+  }
+
+  onReturnDefectiveChange(value: boolean): void {
+    this.returnForm.isDefective = value;
+    if (!value) {
+      this.selectedReturnedSerialNumbers = new Set<string>();
+    }
+  }
+
+  isReturnedSerialSelected(serialNumber: string): boolean {
+    return this.selectedReturnedSerialNumbers.has(this.normalizeSerial(serialNumber));
+  }
+
+  toggleReturnedSerialSelection(serialNumber: string, checked: boolean): void {
+    const normalizedSerial = this.normalizeSerial(serialNumber);
+    if (!normalizedSerial) {
+      return;
+    }
+
+    const next = new Set(this.selectedReturnedSerialNumbers);
+    if (checked) {
+      next.add(normalizedSerial);
+    } else {
+      next.delete(normalizedSerial);
+    }
+    this.selectedReturnedSerialNumbers = next;
+  }
+
+  async confirmReturnedUnits(): Promise<void> {
+    const order = this.pendingReturnOrder;
+    if (!order || !this.isForDeliveryStatus(order.status)) {
+      return;
+    }
+
+    const remarks = String(this.returnForm.remarks ?? '').trim();
     if (!remarks) {
-      this.uiError = 'Return remarks are required.';
+      this.returnModalError = 'Return remarks are required.';
+      return;
+    }
+
+    if (this.returnForm.isDefective && this.selectedReturnedSerialNumbers.size === 0) {
+      this.returnModalError = 'Select one or more indoor or outdoor serial numbers for defective return.';
       return;
     }
 
     this.returningOrderIds.add(order.id);
     this.uiError = '';
+    this.returnModalError = '';
 
     try {
       const response = await this.salesOrderService.updateSalesOrder(order.id, {
         productItems: [],
         status: 'pending',
         remarks: `Returned Units: ${remarks}`,
+        returnedSerialDetails: {
+          isDefective: this.returnForm.isDefective,
+          defectReason: this.returnForm.isDefective ? remarks : undefined,
+          defectDate: this.returnForm.isDefective ? new Date().toISOString() : null,
+          serialNumbers: this.returnForm.isDefective
+            ? [...this.selectedReturnedSerialNumbers]
+            : undefined,
+        },
       });
 
       if (!response.success) {
-        this.uiError = response.message ?? 'Failed to mark sales order as returned';
+        this.returnModalError = response.message ?? 'Failed to mark sales order as returned';
         return;
       }
 
-      this.uiMessage = 'Returned units has been recorded and status moved back to Pending.';
+      this.uiMessage = this.returnForm.isDefective
+        ? 'Returned units were recorded, linked serials were marked defective, and the SO status moved back to Pending.'
+        : 'Returned units has been recorded and status moved back to Pending.';
+      this.closeReturnModal();
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
-        this.uiError =
+        this.returnModalError =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to mark sales order as returned';
       } else {
-        this.uiError = 'Failed to mark sales order as returned';
+        this.returnModalError = 'Failed to mark sales order as returned';
       }
     } finally {
       this.returningOrderIds.delete(order.id);
     }
+  }
+
+  private buildReturnSerialGroups(detail: SalesOrderDetailItem): SalesReturnSerialOptionGroup[] {
+    const grouped = new Map<string, string[]>();
+
+    for (const item of detail.productItems ?? []) {
+      for (const [unitLabel, serials] of Object.entries(item.serialNumbers ?? {})) {
+        const normalizedUnitLabel = String(unitLabel ?? '').trim();
+        if (!normalizedUnitLabel || !Array.isArray(serials)) {
+          continue;
+        }
+
+        const existing = grouped.get(normalizedUnitLabel) ?? [];
+        const seen = new Set(existing.map((serial) => this.normalizeSerial(serial).toLowerCase()));
+
+        for (const serial of serials) {
+          const normalizedSerial = this.normalizeSerial(serial);
+          const normalizedKey = normalizedSerial.toLowerCase();
+          if (!normalizedSerial || seen.has(normalizedKey)) {
+            continue;
+          }
+
+          seen.add(normalizedKey);
+          existing.push(normalizedSerial);
+        }
+
+        if (existing.length > 0) {
+          grouped.set(normalizedUnitLabel, existing);
+        }
+      }
+    }
+
+    return [...grouped.entries()]
+      .map(([unitLabel, serials]) => ({ unitLabel, serials }))
+      .sort((left, right) => left.unitLabel.localeCompare(right.unitLabel));
+  }
+
+  canSendForDeliveryFromDrawer(): boolean {
+    if (this.drawerMode !== 'edit' || this.isMigrationDrawerMode) {
+      return false;
+    }
+
+    const normalizedStatus = String(this.form.status ?? '').trim().toLowerCase();
+    return !['for-delivery', 'for delivery', 'for_delivery', 'remitted', 'complete', 'completed'].includes(normalizedStatus);
+  }
+
+  private validateProductSerialRequirements(targetStatus?: string): string | null {
+    const salesType = this.form.salesType;
+    const status = String(targetStatus ?? this.form.status ?? '').toLowerCase();
+
+    if (salesType === 'transfer' && ['for-delivery', 'remitted'].includes(status) && this.drawerMode !== 'create') {
+      const missingSerials: string[] = [];
+      (this.form.productItems ?? []).forEach((item: any, idx: number) => {
+        (item.unitTypes ?? []).forEach((ut: any) => {
+          if (ut.value > 0 && (!ut.serials || ut.serials.length < ut.value)) {
+            missingSerials.push(`Product #${idx + 1} (${ut.label})`);
+          }
+        });
+      });
+      if (missingSerials.length > 0) {
+        return `All required serial numbers must be scanned before submitting. Missing: ${missingSerials.join(', ')}`;
+      }
+
+      return null;
+    }
+
+    if (salesType === 'transfer' && this.drawerMode === 'create') {
+      return null;
+    }
+
+    const isProductEdit = this.drawerMode === 'create' || this.form.productItems.some((item: any) => item._edited);
+    const isDeliveryOrRemit = ['for-delivery', 'remitted'].includes(status);
+    if (!isProductEdit && !isDeliveryOrRemit) {
+      return null;
+    }
+
+    const hasProduct = (this.form.productItems ?? []).length > 0;
+    const hasZeroQty = (this.form.productItems ?? []).some((item: any) => Number(item.totalSetQty) <= 0);
+    const missingSerials = (this.form.productItems ?? []).some((item: any) => {
+      return (item.unitTypes ?? []).some((ut: any) => ut.value > 0 && (!ut.serials || ut.serials.length < ut.value));
+    });
+
+    if (hasProduct && hasZeroQty) {
+      return 'Unit quantity must not be zero.';
+    }
+    if (hasProduct && missingSerials) {
+      return 'All required serial numbers must be scanned before submitting.';
+    }
+
+    return null;
   }
 
   pendingReceiveOrder: SalesOrderRow | null = null;
@@ -2584,45 +2777,11 @@ export class SalesOrderComponent {
 
   async saveDesignForm(): Promise<void> {
     this.syncMigrationDrawerQuantitiesFromSerials();
-
-    // For transfer SO, only require serials for every product/unit if status is for-delivery or remitted AND not in create mode
     const salesType = this.form.salesType;
-    const status = (this.form.status || '').toLowerCase();
-    if (salesType === 'transfer' && ['for-delivery', 'remitted'].includes(status) && this.drawerMode !== 'create') {
-      const missingSerials: string[] = [];
-      (this.form.productItems ?? []).forEach((item: any, idx: number) => {
-        (item.unitTypes ?? []).forEach((ut: any) => {
-          if (ut.value > 0 && (!ut.serials || ut.serials.length < ut.value)) {
-            missingSerials.push(`Product #${idx + 1} (${ut.label})`);
-          }
-        });
-      });
-      if (missingSerials.length > 0) {
-        this.uiError = `All required serial numbers must be scanned before submitting. Missing: ${missingSerials.join(', ')}`;
-        return;
-      }
-    } else {
-      // Only strictly validate serials if product items are being changed or status is being set to for-delivery/remitted
-      // SKIP serial validation for transfer SOs in create mode
-      if (!(salesType === 'transfer' && this.drawerMode === 'create')) {
-        const isProductEdit = this.drawerMode === 'create' || this.form.productItems.some((item: any) => item._edited);
-        const isDeliveryOrRemit = ['for-delivery', 'remitted'].includes((this.form.status || '').toLowerCase());
-        if (isProductEdit || isDeliveryOrRemit) {
-          const hasProduct = (this.form.productItems ?? []).length > 0;
-          const hasZeroQty = (this.form.productItems ?? []).some((item: any) => Number(item.totalSetQty) <= 0);
-          const missingSerials = (this.form.productItems ?? []).some((item: any) => {
-            return (item.unitTypes ?? []).some((ut: any) => ut.value > 0 && (!ut.serials || ut.serials.length < ut.value));
-          });
-          if (hasProduct && hasZeroQty) {
-            this.uiError = 'Unit quantity must not be zero.';
-            return;
-          }
-          if (hasProduct && missingSerials) {
-            this.uiError = 'All required serial numbers must be scanned before submitting.';
-            return;
-          }
-        }
-      }
+    const validationError = this.validateProductSerialRequirements();
+    if (validationError) {
+      this.uiError = validationError;
+      return;
     }
     if (this.isSubmitting) {
       return;
@@ -2722,23 +2881,13 @@ export class SalesOrderComponent {
   }
 
   async remitSales(): Promise<void> {
-        // Block if any product item has qty 0 or missing serials
-        const hasProduct = (this.form.productItems ?? []).length > 0;
-        const hasZeroQty = (this.form.productItems ?? []).some((item: any) => Number(item.totalSetQty) <= 0);
-        const missingSerials = (this.form.productItems ?? []).some((item: any) => {
-          return (item.unitTypes ?? []).some((ut: any) => ut.value > 0 && (!ut.serials || ut.serials.length < ut.value));
-        });
-        if (hasProduct && hasZeroQty) {
-          this.uiError = 'Unit quantity must not be zero.';
-          this.isRemitting = false;
-          return;
-        }
-        if (hasProduct && missingSerials) {
-          this.uiError = 'All required serial numbers must be scanned before remitting.';
-          this.isRemitting = false;
-          return;
-        }
     if (this.drawerMode !== 'edit' || this.isRemitting || this.isSubmitting) {
+      return;
+    }
+
+    const validationError = this.validateProductSerialRequirements('remitted');
+    if (validationError) {
+      this.uiError = validationError.replace('submitting', 'remitting');
       return;
     }
 
@@ -2778,6 +2927,56 @@ export class SalesOrderComponent {
       }
     } finally {
       this.isRemitting = false;
+    }
+  }
+
+  async sendForDelivery(): Promise<void> {
+    if (this.drawerMode !== 'edit' || this.isSendingForDelivery || this.isSubmitting || this.isRemitting) {
+      return;
+    }
+
+    const targetId = Number(this.editingSalesId);
+    if (!Number.isFinite(targetId) || targetId <= 0) {
+      this.uiError = 'Invalid sales order id for delivery';
+      return;
+    }
+
+    this.syncMigrationDrawerQuantitiesFromSerials();
+
+    const validationError = this.validateProductSerialRequirements('for-delivery');
+    if (validationError) {
+      this.uiError = validationError;
+      return;
+    }
+
+    const payload = this.buildPayload();
+    payload.status = 'for-delivery';
+
+    this.uiError = '';
+    this.uiMessage = '';
+    this.isSendingForDelivery = true;
+
+    try {
+      const response = await this.salesOrderService.updateSalesOrder(targetId, payload);
+      if (!response.success) {
+        this.uiError = response.message ?? 'Failed to send sales order for delivery';
+        return;
+      }
+
+      this.uiMessage = response.message ?? 'Sales order sent for delivery successfully';
+      this.closeDrawer(true);
+      this.page = 1;
+      await this.loadTabData(this.activeTab);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.uiError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to send sales order for delivery';
+      } else {
+        this.uiError = 'Failed to send sales order for delivery';
+      }
+    } finally {
+      this.isSendingForDelivery = false;
     }
   }
 
@@ -3185,9 +3384,16 @@ export class SalesOrderComponent {
           ? normalizedLabelsFromSerial
           : ['set'];
 
+    const qtyMap = new Map<string, number>();
+    for (const entry of unitTypesFromPayload) {
+      const label = String(entry.label ?? 'set').trim().toLowerCase() || 'set';
+      qtyMap.set(label, Math.max(0, Math.floor(Number(entry.value) || 0)));
+    }
+
     const unitTypes = labels.map((label) => {
       const serials = Array.isArray(serialNumbers[label]) ? serialNumbers[label] : [];
-      return this.createUnitTypeEntry(label, resolvedSetQty, serials);
+      const value = qtyMap.get(label) ?? (serials.length > 0 ? serials.length : resolvedSetQty);
+      return this.createUnitTypeEntry(label, value, serials);
     });
 
     return {

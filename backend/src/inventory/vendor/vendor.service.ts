@@ -4,10 +4,23 @@ import { PoolClient } from 'pg';
 import { DatabaseService } from 'src/database/database.service';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { UpdateVendorDto } from './dto/update-vendor.dto';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 @Injectable()
 export class VendorService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
+
+  private async getVendorAuditSnapshot(id: string): Promise<Record<string, unknown> | null> {
+    const result = await this.findOne(id);
+    if (!result.success || !result.data || typeof result.data !== 'object') {
+      return null;
+    }
+
+    return result.data as Record<string, unknown>;
+  }
 
   private async getTableColumns(
     executor: { query: PoolClient['query'] },
@@ -53,7 +66,24 @@ export class VendorService {
     );
   }
 
-  async create(dto: CreateVendorDto) {
+  private async findVendorIdByName(vendorName: string): Promise<string | null> {
+    const normalizedVendorName = String(vendorName ?? '').trim();
+    if (!normalizedVendorName) {
+      return null;
+    }
+
+    const existingVendorResult = await this.databaseService.query<{ id: string }>(
+      `SELECT v.id::text AS id
+       FROM tblvendors v
+       WHERE LOWER(TRIM(COALESCE(to_jsonb(v)->>'name', to_jsonb(v)->>'vendor_name', ''))) = LOWER(TRIM($1))
+       LIMIT 1`,
+      [normalizedVendorName],
+    );
+
+    return existingVendorResult.rows[0]?.id ? String(existingVendorResult.rows[0].id) : null;
+  }
+
+  async create(dto: CreateVendorDto, auditActor?: AuditActorContext) {
     try {
       const vendorColumns = await this.getTableColumns(this.databaseService, 'tblvendors');
       const vendorIdColumn = this.pickColumn(vendorColumns, ['id']);
@@ -75,6 +105,51 @@ export class VendorService {
         return { success: false, message: 'Vendor name column is missing in tblvendors' };
       }
 
+      const existingVendorId = await this.findVendorIdByName(name);
+      if (existingVendorId) {
+        const record: Record<string, unknown> = {
+          [vendorNameColumn]: name,
+        };
+
+        if (vendorAddressColumn && dto.address !== undefined) record[vendorAddressColumn] = String(dto.address ?? '').trim();
+        if (contactPersonColumn && dto.contactPerson !== undefined) record[contactPersonColumn] = String(dto.contactPerson ?? '').trim();
+        if (contactNumberColumn && dto.contactNumber !== undefined) record[contactNumberColumn] = String(dto.contactNumber ?? '').trim();
+        if (emailColumn && dto.email !== undefined) record[emailColumn] = String(dto.email ?? '').trim();
+        if (tinColumn && dto.tinNumber !== undefined) record[tinColumn] = String(dto.tinNumber ?? '').trim();
+        if (updatedAtColumn) record[updatedAtColumn] = new Date().toISOString();
+
+        const fields = Object.keys(record);
+        const values = Object.values(record);
+        const assignments = fields
+          .map((field, index) => `"${field}" = $${index + 1}`)
+          .join(', ');
+
+        await this.databaseService.query(
+          `UPDATE tblvendors SET ${assignments} WHERE id::text = $${fields.length + 1}`,
+          [...values, existingVendorId],
+        );
+
+        const afterSnapshot = await this.getVendorAuditSnapshot(existingVendorId);
+        await this.auditLogService.logMutation({
+          action: 'STAKEHOLDER_UPDATE',
+          entityType: 'stakeholder',
+          entityId: existingVendorId,
+          actor: auditActor,
+          description: `Updated stakeholder ${name}`,
+          requestBody: dto as unknown as Record<string, unknown>,
+          before: null,
+          after: afterSnapshot,
+          metadata: {
+            upsertMatchedExisting: true,
+          },
+        });
+
+        return {
+          success: true,
+          data: { id: existingVendorId },
+        };
+      }
+
       const record: Record<string, unknown> = {
         [vendorNameColumn]: name,
       };
@@ -89,9 +164,21 @@ export class VendorService {
       if (updatedAtColumn) record[updatedAtColumn] = new Date().toISOString();
 
       const inserted = await this.runInsert(this.databaseService, 'tblvendors', record);
+      const insertedId = String(inserted.rows[0]?.id ?? '');
+      const afterSnapshot = await this.getVendorAuditSnapshot(insertedId);
+      await this.auditLogService.logMutation({
+        action: 'STAKEHOLDER_CREATE',
+        entityType: 'stakeholder',
+        entityId: insertedId,
+        actor: auditActor,
+        description: `Created stakeholder ${name}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+        after: afterSnapshot,
+      });
+
       return {
         success: true,
-        data: { id: String(inserted.rows[0]?.id ?? '') },
+        data: { id: insertedId },
       };
     } catch (error) {
       return {
@@ -250,11 +337,13 @@ export class VendorService {
     }
   }
 
-  async update(id: string, dto: UpdateVendorDto) {
+  async update(id: string, dto: UpdateVendorDto, auditActor?: AuditActorContext) {
     const vendorId = String(id ?? '').trim();
     if (!vendorId) {
       return { success: false, message: 'Invalid vendor id' };
     }
+
+    const beforeSnapshot = await this.getVendorAuditSnapshot(vendorId);
 
     try {
       const vendorColumns = await this.getTableColumns(this.databaseService, 'tblvendors');
@@ -293,6 +382,18 @@ export class VendorService {
       if ((updateResult.rowCount ?? 0) === 0) {
         return { success: false, message: `Vendor ${vendorId} not found` };
       }
+
+      const afterSnapshot = await this.getVendorAuditSnapshot(vendorId);
+      await this.auditLogService.logMutation({
+        action: 'STAKEHOLDER_UPDATE',
+        entityType: 'stakeholder',
+        entityId: vendorId,
+        actor: auditActor,
+        description: `Updated stakeholder ${String((afterSnapshot?.name as string | undefined) ?? vendorId).trim() || vendorId}`,
+        requestBody: dto as Record<string, unknown>,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+      });
 
       return { success: true };
     } catch (error) {

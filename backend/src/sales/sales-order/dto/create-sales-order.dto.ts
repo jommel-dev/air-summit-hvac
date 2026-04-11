@@ -107,6 +107,13 @@ export class CreateSalesOrderConcernDetailDto {
 	resolvedAt?: string | null;
 }
 
+export class CreateSalesOrderReturnedSerialDetailDto {
+	isDefective?: boolean;
+	defectReason?: string;
+	defectDate?: string | null;
+	serialNumbers?: string[];
+}
+
 export class CreateSalesOrderDto {
 	customer_id?: string | null;
 	customer?: CreateSalesCustomerDto;
@@ -125,5 +132,6 @@ export class CreateSalesOrderDto {
 	remarks?: string;
 	transferDetails?: CreateSalesOrderTransferDetailDto;
 	concernDetails?: CreateSalesOrderConcernDetailDto;
+	returnedSerialDetails?: CreateSalesOrderReturnedSerialDetailDto;
 	status?: string;
 }

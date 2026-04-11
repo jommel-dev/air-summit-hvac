@@ -5,12 +5,25 @@ import { createHash, randomUUID } from 'crypto';
 import { CreateQuotationDto } from './dto/create-quotation.dto';
 import { ListQuotationQueryDto } from './dto/list-quotation-query.dto';
 import { UpdateQuotationDto } from './dto/update-quotation.dto';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 type TableQueryExecutor = { query: PoolClient['query'] };
 
 @Injectable()
 export class QuotationService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
+
+  private async getQuotationAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
+    const result = await this.findOne(id);
+    if (!result.success || !result.item || typeof result.item !== 'object') {
+      return null;
+    }
+
+    return result.item as Record<string, unknown>;
+  }
 
   private async getTableColumns(
     executor: TableQueryExecutor,
@@ -295,7 +308,12 @@ export class QuotationService {
     return customerId;
   }
 
-  async create(createQuotationDto: CreateQuotationDto, userId?: number, branchId?: number) {
+  async create(
+    createQuotationDto: CreateQuotationDto,
+    userId?: number,
+    branchId?: number,
+    auditActor?: AuditActorContext,
+  ) {
     const productItems = Array.isArray(createQuotationDto.productItems)
       ? createQuotationDto.productItems
       : [];
@@ -404,6 +422,22 @@ export class QuotationService {
           totalAmount,
           status,
         };
+      });
+
+      const afterSnapshot = await this.getQuotationAuditSnapshot(result.quotationId);
+      await this.auditLogService.logMutation({
+        action: 'QUOTATION_CREATE',
+        entityType: 'quotation',
+        entityId: result.quotationId,
+        actor: auditActor ?? { userId, branchId },
+        description: `Created quotation ${result.quoteNo || `#${result.quotationId}`}`,
+        requestBody: createQuotationDto as unknown as Record<string, unknown>,
+        after: afterSnapshot,
+        metadata: {
+          quoteNo: result.quoteNo,
+          status: result.status,
+          totalAmount: result.totalAmount,
+        },
       });
 
       return {
@@ -718,7 +752,13 @@ export class QuotationService {
     };
   }
 
-  async update(id: number, updateQuotationDto: UpdateQuotationDto, userId?: number, branchId?: number) {
+  async update(
+    id: number,
+    updateQuotationDto: UpdateQuotationDto,
+    userId?: number,
+    branchId?: number,
+    auditActor?: AuditActorContext,
+  ) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid quotation id' };
     }
@@ -726,6 +766,8 @@ export class QuotationService {
     const productItems = Array.isArray(updateQuotationDto.productItems)
       ? updateQuotationDto.productItems
       : [];
+
+    const beforeSnapshot = await this.getQuotationAuditSnapshot(id);
 
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
@@ -865,6 +907,22 @@ export class QuotationService {
         };
       });
 
+      const afterSnapshot = await this.getQuotationAuditSnapshot(id);
+      await this.auditLogService.logMutation({
+        action: 'QUOTATION_UPDATE',
+        entityType: 'quotation',
+        entityId: id,
+        actor: auditActor ?? { userId, branchId },
+        description: `Updated quotation ${String((afterSnapshot?.quoteNo as string | undefined) ?? '').trim() || `#${id}`}`,
+        requestBody: updateQuotationDto as Record<string, unknown>,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        metadata: {
+          status: result.status,
+          totalAmount: result.totalAmount,
+        },
+      });
+
       return {
         success: true,
         message: 'Quotation updated successfully',
@@ -878,10 +936,12 @@ export class QuotationService {
     }
   }
 
-  async finalize(id: number) {
+  async finalize(id: number, auditActor?: AuditActorContext) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid quotation id' };
     }
+
+    const beforeSnapshot = await this.getQuotationAuditSnapshot(id);
 
     await this.softDeleteExpiredDraftQuotations(this.getDatabaseExecutor());
 
@@ -899,6 +959,21 @@ export class QuotationService {
     if (result.rowCount === 0) {
       return { success: false, message: 'Quotation not found or not allowed to finalize' };
     }
+
+    const afterSnapshot = await this.getQuotationAuditSnapshot(Number(result.rows[0].id));
+    await this.auditLogService.logMutation({
+      action: 'QUOTATION_FINALIZE',
+      entityType: 'quotation',
+      entityId: Number(result.rows[0].id),
+      actor: auditActor,
+      description: `Finalized quotation ${String(result.rows[0].quote_no ?? '').trim() || `#${id}`}`,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      metadata: {
+        quoteNo: result.rows[0].quote_no,
+        status: result.rows[0].status,
+      },
+    });
 
     return {
       success: true,

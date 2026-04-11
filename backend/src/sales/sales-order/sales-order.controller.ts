@@ -23,6 +23,7 @@ import { AddMaterialItemDto } from './dto/add-material-item.dto';
 import { CreateSalesOrderMigrationPreviewDto } from './dto/create-sales-order-migration-preview.dto';
 import { CreateSalesOrderMigrationImportDto } from './dto/create-sales-order-migration-import.dto';
 import { MaterialTransactionsService } from 'src/inventory/material-transactions/material-transactions.service';
+import { AuditActorContext } from 'src/audit-log/audit-log.service';
 
 @Controller('sales-order')
 @UseGuards(JwtAuthGuard)
@@ -31,6 +32,23 @@ export class SalesOrderController {
     private readonly salesOrderService: SalesOrderService,
     private readonly materialTransactionsService: MaterialTransactionsService,
   ) {}
+
+  private buildAuditContext(
+    request: { user?: Record<string, unknown>; ip?: string },
+  ): AuditActorContext {
+    const userId = Number(request.user?.sub);
+    const branchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+
+    return {
+      userId: Number.isFinite(userId) ? userId : undefined,
+      username: String(request.user?.username ?? '').trim() || undefined,
+      roleName: String(request.user?.roleName ?? request.user?.role_name ?? '').trim() || undefined,
+      branchId: Number.isFinite(branchId) ? branchId : undefined,
+      ipAddress: String(request.ip ?? '').trim() || undefined,
+    };
+  }
 
   private withEffectiveBranchScope(
     query: ListSalesOrderQueryDto,
@@ -60,6 +78,7 @@ export class SalesOrderController {
       createSalesOrderDto,
       Number.isFinite(userId) ? userId : undefined,
       Number.isFinite(branchId) ? branchId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -262,6 +281,7 @@ export class SalesOrderController {
       String(id),
       dto,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -299,6 +319,7 @@ export class SalesOrderController {
       +id,
       dto,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -323,6 +344,7 @@ export class SalesOrderController {
       updateSalesOrderDto,
       Number.isFinite(userId) ? userId : undefined,
       Number.isFinite(branchId) ? branchId : undefined,
+      this.buildAuditContext(request),
     );
   }
 

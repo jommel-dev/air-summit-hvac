@@ -8,7 +8,7 @@ import { PurchaseListResponseDto } from './dto/purchase-list-response.dto';
 import { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'crypto';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
-import { AuditLogService } from 'src/audit-log/audit-log.service';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 type PurchaseRow = {
   id: number;
@@ -110,6 +110,106 @@ export class PurchaseService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
+  private async getPurchaseAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
+    const purchaseResult = await this.databaseService.query<{
+      id: number;
+      poNumber: string | null;
+      vendorId: string | null;
+      vendorName: string | null;
+      totalAmount: string | null;
+      status: string | null;
+      branchId: string | null;
+      createdAt: string | null;
+    }>(
+      `SELECT
+         po.id,
+         COALESCE(to_jsonb(po)->>'po_number', to_jsonb(po)->>'poNumber', '') AS "poNumber",
+         COALESCE(to_jsonb(po)->>'vendor_id', to_jsonb(po)->>'vendorId', '') AS "vendorId",
+         COALESCE(to_jsonb(v)->>'name', to_jsonb(v)->>'vendor_name', '') AS "vendorName",
+         COALESCE(to_jsonb(po)->>'total_amount', to_jsonb(po)->>'totalAmount', '0') AS "totalAmount",
+         COALESCE(to_jsonb(po)->>'status', 'pending') AS status,
+         COALESCE(to_jsonb(po)->>'branchId', to_jsonb(po)->>'branch_id', null) AS "branchId",
+         COALESCE(to_jsonb(po)->>'created_at', to_jsonb(po)->>'createdAt', null) AS "createdAt"
+       FROM tblpurchase_orders po
+       LEFT JOIN tblvendors v
+         ON v.id::text = COALESCE(to_jsonb(po)->>'vendor_id', to_jsonb(po)->>'vendorId', '')
+       WHERE po.id = $1
+       LIMIT 1`,
+      [id],
+    );
+
+    if (purchaseResult.rowCount === 0) {
+      return null;
+    }
+
+    const paymentsResult = await this.databaseService.query<Record<string, unknown>>(
+      `SELECT to_jsonb(pp) AS row
+       FROM tblpo_payments pp
+       WHERE COALESCE(
+         to_jsonb(pp)->>'po_id',
+         to_jsonb(pp)->>'poId',
+         to_jsonb(pp)->>'purchase_id',
+         to_jsonb(pp)->>'purchaseId',
+         to_jsonb(pp)->>'purchase_order_id',
+         to_jsonb(pp)->>'purchaseOrderId'
+       ) = $1
+       ORDER BY pp.id ASC`,
+      [String(id)],
+    );
+
+    const itemsResult = await this.databaseService.query<Record<string, unknown>>(
+      `SELECT to_jsonb(tpi) AS row
+       FROM tbltransaction_product_items tpi
+       WHERE COALESCE(
+         to_jsonb(tpi)->>'purchaseId',
+         to_jsonb(tpi)->>'purchase_id',
+         to_jsonb(tpi)->>'po_id'
+       ) = $1
+       AND LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'
+       ORDER BY tpi.id ASC`,
+      [String(id)],
+    );
+
+    const purchase = purchaseResult.rows[0];
+    return {
+      purchaseOrderId: purchase.id,
+      poNumber: purchase.poNumber,
+      vendorId: purchase.vendorId,
+      vendorName: purchase.vendorName,
+      totalAmount: this.toOptionalNumber(purchase.totalAmount) ?? 0,
+      status: purchase.status,
+      branchId: this.toOptionalNumber(purchase.branchId),
+      createdAt: purchase.createdAt,
+      paymentDetails: paymentsResult.rows.map((row) => row.row),
+      productItems: itemsResult.rows.map((row) => row.row),
+    };
+  }
+
+  private resolvePurchaseUpdateAuditAction(
+    before: Record<string, unknown> | null,
+    after: Record<string, unknown> | null,
+  ): { action: string; description: string } {
+    const beforeStatus = String(before?.status ?? '').trim().toLowerCase();
+    const afterStatus = String(after?.status ?? '').trim().toLowerCase();
+    const poNumber = String(after?.poNumber ?? before?.poNumber ?? '').trim();
+    const purchaseLabel = poNumber || `#${String(after?.purchaseOrderId ?? before?.purchaseOrderId ?? '')}`;
+
+    if (
+      !['for_approval', 'for approval', 'approval', 'pending_approval', 'pending approval'].includes(beforeStatus) &&
+      ['for_approval', 'for approval', 'approval', 'pending_approval', 'pending approval'].includes(afterStatus)
+    ) {
+      return {
+        action: 'PURCHASE_SEND_FOR_APPROVAL',
+        description: `Sent purchase order ${purchaseLabel} for approval`,
+      };
+    }
+
+    return {
+      action: 'PURCHASE_UPDATE',
+      description: `Updated purchase order ${purchaseLabel}`,
+    };
+  }
+
   private async getTableColumns(
     executor: { query: PoolClient['query'] },
     tableName: string,
@@ -154,6 +254,181 @@ export class PurchaseService {
     return candidates.find((candidate) =>
       availableColumnsLower.has(candidate.toLowerCase()),
     );
+  }
+
+  private async findVendorIdByName(
+    executor: { query: PoolClient['query'] },
+    vendorName: string,
+  ): Promise<string | null> {
+    const normalizedVendorName = String(vendorName ?? '').trim();
+    if (!normalizedVendorName) {
+      return null;
+    }
+
+    const existingVendorResult = await executor.query<{ id: string }>(
+      `SELECT v.id::text AS id
+       FROM tblvendors v
+       WHERE LOWER(TRIM(COALESCE(to_jsonb(v)->>'name', to_jsonb(v)->>'vendor_name', ''))) = LOWER(TRIM($1))
+       LIMIT 1`,
+      [normalizedVendorName],
+    );
+
+    return existingVendorResult.rows[0]?.id ? String(existingVendorResult.rows[0].id) : null;
+  }
+
+  private async updateVendorRecord(
+    executor: { query: PoolClient['query'] },
+    vendorId: string,
+    vendorColumns: string[],
+    input: {
+      name?: string;
+      address?: string;
+      contactPerson?: string;
+      contactNumber?: string;
+    },
+  ): Promise<void> {
+    const vendorNameColumn = this.pickColumn(vendorColumns, ['name', 'vendor_name']);
+    const vendorAddressColumn = this.pickColumn(vendorColumns, ['address']);
+    const contactPersonColumn = this.pickColumn(vendorColumns, ['contact_person', 'contactPerson']);
+    const contactNumberColumn = this.pickColumn(vendorColumns, ['contact_number', 'contactNumber']);
+    const updatedAtColumn = this.pickColumn(vendorColumns, ['updated_at', 'updatedAt']);
+
+    const updates: string[] = [];
+    const params: unknown[] = [];
+
+    const vendorName = String(input.name ?? '').trim();
+    const vendorAddress = String(input.address ?? '').trim();
+    const contactPerson = String(input.contactPerson ?? '').trim();
+    const contactNumber = String(input.contactNumber ?? '').trim();
+
+    if (vendorNameColumn && vendorName) {
+      params.push(vendorName);
+      updates.push(`"${vendorNameColumn}" = $${params.length}`);
+    }
+    if (vendorAddressColumn && vendorAddress) {
+      params.push(vendorAddress);
+      updates.push(`"${vendorAddressColumn}" = $${params.length}`);
+    }
+    if (contactPersonColumn && contactPerson) {
+      params.push(contactPerson);
+      updates.push(`"${contactPersonColumn}" = $${params.length}`);
+    }
+    if (contactNumberColumn && contactNumber) {
+      params.push(contactNumber);
+      updates.push(`"${contactNumberColumn}" = $${params.length}`);
+    }
+    if (updatedAtColumn) {
+      params.push(new Date().toISOString());
+      updates.push(`"${updatedAtColumn}" = $${params.length}`);
+    }
+
+    if (updates.length === 0) {
+      return;
+    }
+
+    params.push(vendorId);
+    await executor.query(
+      `UPDATE tblvendors
+       SET ${updates.join(', ')}
+       WHERE id::text = $${params.length}`,
+      params,
+    );
+  }
+
+  private async resolvePurchaseVendor(
+    executor: { query: PoolClient['query'] },
+    vendorColumns: string[],
+    input: {
+      vendorId?: string | null;
+      vendorName?: string;
+      vendorAddress?: string;
+      contactPerson?: string;
+      contactNumber?: string;
+    },
+  ): Promise<string> {
+    const vendorIdColumn = this.pickColumn(vendorColumns, ['id']);
+    const vendorNameColumn = this.pickColumn(vendorColumns, ['name', 'vendor_name']);
+    const createdAtColumn = this.pickColumn(vendorColumns, ['created_at', 'createdAt']);
+    const updatedAtColumn = this.pickColumn(vendorColumns, ['updated_at', 'updatedAt']);
+
+    let resolvedVendorId = String(input.vendorId ?? '').trim();
+    const vendorName = String(input.vendorName ?? '').trim();
+    const vendorAddress = String(input.vendorAddress ?? '').trim();
+    const contactPerson = String(input.contactPerson ?? '').trim();
+    const contactNumber = String(input.contactNumber ?? '').trim();
+
+    if (resolvedVendorId) {
+      const existingVendorResult = await executor.query<{ id: string }>(
+        `SELECT id::text AS id
+         FROM tblvendors
+         WHERE id::text = $1
+         LIMIT 1`,
+        [resolvedVendorId],
+      );
+
+      if (existingVendorResult.rowCount > 0) {
+        await this.updateVendorRecord(executor, resolvedVendorId, vendorColumns, {
+          name: vendorName,
+          address: vendorAddress,
+          contactPerson,
+          contactNumber,
+        });
+        return resolvedVendorId;
+      }
+    }
+
+    if (!vendorName) {
+      throw new Error('Vendor ID or vendor.name is required');
+    }
+
+    const matchedVendorId = await this.findVendorIdByName(executor, vendorName);
+    if (matchedVendorId) {
+      await this.updateVendorRecord(executor, matchedVendorId, vendorColumns, {
+        name: vendorName,
+        address: vendorAddress,
+        contactPerson,
+        contactNumber,
+      });
+      return matchedVendorId;
+    }
+
+    if (!vendorNameColumn) {
+      throw new Error('tblvendors name column is missing');
+    }
+
+    const vendorRecord: Record<string, unknown> = {
+      [vendorNameColumn]: vendorName,
+    };
+
+    if (vendorIdColumn) {
+      vendorRecord[vendorIdColumn] = resolvedVendorId || randomUUID();
+    }
+    const vendorAddressColumn = this.pickColumn(vendorColumns, ['address']);
+    const contactPersonColumn = this.pickColumn(vendorColumns, ['contact_person', 'contactPerson']);
+    const contactNumberColumn = this.pickColumn(vendorColumns, ['contact_number', 'contactNumber']);
+
+    if (vendorAddressColumn && vendorAddress) {
+      vendorRecord[vendorAddressColumn] = vendorAddress;
+    }
+    if (contactPersonColumn && contactPerson) {
+      vendorRecord[contactPersonColumn] = contactPerson;
+    }
+    if (contactNumberColumn && contactNumber) {
+      vendorRecord[contactNumberColumn] = contactNumber;
+    }
+    if (createdAtColumn) {
+      vendorRecord[createdAtColumn] = new Date().toISOString();
+    }
+    if (updatedAtColumn) {
+      vendorRecord[updatedAtColumn] = new Date().toISOString();
+    }
+
+    const insertedVendor = await this.runInsert(executor, 'tblvendors', vendorRecord);
+    if (insertedVendor.rowCount === 0) {
+      throw new Error('Failed to create vendor');
+    }
+
+    return String(insertedVendor.rows[0].id);
   }
 
   private async runInsert(
@@ -741,7 +1016,12 @@ export class PurchaseService {
     return processedItems;
   }
 
-  async create(createPurchaseDto: CreatePurchaseDto, userId?: number, branchId?: number) {
+  async create(
+    createPurchaseDto: CreatePurchaseDto,
+    userId?: number,
+    branchId?: number,
+    auditActor?: AuditActorContext,
+  ) {
     const poNumber = String(createPurchaseDto.poNumber ?? '').trim();
     const status = String(createPurchaseDto.status ?? 'pending').trim().toLowerCase() || 'pending';
 
@@ -755,114 +1035,14 @@ export class PurchaseService {
 
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
-        let resolvedVendorId = String(createPurchaseDto.vendorId ?? '').trim();
-        const vendorName = String(createPurchaseDto.vendor?.name ?? '').trim();
         const vendorColumns = await this.getTableColumns(client, 'tblvendors');
-        const vendorIdColumn = this.pickColumn(vendorColumns, ['id']);
-        const vendorNameColumn = this.pickColumn(vendorColumns, ['name']);
-        const vendorAddressColumn = this.pickColumn(vendorColumns, ['address']);
-        const contactPersonColumn = this.pickColumn(vendorColumns, [
-          'contact_person',
-          'contactPerson',
-        ]);
-        const contactNumberColumn = this.pickColumn(vendorColumns, [
-          'contact_number',
-          'contactNumber',
-        ]);
-
-        if (resolvedVendorId) {
-          const existingVendorResult = await client.query<{ id: string | number }>(
-            `SELECT id
-             FROM tblvendors
-             WHERE id::text = $1
-             LIMIT 1`,
-            [resolvedVendorId],
-          );
-
-          if (existingVendorResult.rowCount === 0) {
-            if (!vendorName) {
-              throw new Error('Vendor not found for provided vendorId');
-            }
-
-            if (!vendorNameColumn) {
-              throw new Error('tblvendors name column is missing');
-            }
-
-            const vendorRecord: Record<string, unknown> = {
-              [vendorNameColumn]: vendorName,
-            };
-
-            if (vendorIdColumn) {
-              vendorRecord[vendorIdColumn] = resolvedVendorId;
-            }
-
-            const vendorAddress = String(createPurchaseDto.vendor?.address ?? '').trim();
-            const contactPerson = String(
-              createPurchaseDto.vendor?.contact_person ?? '',
-            ).trim();
-            const contactNumber = String(
-              createPurchaseDto.vendor?.contact_number ?? '',
-            ).trim();
-
-            if (vendorAddressColumn && vendorAddress) {
-              vendorRecord[vendorAddressColumn] = vendorAddress;
-            }
-            if (contactPersonColumn && contactPerson) {
-              vendorRecord[contactPersonColumn] = contactPerson;
-            }
-            if (contactNumberColumn && contactNumber) {
-              vendorRecord[contactNumberColumn] = contactNumber;
-            }
-
-            const insertedVendor = await this.runInsert(client, 'tblvendors', vendorRecord);
-            if (insertedVendor.rowCount === 0) {
-              throw new Error('Failed to create vendor for provided vendorId');
-            }
-          }
-        }
-
-        if (!resolvedVendorId) {
-          if (!vendorName) {
-            throw new Error('Vendor ID or vendor.name is required');
-          }
-
-          if (!vendorNameColumn) {
-            throw new Error('tblvendors name column is missing');
-          }
-
-          const vendorRecord: Record<string, unknown> = {
-            [vendorNameColumn]: vendorName,
-          };
-
-          if (vendorIdColumn) {
-            vendorRecord[vendorIdColumn] = randomUUID();
-          }
-
-          const vendorAddress = String(createPurchaseDto.vendor?.address ?? '').trim();
-          const contactPerson = String(
-            createPurchaseDto.vendor?.contact_person ?? '',
-          ).trim();
-          const contactNumber = String(
-            createPurchaseDto.vendor?.contact_number ?? '',
-          ).trim();
-
-          if (vendorAddressColumn && vendorAddress) {
-            vendorRecord[vendorAddressColumn] = vendorAddress;
-          }
-          if (contactPersonColumn && contactPerson) {
-            vendorRecord[contactPersonColumn] = contactPerson;
-          }
-          if (contactNumberColumn && contactNumber) {
-            vendorRecord[contactNumberColumn] = contactNumber;
-          }
-
-          const insertedVendor = await this.runInsert(client, 'tblvendors', vendorRecord);
-          if (insertedVendor.rowCount === 0) {
-            throw new Error('Failed to create vendor');
-          }
-
-          resolvedVendorId = String(insertedVendor.rows[0].id);
-        }
+        const resolvedVendorId = await this.resolvePurchaseVendor(client, vendorColumns, {
+          vendorId: createPurchaseDto.vendorId,
+          vendorName: createPurchaseDto.vendor?.name,
+          vendorAddress: createPurchaseDto.vendor?.address,
+          contactPerson: createPurchaseDto.vendor?.contact_person,
+          contactNumber: createPurchaseDto.vendor?.contact_number,
+        });
 
         let computedTotalAmount = 0;
         for (const item of productItems) {
@@ -1257,6 +1437,17 @@ export class PurchaseService {
         };
       });
 
+      const afterSnapshot = await this.getPurchaseAuditSnapshot(result.purchaseOrderId);
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_CREATE',
+        entityType: 'purchase-order',
+        entityId: result.purchaseOrderId,
+        actor: auditActor ?? { userId, branchId },
+        description: `Created purchase order ${result.poNumber || `#${result.purchaseOrderId}`}`,
+        requestBody: createPurchaseDto as unknown as Record<string, unknown>,
+        after: afterSnapshot,
+      });
+
       return {
         success: true,
         message: 'Purchase request created successfully',
@@ -1481,10 +1672,12 @@ export class PurchaseService {
     });
   }
 
-  async verifyAndReceive(id: number, userId?: number) {
+  async verifyAndReceive(id: number, userId?: number, auditActor?: AuditActorContext) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid purchase id' };
     }
+
+    const beforeSnapshot = await this.getPurchaseAuditSnapshot(id);
 
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
@@ -1586,6 +1779,21 @@ export class PurchaseService {
         return { purchaseId: id, salesId, status: 'received', receivingBranchId };
       });
 
+      const afterSnapshot = await this.getPurchaseAuditSnapshot(id);
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_TRANSFER_RECEIVED',
+        entityType: 'purchase-order',
+        entityId: id,
+        actor: auditActor ?? { userId },
+        description: `Verified and received transfer purchase order ${String((afterSnapshot?.poNumber as string | undefined) ?? '').trim() || `#${id}`}`,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        metadata: {
+          salesId: result.salesId,
+          receivingBranchId: result.receivingBranchId,
+        },
+      });
+
       return {
         success: true,
         message: 'Transfer PO verified and received. Serials are now in-stock.',
@@ -1599,12 +1807,32 @@ export class PurchaseService {
     }
   }
 
-  async approve(id: number, userId?: number) {
-    return this.transitionPurchaseStatus(id, 'approved', userId, {
+  async approve(id: number, userId?: number, auditActor?: AuditActorContext) {
+    const beforeSnapshot = await this.getPurchaseAuditSnapshot(id);
+    const response = await this.transitionPurchaseStatus(id, 'approved', userId, {
       approvalOnly: true,
       updateSerialsToInStock: true,
       successMessage: 'Purchase order approved and serials moved to in-stock',
     });
+
+    if (response.success) {
+      const afterSnapshot = await this.getPurchaseAuditSnapshot(id);
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_APPROVE',
+        entityType: 'purchase-order',
+        entityId: id,
+        actor: auditActor ?? { userId },
+        description: `Approved purchase order ${String((afterSnapshot?.poNumber as string | undefined) ?? '').trim() || `#${id}`}`,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        metadata: {
+          updatedSerialCount: response.data?.updatedSerialCount,
+          recordedNetPriceItems: response.data?.recordedNetPriceItems,
+        },
+      });
+    }
+
+    return response;
   }
 
   async getVendors(search?: string) {
@@ -2180,6 +2408,7 @@ export class PurchaseService {
     updatePurchaseDto: UpdatePurchaseDto,
     userId?: number,
     branchId?: number,
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid purchase id' };
@@ -2192,6 +2421,8 @@ export class PurchaseService {
           'Invalid request body. Ensure JSON object payload is provided to PATCH /purchase/:id.',
       };
     }
+
+    const beforeSnapshot = await this.getPurchaseAuditSnapshot(id);
 
     const payload = updatePurchaseDto as UpdatePurchaseDto;
 
@@ -2221,140 +2452,14 @@ export class PurchaseService {
         }
 
         const existingPurchase = existingPurchaseResult.rows[0];
-        let resolvedVendorId = String(
-          payload.vendorId ?? existingPurchase.vendor_id ?? '',
-        ).trim();
-        const vendorName = String(payload.vendor?.name ?? '').trim();
-
         const vendorColumns = await this.getTableColumns(client, 'tblvendors');
-        const vendorIdColumn = this.pickColumn(vendorColumns, ['id']);
-        const vendorNameColumn = this.pickColumn(vendorColumns, ['name']);
-        const vendorAddressColumn = this.pickColumn(vendorColumns, ['address']);
-        const contactPersonColumn = this.pickColumn(vendorColumns, [
-          'contact_person',
-          'contactPerson',
-        ]);
-        const contactNumberColumn = this.pickColumn(vendorColumns, [
-          'contact_number',
-          'contactNumber',
-        ]);
-
-        if (resolvedVendorId) {
-          const existingVendorResult = await client.query<{ id: string | number }>(
-            `SELECT id
-             FROM tblvendors
-             WHERE id::text = $1
-             LIMIT 1`,
-            [resolvedVendorId],
-          );
-
-          if (existingVendorResult.rowCount === 0 && payload.vendor) {
-            if (!vendorNameColumn || !vendorName) {
-              throw new Error('vendor.name is required when vendorId does not exist');
-            }
-
-            const vendorRecord: Record<string, unknown> = {
-              [vendorNameColumn]: vendorName,
-            };
-            if (vendorIdColumn) {
-              vendorRecord[vendorIdColumn] = resolvedVendorId;
-            }
-
-            const vendorAddress = String(payload.vendor.address ?? '').trim();
-            const contactPerson = String(
-              payload.vendor.contact_person ?? '',
-            ).trim();
-            const contactNumber = String(
-              payload.vendor.contact_number ?? '',
-            ).trim();
-
-            if (vendorAddressColumn && vendorAddress) {
-              vendorRecord[vendorAddressColumn] = vendorAddress;
-            }
-            if (contactPersonColumn && contactPerson) {
-              vendorRecord[contactPersonColumn] = contactPerson;
-            }
-            if (contactNumberColumn && contactNumber) {
-              vendorRecord[contactNumberColumn] = contactNumber;
-            }
-
-            await this.runInsert(client, 'tblvendors', vendorRecord);
-          }
-
-          if (existingVendorResult.rowCount > 0 && payload.vendor) {
-            const vendorUpdates: string[] = [];
-            const vendorParams: unknown[] = [];
-
-            const vendorAddress = String(payload.vendor.address ?? '').trim();
-            const contactPerson = String(
-              payload.vendor.contact_person ?? '',
-            ).trim();
-            const contactNumber = String(
-              payload.vendor.contact_number ?? '',
-            ).trim();
-
-            if (vendorNameColumn && vendorName) {
-              vendorParams.push(vendorName);
-              vendorUpdates.push(`"${vendorNameColumn}" = $${vendorParams.length}`);
-            }
-            if (vendorAddressColumn && vendorAddress) {
-              vendorParams.push(vendorAddress);
-              vendorUpdates.push(`"${vendorAddressColumn}" = $${vendorParams.length}`);
-            }
-            if (contactPersonColumn && contactPerson) {
-              vendorParams.push(contactPerson);
-              vendorUpdates.push(`"${contactPersonColumn}" = $${vendorParams.length}`);
-            }
-            if (contactNumberColumn && contactNumber) {
-              vendorParams.push(contactNumber);
-              vendorUpdates.push(`"${contactNumberColumn}" = $${vendorParams.length}`);
-            }
-
-            if (vendorUpdates.length > 0) {
-              vendorParams.push(resolvedVendorId);
-              await client.query(
-                `UPDATE tblvendors
-                 SET ${vendorUpdates.join(', ')}
-                 WHERE id::text = $${vendorParams.length}`,
-                vendorParams,
-              );
-            }
-          }
-        }
-
-        if (!resolvedVendorId && payload.vendor) {
-          if (!vendorNameColumn || !vendorName) {
-            throw new Error('vendor.name is required when vendorId is not provided');
-          }
-
-          const vendorRecord: Record<string, unknown> = {
-            [vendorNameColumn]: vendorName,
-          };
-          if (vendorIdColumn) {
-            vendorRecord[vendorIdColumn] = randomUUID();
-          }
-
-          const vendorAddress = String(payload.vendor.address ?? '').trim();
-          const contactPerson = String(
-            payload.vendor.contact_person ?? '',
-          ).trim();
-          const contactNumber = String(
-            payload.vendor.contact_number ?? '',
-          ).trim();
-
-          if (vendorAddressColumn && vendorAddress) {
-            vendorRecord[vendorAddressColumn] = vendorAddress;
-          }
-          if (contactPersonColumn && contactPerson) {
-            vendorRecord[contactPersonColumn] = contactPerson;
-          }
-          if (contactNumberColumn && contactNumber) {
-            vendorRecord[contactNumberColumn] = contactNumber;
-          }
-
-          const insertedVendor = await this.runInsert(client, 'tblvendors', vendorRecord);
-          resolvedVendorId = String(insertedVendor.rows[0].id);
-        }
+        const resolvedVendorId = await this.resolvePurchaseVendor(client, vendorColumns, {
+          vendorId: payload.vendorId ?? existingPurchase.vendor_id ?? '',
+          vendorName: payload.vendor?.name,
+          vendorAddress: payload.vendor?.address,
+          contactPerson: payload.vendor?.contact_person,
+          contactNumber: payload.vendor?.contact_number,
+        });
 
         if (!resolvedVendorId) {
           throw new Error('Unable to resolve vendorId for purchase update');
@@ -2880,6 +2985,19 @@ export class PurchaseService {
           vendorId: resolvedVendorId,
           totalAmount,
         };
+      });
+
+      const afterSnapshot = await this.getPurchaseAuditSnapshot(id);
+      const auditInfo = this.resolvePurchaseUpdateAuditAction(beforeSnapshot, afterSnapshot);
+      await this.auditLogService.logMutation({
+        action: auditInfo.action,
+        entityType: 'purchase-order',
+        entityId: id,
+        actor: auditActor ?? { userId, branchId },
+        description: auditInfo.description,
+        requestBody: updatePurchaseDto as Record<string, unknown>,
+        before: beforeSnapshot,
+        after: afterSnapshot,
       });
 
       return {

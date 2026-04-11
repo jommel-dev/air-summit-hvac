@@ -81,6 +81,13 @@ export interface SalesOrderConcernDetailsPayload {
   warrantySerials?: string;
 }
 
+export interface SalesOrderReturnedSerialDetailsPayload {
+  isDefective?: boolean;
+  defectReason?: string;
+  defectDate?: string | null;
+  serialNumbers?: string[];
+}
+
 export interface SalesOrderExpenseDetailsPayload {
   expenseType?: string;
   expenseDescription?: string;
@@ -108,6 +115,7 @@ export interface SalesOrderPayload {
   remarks?: string;
   transferDetails?: SalesOrderTransferDetailsPayload;
   concernDetails?: SalesOrderConcernDetailsPayload;
+  returnedSerialDetails?: SalesOrderReturnedSerialDetailsPayload;
   status?: string;
 }
 

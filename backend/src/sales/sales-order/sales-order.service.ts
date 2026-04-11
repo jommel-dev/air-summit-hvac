@@ -13,6 +13,7 @@ import { MaterialTransactionsService } from 'src/inventory/material-transactions
 
 import { MaterialsService } from 'src/inventory/materials/materials.service';
 import { PurchaseService } from 'src/inventory/purchase/purchase.service';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 type SalesMode =
   | 'deliveries'
@@ -65,7 +66,73 @@ export class SalesOrderService {
     private readonly materialTransactionsService: MaterialTransactionsService,
     private readonly materialsService: MaterialsService,
     private readonly purchaseService: PurchaseService,
+    private readonly auditLogService: AuditLogService,
   ) {}
+
+  private async getSalesOrderAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
+    const result = await this.findOne(id);
+    if (!result.success || !result.item || typeof result.item !== 'object') {
+      return null;
+    }
+
+    return result.item as Record<string, unknown>;
+  }
+
+  private resolveSalesOrderUpdateAuditAction(
+    before: Record<string, unknown> | null,
+    after: Record<string, unknown> | null,
+    payload: UpdateSalesOrderDto,
+  ): { action: string; description: string } {
+    const beforeStatus = this.normalizeWorkflowStatus(before?.status);
+    const afterStatus = this.normalizeWorkflowStatus(after?.status);
+    const remarks = String(payload.remarks ?? after?.remarks ?? '').trim().toLowerCase();
+    const soNumber = String(after?.soNumber ?? before?.soNumber ?? '').trim();
+    const salesLabel = soNumber || `#${String(after?.id ?? before?.id ?? '')}`;
+
+    if (afterStatus === 'for-delivery' && beforeStatus !== 'for-delivery') {
+      return {
+        action: 'SALES_ORDER_SEND_FOR_DELIVERY',
+        description: `Sent sales order ${salesLabel} for delivery`,
+      };
+    }
+
+    if (
+      afterStatus === 'returned' ||
+      afterStatus === 'return' ||
+      Boolean(payload.returnedSerialDetails) ||
+      remarks.startsWith('returned units:')
+    ) {
+      return {
+        action: 'SALES_ORDER_RETURN_UNITS',
+        description: `Processed returned units for sales order ${salesLabel}`,
+      };
+    }
+
+    if (
+      ['complete', 'completed'].includes(afterStatus) &&
+      remarks.includes('marked as received from sales receivable table')
+    ) {
+      return {
+        action: 'SALES_ORDER_RECEIVE_SALES',
+        description: `Marked sales order ${salesLabel} as received`,
+      };
+    }
+
+    if (
+      ['remitted', 'complete', 'completed'].includes(afterStatus) &&
+      beforeStatus !== afterStatus
+    ) {
+      return {
+        action: 'SALES_ORDER_REMIT_SALES',
+        description: `Updated remittance state for sales order ${salesLabel}`,
+      };
+    }
+
+    return {
+      action: 'SALES_ORDER_UPDATE',
+      description: `Updated sales order ${salesLabel}`,
+    };
+  }
 
   private async getTableColumns(
     executor: { query: PoolClient['query'] },
@@ -2555,7 +2622,12 @@ export class SalesOrderService {
     };
   }
 
-  async create(createSalesOrderDto: CreateSalesOrderDto, userId?: number, branchId?: number) {
+  async create(
+    createSalesOrderDto: CreateSalesOrderDto,
+    userId?: number,
+    branchId?: number,
+    auditActor?: AuditActorContext,
+  ) {
     // --- Defer PO creation for transfer SOs until after transaction ---
     let transferPOPayload: any = null;
     let transferPOBranchId: number | undefined = undefined;
@@ -3371,6 +3443,17 @@ export class SalesOrderService {
           console.error('[Transfer SO] PO creation threw error (post-commit):', err);
         }
       }
+      const afterSnapshot = await this.getSalesOrderAuditSnapshot(result.salesOrderId);
+      await this.auditLogService.logMutation({
+        action: 'SALES_ORDER_CREATE',
+        entityType: 'sales-order',
+        entityId: result.salesOrderId,
+        actor: auditActor ?? { userId, branchId },
+        description: `Created sales order ${String((afterSnapshot?.soNumber as string | undefined) ?? '').trim() || `#${result.salesOrderId}`}`,
+        requestBody: createSalesOrderDto as unknown as Record<string, unknown>,
+        after: afterSnapshot,
+      });
+
       return {
         success: true,
         message: 'Sales order created successfully',
@@ -4360,6 +4443,7 @@ export class SalesOrderService {
     customerId: string,
     dto: CreateStatementOfAccountDto,
     userId?: number,
+    auditActor?: AuditActorContext,
   ) {
     const id = String(customerId ?? '').trim();
     if (!id) {
@@ -4368,6 +4452,21 @@ export class SalesOrderService {
 
     try {
       const { inserted, snapshot } = await this.insertStatementOfAccountRecord(id, dto, userId);
+      await this.auditLogService.logMutation({
+        action: 'STATEMENT_OF_ACCOUNT_CREATE',
+        entityType: 'statement-of-account',
+        entityId: Number(inserted.rows[0]?.id ?? 0),
+        actor: auditActor ?? { userId },
+        description: `Created statement of account for customer ${id}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+        after: {
+          statementOfAccountId: Number(inserted.rows[0]?.id ?? 0),
+          customerId: id,
+          periodFrom: snapshot.effectivePeriodFrom,
+          periodTo: snapshot.effectivePeriodTo,
+        },
+      });
+
       return {
         success: true,
         data: {
@@ -4614,6 +4713,7 @@ export class SalesOrderService {
     salesOrderId: number,
     dto: CreateStatementOfAccountDto,
     userId?: number,
+    auditActor?: AuditActorContext,
   ) {
     try {
       const salesResult = await this.databaseService.query<{ customer_id: string | null }>(
@@ -4634,6 +4734,22 @@ export class SalesOrderService {
       }
 
       const { inserted, snapshot } = await this.insertStatementOfAccountRecord(customerId, dto, userId);
+      await this.auditLogService.logMutation({
+        action: 'STATEMENT_OF_ACCOUNT_CREATE',
+        entityType: 'statement-of-account',
+        entityId: Number(inserted.rows[0]?.id ?? 0),
+        actor: auditActor ?? { userId },
+        description: `Created statement of account for sales order #${salesOrderId}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+        after: {
+          statementOfAccountId: Number(inserted.rows[0]?.id ?? 0),
+          salesOrderId,
+          customerId,
+          periodFrom: snapshot.effectivePeriodFrom,
+          periodTo: snapshot.effectivePeriodTo,
+        },
+      });
+
       return {
         success: true,
         data: {
@@ -5046,6 +5162,7 @@ export class SalesOrderService {
     updateSalesOrderDto: UpdateSalesOrderDto,
     userId?: number,
     branchId?: number,
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid sales order id' };
@@ -5060,6 +5177,7 @@ export class SalesOrderService {
     }
 
     const payload = updateSalesOrderDto as UpdateSalesOrderDto;
+    const beforeSnapshot = await this.getSalesOrderAuditSnapshot(id);
 
     try {
       const result = await this.databaseService.withTransaction(async (client) => {
@@ -5772,6 +5890,16 @@ export class SalesOrderService {
         const normalizedStatus = this.normalizeWorkflowStatus(status);
         const normalizedPreviousStatus = this.normalizeWorkflowStatus(existingSales.status);
         const normalizedRemarks = String(payload.remarks ?? '').trim().toLowerCase();
+        const returnedSerialDetails = payload.returnedSerialDetails;
+        const shouldMarkReturnedSerialsDefective = Boolean(returnedSerialDetails?.isDefective);
+        const selectedReturnedDefectiveSerials = [...new Set(
+          (Array.isArray(returnedSerialDetails?.serialNumbers)
+            ? returnedSerialDetails.serialNumbers
+            : []
+          )
+            .map((serial) => this.normalizeSerialNumber(serial))
+            .filter((serial) => serial.length > 0),
+        )];
         const isReturnedToPendingFlow =
           normalizedStatus === 'pending' &&
           normalizedPreviousStatus === 'for-delivery' &&
@@ -5786,9 +5914,49 @@ export class SalesOrderService {
           const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
           const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
           const serialCustomerIdColumn = this.pickColumn(serialColumns, ['customerId', 'customer_id']);
+          const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+          const serialIsReturnedColumn = this.pickColumn(serialColumns, ['isReturned', 'is_returned']);
+          const serialIsDefectiveColumn = this.pickColumn(serialColumns, ['isDefective', 'is_defective']);
+          const serialDefectReasonColumn = this.pickColumn(serialColumns, ['defectReason', 'defect_reason']);
+          const serialDefectDateColumn = this.pickColumn(serialColumns, ['defectDate', 'defect_date']);
 
           if (!serialSalesIdColumn) {
             throw new Error('Sales reference column is not configured in tblserial_numbers');
+          }
+
+          if (
+            shouldMarkReturnedSerialsDefective &&
+            selectedReturnedDefectiveSerials.length === 0
+          ) {
+            throw new Error('Select at least one serial number for defective return.');
+          }
+
+          if (
+            shouldMarkReturnedSerialsDefective &&
+            selectedReturnedDefectiveSerials.length > 0 &&
+            serialNumberColumn
+          ) {
+            const linkedSerialResult = await client.query<{ serial_number: string | null }>(
+              `SELECT COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number') AS serial_number
+               FROM tblserial_numbers sn
+               WHERE "${serialSalesIdColumn}" = $1`,
+              [id],
+            );
+
+            const linkedSerialSet = new Set(
+              linkedSerialResult.rows
+                .map((row) => this.normalizeSerialNumber(row.serial_number).toLowerCase())
+                .filter((serial) => serial.length > 0),
+            );
+
+            const invalidSelectedSerials = selectedReturnedDefectiveSerials.filter(
+              (serial) => !linkedSerialSet.has(serial.toLowerCase()),
+            );
+            if (invalidSelectedSerials.length > 0) {
+              throw new Error(
+                `Selected defective serials are not linked to this sales order: ${invalidSelectedSerials.join(', ')}`,
+              );
+            }
           }
 
           const serialResetParams: unknown[] = [null];
@@ -5804,6 +5972,26 @@ export class SalesOrderService {
             serialResetSet.push(`"${serialCustomerIdColumn}" = $${serialResetParams.length}`);
           }
 
+          if (serialIsReturnedColumn) {
+            serialResetParams.push(true);
+            serialResetSet.push(`"${serialIsReturnedColumn}" = $${serialResetParams.length}`);
+          }
+
+          if (serialIsDefectiveColumn) {
+            serialResetParams.push(false);
+            serialResetSet.push(`"${serialIsDefectiveColumn}" = $${serialResetParams.length}`);
+          }
+
+          if (serialDefectReasonColumn) {
+            serialResetParams.push(null);
+            serialResetSet.push(`"${serialDefectReasonColumn}" = $${serialResetParams.length}`);
+          }
+
+          if (serialDefectDateColumn) {
+            serialResetParams.push(null);
+            serialResetSet.push(`"${serialDefectDateColumn}" = $${serialResetParams.length}`);
+          }
+
           serialResetParams.push(id);
 
           await client.query(
@@ -5812,6 +6000,52 @@ export class SalesOrderService {
              WHERE "${serialSalesIdColumn}" = $${serialResetParams.length}`,
             serialResetParams,
           );
+
+          if (
+            shouldMarkReturnedSerialsDefective &&
+            selectedReturnedDefectiveSerials.length > 0 &&
+            serialNumberColumn
+          ) {
+            const serialDefectParams: unknown[] = [];
+            const serialDefectSet: string[] = [];
+
+            if (serialStatusColumn) {
+              serialDefectParams.push('defective');
+              serialDefectSet.push(`"${serialStatusColumn}" = $${serialDefectParams.length}`);
+            }
+            if (serialIsDefectiveColumn) {
+              serialDefectParams.push(true);
+              serialDefectSet.push(`"${serialIsDefectiveColumn}" = $${serialDefectParams.length}`);
+            }
+            if (serialDefectReasonColumn) {
+              serialDefectParams.push(
+                String(returnedSerialDetails?.defectReason ?? payload.remarks ?? '').trim() || null,
+              );
+              serialDefectSet.push(`"${serialDefectReasonColumn}" = $${serialDefectParams.length}`);
+            }
+            if (serialDefectDateColumn) {
+              serialDefectParams.push(
+                this.toIsoDateOrNull(returnedSerialDetails?.defectDate) ?? new Date().toISOString(),
+              );
+              serialDefectSet.push(`"${serialDefectDateColumn}" = $${serialDefectParams.length}`);
+            }
+
+            if (serialDefectSet.length > 0) {
+              serialDefectParams.push(selectedReturnedDefectiveSerials);
+              await client.query(
+                `UPDATE tblserial_numbers
+                 SET ${serialDefectSet.join(', ')}
+                 WHERE LOWER(
+                   regexp_replace(BTRIM(COALESCE("${serialNumberColumn}"::text, '')), '\\s+', ' ', 'g')
+                 ) = ANY($${serialDefectParams.length}::text[])`,
+                serialDefectParams.map((value, index) =>
+                  index === serialDefectParams.length - 1 && Array.isArray(value)
+                    ? value.map((serial) => String(serial).toLowerCase())
+                    : value,
+                ),
+              );
+            }
+          }
 
           // Restore stock for returned material items (reverse the earlier deduction)
           await this.releaseReturnedMaterials(client, id, userId);
@@ -5844,6 +6078,19 @@ export class SalesOrderService {
           status,
           // materialSync,
         };
+      });
+
+      const afterSnapshot = await this.getSalesOrderAuditSnapshot(id);
+      const auditInfo = this.resolveSalesOrderUpdateAuditAction(beforeSnapshot, afterSnapshot, updateSalesOrderDto);
+      await this.auditLogService.logMutation({
+        action: auditInfo.action,
+        entityType: 'sales-order',
+        entityId: id,
+        actor: auditActor ?? { userId, branchId },
+        description: auditInfo.description,
+        requestBody: updateSalesOrderDto as Record<string, unknown>,
+        before: beforeSnapshot,
+        after: afterSnapshot,
       });
 
       return {

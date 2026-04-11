@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 type Trend = 'up' | 'down';
 
@@ -82,7 +83,48 @@ type SalesSettlementStateRow = {
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
+
+  private async getSalesSettlementAuditSnapshot(
+    salesOrderId: number,
+    branchId?: number,
+  ): Promise<Record<string, unknown> | null> {
+    const branchParam = branchId ? String(branchId) : null;
+    const result = await this.databaseService.query<SalesSettlementStateRow>(
+      `${this.getSalesDashboardBaseCte()}
+       SELECT
+         ss.so_id::text AS "soId",
+         ss.total_amount::text AS "totalAmount",
+         ss.paid_amount::text AS "paidAmount",
+         ss.remaining_amount::text AS "remainingAmount",
+         ss.outstanding_receivable_amount::text AS "outstandingReceivableAmount",
+         ss.normalized_status::text AS "normalizedStatus",
+         NULLIF(ss.branch_id, '')::text AS "branchId"
+       FROM sales_scope ss
+       WHERE ss.so_id = $1::text
+         AND ($2::text IS NULL OR ss.branch_id = $2::text)
+       LIMIT 1`,
+      [String(salesOrderId), branchParam],
+    );
+
+    if (result.rowCount === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+    return {
+      salesOrderId: Number(row.soId),
+      totalAmount: this.toNumber(row.totalAmount),
+      paidAmount: this.toNumber(row.paidAmount),
+      remainingAmount: this.toNumber(row.remainingAmount),
+      outstandingReceivableAmount: this.toNumber(row.outstandingReceivableAmount),
+      normalizedStatus: row.normalizedStatus,
+      branchId: row.branchId ? Number(row.branchId) : null,
+    };
+  }
 
   private toNumber(value: unknown): number {
     const parsed = Number(value);
@@ -1279,11 +1321,14 @@ export class DashboardService {
       postDated?: string | null;
     },
     branchId?: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; message: string }> {
     const salesOrderId = Number(payload.salesOrderId);
     if (!Number.isFinite(salesOrderId) || salesOrderId <= 0) {
       throw new BadRequestException('A valid salesOrderId is required');
     }
+
+    const beforeSnapshot = await this.getSalesSettlementAuditSnapshot(salesOrderId, branchId);
 
     const mode = payload.mode;
     if (!mode || !['partial', 'full', 'cheque', 'split'].includes(mode)) {
@@ -1355,6 +1400,21 @@ export class DashboardService {
       }
 
       await this.updateSalesOrderStatusForSettlement(client, salesOrderId, branchId);
+    });
+
+    const afterSnapshot = await this.getSalesSettlementAuditSnapshot(salesOrderId, branchId);
+    await this.auditLogService.logMutation({
+      action: 'DASHBOARD_SALES_SETTLEMENT',
+      entityType: 'sales-settlement',
+      entityId: salesOrderId,
+      actor: auditActor,
+      description: `Recorded ${mode} settlement for sales order #${salesOrderId}`,
+      requestBody: payload as Record<string, unknown>,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      metadata: {
+        mode,
+      },
     });
 
     return {
