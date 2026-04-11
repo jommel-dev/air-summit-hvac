@@ -98,6 +98,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   editingPoNumber = '';
   editingPurchaseStatus = '';
   isTransferPO: boolean = false;
+  poLinkedSerialNumbersByUnitType: Record<string, string[]> = {};
   unresolvedLinkedSerialNumbersByUnitType: Record<string, string[]> = {};
   originatingSalesOrder: {
     id: number;
@@ -1271,6 +1272,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     try {
       const detail = await this.purchaseOrderService.getPurchaseById(item.id, {
         includeInstalled: this.activeTab === 'master-data',
+        preferPoLinkedSerials: this.activeTab === 'master-data',
       });
 
       if (!detail) {
@@ -1318,6 +1320,15 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
    * For transfer POs, get serials from originatingSalesOrder if present.
    */
   getDisplayUnitTypeSerials(unitType: any): string[] {
+    if (this.isMasterDataDrawerMode()) {
+      const normalizedLabel = String(unitType?.label ?? '').trim().toLowerCase();
+      for (const [entryLabel, serials] of Object.entries(this.poLinkedSerialNumbersByUnitType)) {
+        if (String(entryLabel ?? '').trim().toLowerCase() === normalizedLabel) {
+          return Array.isArray(serials) ? serials : [];
+        }
+      }
+    }
+
     if (this.isTransferPOViewOnly && this.originatingSalesOrder && Array.isArray(this.originatingSalesOrder.productItems)) {
       const poProduct = this.createForm.productItems[this.activeProductTabIndex];
       // Try to match by productId/capacityId and check both salesId and previousSalesId
@@ -1348,6 +1359,19 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     return Object.entries(this.unresolvedLinkedSerialNumbersByUnitType)
       .filter(([_, serials]) => Array.isArray(serials) && serials.length > 0)
       .map(([unitType, serials]) => ({ unitType, serials }));
+  }
+
+  get poLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
+    return Object.entries(this.poLinkedSerialNumbersByUnitType)
+      .filter(([_, serials]) => Array.isArray(serials) && serials.length > 0)
+      .map(([unitType, serials]) => ({ unitType, serials }));
+  }
+
+  get totalPoLinkedSerialCount(): number {
+    return this.poLinkedSerialEntries.reduce(
+      (total, entry) => total + entry.serials.length,
+      0,
+    );
   }
 
   get totalUnresolvedLinkedSerialCount(): number {
@@ -1723,6 +1747,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       totalAmount: 0,
     };
     this.unresolvedLinkedSerialNumbersByUnitType = {};
+    this.poLinkedSerialNumbersByUnitType = {};
     this.vendorSearch = '';
     this.productSearchByItem = {};
     this.isProductDropdownOpenByItem = {};
@@ -1748,6 +1773,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.manualSerialInput = '';
     this.manualSerialError = '';
     this.unresolvedLinkedSerialNumbersByUnitType = {};
+    this.poLinkedSerialNumbersByUnitType = {};
     this.queuedSerialScans = [];
     this.activeSerialFlushCount = 0;
     this.serialFlushFailureCount = 0;
@@ -1940,6 +1966,15 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
 
     if (this.isMasterDataDrawerMode()) {
+      for (const entry of this.poLinkedSerialEntries) {
+        for (const serialNumber of entry.serials) {
+          rows.push({
+            unitType: `PO Linked - ${entry.unitType}`,
+            serialNumber,
+          });
+        }
+      }
+
       for (const entry of this.unresolvedLinkedSerialEntries) {
         for (const serialNumber of entry.serials) {
           rows.push({
@@ -3304,6 +3339,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.unresolvedLinkedSerialNumbersByUnitType =
       detail.unresolvedLinkedSerialNumbers && typeof detail.unresolvedLinkedSerialNumbers === 'object'
         ? this.normalizeSerialNumbersByUnitType(detail.unresolvedLinkedSerialNumbers)
+        : {};
+
+    this.poLinkedSerialNumbersByUnitType =
+      detail.poLinkedSerialNumbers && typeof detail.poLinkedSerialNumbers === 'object'
+        ? this.normalizeSerialNumbersByUnitType(detail.poLinkedSerialNumbers)
         : {};
 
     this.vendorSearch = detail.vendorName ?? fallbackItem.vendorName ?? '';

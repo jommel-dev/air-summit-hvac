@@ -54,6 +54,9 @@
             @else if (isTransferPOViewOnly) { View Transfer PO }
             @else if (activeTab === 'approvals' || activeTab === 'master-data') { View Purchase Order }
             @else { Update Purchase Order }
+            @if (drawerMode !== 'create' && editingPoNumber) {
+              <span class="ml-2 text-sm font-medium text-brand-600 dark:text-brand-300">{{ editingPoNumber }}</span>
+            }
           </h3>
           <p class="text-sm text-gray-500 dark:text-gray-400">
             @if (isTransferPOViewOnly) { This is a Transfer PO — read-only. Edit via the originating Sales Order. }
@@ -402,7 +405,7 @@
                           ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
                           : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
                       >
-                        {{ unitType.label }} (Scanned: {{ unitType.serials.length }})
+                        {{ unitType.label }} (Scanned: {{ getDisplayUnitTypeSerials(unitType).length }})
                       </button>
                     }
                   </div>
@@ -565,7 +568,7 @@
                             </div>
                           }
 
-                          @if (!isTransferPOViewOnly && isMasterDataDrawerMode() && unitType.serials.length === 0) {
+                          @if (!isTransferPOViewOnly && isMasterDataDrawerMode() && getDisplayUnitTypeSerials(unitType).length === 0) {
                             <p class="text-xs text-gray-500 dark:text-gray-400">No scanned serial numbers yet.</p>
                           }
                           @if (isTransferPOViewOnly && getDisplayUnitTypeSerials(unitType).length === 0) {
