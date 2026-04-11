@@ -10,6 +10,20 @@ export interface PurchaseOrderItem {
   status: string;
   createdAt: string | null;
   serialCount: number;
+  productItems?: Array<{
+    id: string | number | null;
+    productId: string | null;
+    capacityId: string | null;
+    salesId?: string | null;
+    product?: {
+      id: string | number | null;
+      productName: string | null;
+    } | null;
+    capacity?: {
+      id: string | number | null;
+      capacity: string | null;
+    } | null;
+  }>;
   isTransferPO?: boolean;
   originatingSalesOrder?: { id: number } | null;
 }
@@ -62,6 +76,7 @@ export interface PurchaseOrderDetailItem {
   status: string;
   paymentDetails: PurchaseOrderDetailPayment[];
   productItems: PurchaseOrderDetailProductItem[];
+  serialStatuses?: Record<string, string>;
   poLinkedSerialNumbers?: Record<string, string[]>;
   unresolvedLinkedSerialNumbers?: Record<string, string[]>;
   createdAt: string | null;

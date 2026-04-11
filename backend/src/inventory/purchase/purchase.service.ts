@@ -1897,6 +1897,7 @@ export class PurchaseService {
       );
 
       const serialMap = new Map<string, Record<string, string[]>>();
+      const serialStatuses: Record<string, string> = {};
       const poLinkedSerialNumbers: Record<string, string[]> = {};
       const unresolvedSerialsByUnitType: Record<string, string[]> = {};
       const includeInstalled = options?.includeInstalled === true;
@@ -1911,6 +1912,8 @@ export class PurchaseService {
         if (!serialNumber || (!includeInstalled && serialStatus === 'installed')) {
           continue;
         }
+
+        serialStatuses[serialNumber.toLowerCase()] = serialStatus || 'in_stock';
 
         if (!Array.isArray(poLinkedSerialNumbers[unitType])) {
           poLinkedSerialNumbers[unitType] = [];
@@ -1965,7 +1968,7 @@ export class PurchaseService {
           purchaseId: this.toOptionalNumber(product.purchaseId) ?? id,
           salesId: this.toOptionalNumber(product.salesId),
           status: product.status ?? 'pending',
-          serialNumbers: preferPoLinkedSerials ? {} : (serialMap.get(serialKey) ?? {}),
+          serialNumbers: serialMap.get(serialKey) ?? {},
         };
       });
 
@@ -2156,6 +2159,7 @@ export class PurchaseService {
             downPayment: this.toOptionalNumber(payment.downPayment) ?? 0,
           })),
           productItems: mappedProductItems,
+          serialStatuses,
           poLinkedSerialNumbers,
           unresolvedLinkedSerialNumbers: unresolvedSerialsByUnitType,
           createdAt: purchase.createdAt,

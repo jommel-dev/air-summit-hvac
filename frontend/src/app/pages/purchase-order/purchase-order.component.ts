@@ -98,6 +98,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   editingPoNumber = '';
   editingPurchaseStatus = '';
   isTransferPO: boolean = false;
+  serialStatusByNumber: Record<string, string> = {};
   poLinkedSerialNumbersByUnitType: Record<string, string[]> = {};
   unresolvedLinkedSerialNumbersByUnitType: Record<string, string[]> = {};
   originatingSalesOrder: {
@@ -680,6 +681,42 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       currency: 'PHP',
       minimumFractionDigits: 2,
     }).format(value ?? 0);
+  }
+
+  getPurchaseTableProductLabels(item: PurchaseOrderItem): string[] {
+    const productItems = Array.isArray(item.productItems) ? item.productItems : [];
+    const seen = new Set<string>();
+    const labels: string[] = [];
+
+    for (const productItem of productItems) {
+      const label = String(productItem?.product?.productName ?? '').trim();
+      if (!label) {
+        continue;
+      }
+
+      const key = label.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      labels.push(label);
+    }
+
+    return labels;
+  }
+
+  getPurchaseTableVisibleProductLabels(item: PurchaseOrderItem, limit = 2): string[] {
+    return this.getPurchaseTableProductLabels(item).slice(0, limit);
+  }
+
+  getPurchaseTableHiddenProductCount(item: PurchaseOrderItem, limit = 2): number {
+    return Math.max(0, this.getPurchaseTableProductLabels(item).length - limit);
+  }
+
+  getPurchaseTableHiddenProductTooltip(item: PurchaseOrderItem, limit = 2): string {
+    const hidden = this.getPurchaseTableProductLabels(item).slice(limit);
+    return hidden.join(', ');
   }
 
   isMasterDataDrawerMode(): boolean {
@@ -1320,12 +1357,53 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
    * For transfer POs, get serials from originatingSalesOrder if present.
    */
   getDisplayUnitTypeSerials(unitType: any): string[] {
-    if (this.isMasterDataDrawerMode()) {
+    if (this.isMasterDataDrawerMode() && this.createForm.productItems.length === 1) {
       const normalizedLabel = String(unitType?.label ?? '').trim().toLowerCase();
+      const allocations = this.getAllocatedFallbackSerialsByProductKey();
+      const allocated = allocations[`0::${normalizedLabel}`] ?? [];
       for (const [entryLabel, serials] of Object.entries(this.poLinkedSerialNumbersByUnitType)) {
         if (String(entryLabel ?? '').trim().toLowerCase() === normalizedLabel) {
-          return Array.isArray(serials) ? serials : [];
+          const baseSerials = Array.isArray(serials) ? serials : [];
+          const merged = [...baseSerials];
+          const seen = new Set(merged.map((serial) => this.normalizeSerial(serial).toLowerCase()));
+
+          for (const serial of allocated) {
+            const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+            if (!normalizedSerial || seen.has(normalizedSerial)) {
+              continue;
+            }
+
+            seen.add(normalizedSerial);
+            merged.push(serial);
+          }
+
+          return merged;
         }
+      }
+
+      return allocated;
+    }
+
+    if (this.isMasterDataDrawerMode()) {
+      const normalizedLabel = String(unitType?.label ?? '').trim().toLowerCase();
+      const allocations = this.getAllocatedFallbackSerialsByProductKey();
+      const allocated = allocations[`${this.activeProductTabIndex}::${normalizedLabel}`] ?? [];
+      if (allocated.length > 0) {
+        const baseSerials = Array.isArray(unitType?.serials) ? unitType.serials : [];
+        const merged = [...baseSerials];
+        const seen = new Set(merged.map((serial) => this.normalizeSerial(serial).toLowerCase()));
+
+        for (const serial of allocated) {
+          const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+          if (!normalizedSerial || seen.has(normalizedSerial)) {
+            continue;
+          }
+
+          seen.add(normalizedSerial);
+          merged.push(serial);
+        }
+
+        return merged;
       }
     }
 
@@ -1355,16 +1433,173 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     return unitType.serials;
   }
 
-  get unresolvedLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
+  private getBaseUnresolvedLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
     return Object.entries(this.unresolvedLinkedSerialNumbersByUnitType)
       .filter(([_, serials]) => Array.isArray(serials) && serials.length > 0)
-      .map(([unitType, serials]) => ({ unitType, serials }));
+      .map(([unitType, serials]) => ({ unitType, serials: [...serials] }));
+  }
+
+  private getFallbackPoolEntries(): Array<{ unitType: string; serials: string[] }> {
+    const merged = new Map<string, string[]>();
+
+    for (const entry of this.getBaseUnresolvedLinkedSerialEntries()) {
+      merged.set(entry.unitType, [...entry.serials]);
+    }
+
+    for (const entry of this.additionalPoLinkedSerialEntries) {
+      const existing = merged.get(entry.unitType) ?? [];
+      const seen = new Set(existing.map((serial) => this.normalizeSerial(serial).toLowerCase()));
+
+      for (const serial of entry.serials) {
+        const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+        if (!normalizedSerial || seen.has(normalizedSerial)) {
+          continue;
+        }
+
+        seen.add(normalizedSerial);
+        existing.push(serial);
+      }
+
+      if (existing.length > 0) {
+        merged.set(entry.unitType, existing);
+      }
+    }
+
+    return [...merged.entries()].map(([unitType, serials]) => ({ unitType, serials }));
+  }
+
+  private getAllocatedFallbackSerialsByProductKey(): Record<string, string[]> {
+    const pools = new Map<string, string[]>();
+    for (const entry of this.getFallbackPoolEntries()) {
+      pools.set(String(entry.unitType ?? '').trim().toLowerCase(), [...entry.serials]);
+    }
+
+    const allocations: Record<string, string[]> = {};
+
+    this.createForm.productItems.forEach((item, productIndex) => {
+      for (const unitType of item.unitTypes) {
+        const unitLabel = String(unitType.label ?? '').trim().toLowerCase();
+        if (!unitLabel) {
+          continue;
+        }
+
+        const pool = pools.get(unitLabel) ?? [];
+        if (pool.length === 0) {
+          continue;
+        }
+
+        const expectedQty = Math.max(0, Number(unitType.value) || 0);
+        const currentQty = Array.isArray(unitType.serials) ? unitType.serials.length : 0;
+        const missingQty = Math.max(0, expectedQty - currentQty);
+        if (missingQty <= 0) {
+          continue;
+        }
+
+        const allocated = pool.splice(0, missingQty);
+        if (allocated.length > 0) {
+          allocations[`${productIndex}::${unitLabel}`] = allocated;
+        }
+
+        pools.set(unitLabel, pool);
+      }
+    });
+
+    return allocations;
+  }
+
+  get unresolvedLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
+    const allocations = this.getAllocatedFallbackSerialsByProductKey();
+
+    return this.getFallbackPoolEntries()
+      .map((entry) => {
+        const unitLabel = String(entry.unitType ?? '').trim().toLowerCase();
+        const allocatedSerials = Object.entries(allocations)
+          .filter(([key]) => key.endsWith(`::${unitLabel}`))
+          .flatMap(([, serials]) => serials);
+        const allocatedSet = new Set(
+          allocatedSerials.map((serial) => this.normalizeSerial(serial).toLowerCase()),
+        );
+        const remaining = entry.serials.filter((serial) => {
+          const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+          return normalizedSerial && !allocatedSet.has(normalizedSerial);
+        });
+
+        return { unitType: entry.unitType, serials: remaining };
+      })
+      .filter((entry) => entry.serials.length > 0);
   }
 
   get poLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
     return Object.entries(this.poLinkedSerialNumbersByUnitType)
       .filter(([_, serials]) => Array.isArray(serials) && serials.length > 0)
       .map(([unitType, serials]) => ({ unitType, serials }));
+  }
+
+  getSerialStatus(serialNumber: string): string {
+    const normalizedSerial = this.normalizeSerial(serialNumber).toLowerCase();
+    if (!normalizedSerial) {
+      return 'in_stock';
+    }
+
+    return String(this.serialStatusByNumber[normalizedSerial] ?? 'in_stock').trim().toLowerCase() || 'in_stock';
+  }
+
+  isInstalledSerial(serialNumber: string): boolean {
+    return this.getSerialStatus(serialNumber) === 'installed';
+  }
+
+  get additionalPoLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
+    const displayedSerialsByUnitType = new Map<string, Set<string>>();
+
+    for (const item of this.createForm.productItems) {
+      for (const unitType of item.unitTypes) {
+        const unitLabel = String(unitType.label ?? '').trim().toLowerCase();
+        if (!unitLabel) {
+          continue;
+        }
+
+        const existing = displayedSerialsByUnitType.get(unitLabel) ?? new Set<string>();
+        for (const serial of unitType.serials) {
+          const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+          if (normalizedSerial) {
+            existing.add(normalizedSerial);
+          }
+        }
+        displayedSerialsByUnitType.set(unitLabel, existing);
+      }
+    }
+
+    for (const entry of this.getBaseUnresolvedLinkedSerialEntries()) {
+      const unitLabel = String(entry.unitType ?? '').trim().toLowerCase();
+      if (!unitLabel) {
+        continue;
+      }
+
+      const existing = displayedSerialsByUnitType.get(unitLabel) ?? new Set<string>();
+      for (const serial of entry.serials) {
+        const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+        if (normalizedSerial) {
+          existing.add(normalizedSerial);
+        }
+      }
+      displayedSerialsByUnitType.set(unitLabel, existing);
+    }
+
+    return this.poLinkedSerialEntries
+      .map((entry) => {
+        const unitLabel = String(entry.unitType ?? '').trim().toLowerCase();
+        const displayed = displayedSerialsByUnitType.get(unitLabel) ?? new Set<string>();
+        const remaining = entry.serials.filter((serial) => {
+          const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
+          return normalizedSerial && !displayed.has(normalizedSerial);
+        });
+
+        return {
+          unitType: entry.unitType,
+          serials: remaining,
+        };
+      })
+      .filter((entry) => entry.serials.length > 0);
   }
 
   get totalPoLinkedSerialCount(): number {
@@ -1741,6 +1976,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       productItems: [this.createEmptyProductItem()],
       totalAmount: 0,
     };
+    this.serialStatusByNumber = {};
     this.unresolvedLinkedSerialNumbersByUnitType = {};
     this.poLinkedSerialNumbersByUnitType = {};
     this.vendorSearch = '';
@@ -1767,6 +2003,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.manualSerialDialogState = null;
     this.manualSerialInput = '';
     this.manualSerialError = '';
+    this.serialStatusByNumber = {};
     this.unresolvedLinkedSerialNumbersByUnitType = {};
     this.poLinkedSerialNumbersByUnitType = {};
     this.queuedSerialScans = [];
@@ -1952,7 +2189,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }> = [];
 
     for (const unitType of activeItem.unitTypes) {
-      for (const serialNumber of unitType.serials) {
+      const serials = this.isMasterDataDrawerMode()
+        ? this.getDisplayUnitTypeSerials(unitType)
+        : unitType.serials;
+      for (const serialNumber of serials) {
         rows.push({
           unitType: unitType.label,
           serialNumber,
@@ -1961,12 +2201,16 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
 
     if (this.isMasterDataDrawerMode()) {
-      for (const entry of this.poLinkedSerialEntries) {
-        for (const serialNumber of entry.serials) {
-          rows.push({
-            unitType: `PO Linked - ${entry.unitType}`,
-            serialNumber,
-          });
+      if (this.createForm.productItems.length === 1) {
+        for (const entry of this.poLinkedSerialEntries) {
+          for (const serialNumber of entry.serials) {
+            const normalizedSerial = this.normalizeSerial(serialNumber).toLowerCase();
+            if (rows.some((row) => this.normalizeSerial(row.serialNumber).toLowerCase() === normalizedSerial)) {
+              continue;
+            }
+
+            rows.push({ unitType: entry.unitType, serialNumber });
+          }
         }
       }
 
@@ -3334,6 +3578,16 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.unresolvedLinkedSerialNumbersByUnitType =
       detail.unresolvedLinkedSerialNumbers && typeof detail.unresolvedLinkedSerialNumbers === 'object'
         ? this.normalizeSerialNumbersByUnitType(detail.unresolvedLinkedSerialNumbers)
+        : {};
+
+    this.serialStatusByNumber =
+      detail.serialStatuses && typeof detail.serialStatuses === 'object'
+        ? Object.fromEntries(
+            Object.entries(detail.serialStatuses).map(([serialNumber, status]) => [
+              this.normalizeSerial(serialNumber).toLowerCase(),
+              String(status ?? '').trim().toLowerCase() || 'in_stock',
+            ]),
+          )
         : {};
 
     this.poLinkedSerialNumbersByUnitType =

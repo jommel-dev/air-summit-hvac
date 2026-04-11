@@ -545,6 +545,9 @@
                                     <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
                                       <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">#</th>
                                       <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Number</th>
+                                      @if (isMasterDataDrawerMode()) {
+                                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+                                      }
                                       @if (!(isDrawerViewMode && isTransferPOViewOnly)) {
                                         <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
                                       }
@@ -555,6 +558,19 @@
                                       <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
                                         <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serialIndex + 1 }}</td>
                                         <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ serial }}</td>
+                                        @if (isMasterDataDrawerMode()) {
+                                          <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
+                                            @if (isInstalledSerial(serial)) {
+                                              <span class="inline-flex rounded-full bg-warning-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-warning-800 dark:bg-warning-500/15 dark:text-warning-300">
+                                                Installed
+                                              </span>
+                                            } @else {
+                                              <span class="inline-flex rounded-full bg-success-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-success-800 dark:bg-success-500/15 dark:text-success-300">
+                                                In Stock
+                                              </span>
+                                            }
+                                          </td>
+                                        }
                                         @if (!(isDrawerViewMode && isTransferPOViewOnly)) {
                                           <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">
                                             <button type="button" (click)="requestRemoveScannedSerial(activeProductTabIndex, unitType.label, serial)" class="rounded border border-error-300 px-2 py-1 text-xs text-error-700 hover:bg-error-50 dark:border-error-500/40 dark:text-error-400 dark:hover:bg-error-500/10">Remove</button>
@@ -592,7 +608,7 @@
                           </span>
                         </p>
                         <p class="mb-3 text-xs text-warning-800 dark:text-warning-100">
-                          These serials are linked to this PO but do not have enough product or capacity data to attach to a specific line item.
+                          These serials are linked to this PO but could not be attached to a displayed line item because their mapping is incomplete or no longer matches the current product lines.
                         </p>
                         <div class="space-y-3">
                           @for (entry of unresolvedLinkedSerialEntries; track entry.unitType) {
@@ -604,6 +620,7 @@
                                     <tr class="border-b border-warning-100 bg-warning-50 dark:border-warning-500/10 dark:bg-warning-500/5">
                                       <th class="px-3 py-2 text-left text-xs font-medium text-warning-700 dark:text-warning-200">#</th>
                                       <th class="px-3 py-2 text-left text-xs font-medium text-warning-700 dark:text-warning-200">Serial Number</th>
+                                      <th class="px-3 py-2 text-left text-xs font-medium text-warning-700 dark:text-warning-200">Status</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -611,6 +628,17 @@
                                       <tr class="border-b border-warning-100 last:border-b-0 dark:border-warning-500/10">
                                         <td class="px-3 py-2 text-xs text-warning-900 dark:text-warning-100">{{ unresolvedIndex + 1 }}</td>
                                         <td class="px-3 py-2 text-xs text-warning-900 dark:text-warning-100">{{ serial }}</td>
+                                        <td class="px-3 py-2 text-xs text-warning-900 dark:text-warning-100">
+                                          @if (isInstalledSerial(serial)) {
+                                            <span class="inline-flex rounded-full bg-warning-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-warning-800 dark:bg-warning-500/15 dark:text-warning-300">
+                                              Installed
+                                            </span>
+                                          } @else {
+                                            <span class="inline-flex rounded-full bg-success-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-success-800 dark:bg-success-500/15 dark:text-success-300">
+                                              In Stock
+                                            </span>
+                                          }
+                                        </td>
                                       </tr>
                                     }
                                   </tbody>
@@ -856,6 +884,7 @@
             <tr class="border-b border-gray-200 dark:border-gray-800">
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">PO Number</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Dealer</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Products</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Count</th>
@@ -868,6 +897,26 @@
               <tr class="border-b border-gray-100 dark:border-gray-800/70">
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.poNumber }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.vendorName }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                  <div class="flex flex-wrap gap-1.5">
+                    @for (productLabel of getPurchaseTableVisibleProductLabels(item); track productLabel) {
+                      <span class="inline-flex max-w-44 items-center rounded-full bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700 dark:bg-sky-500/10 dark:text-sky-300">
+                        <span class="truncate">{{ productLabel }}</span>
+                      </span>
+                    }
+                    @if (getPurchaseTableHiddenProductCount(item) > 0) {
+                      <span
+                        class="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                        [attr.title]="getPurchaseTableHiddenProductTooltip(item)"
+                      >
+                        +{{ getPurchaseTableHiddenProductCount(item) }}
+                      </span>
+                    }
+                    @if (getPurchaseTableProductLabels(item).length === 0) {
+                      <span class="text-xs text-gray-400 dark:text-gray-500">-</span>
+                    }
+                  </div>
+                </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatAmount(item.totalAmount) }}</td>
                 <td class="px-4 py-3">
                   <span class="rounded-full px-2 py-0.5 text-xs font-medium"
@@ -943,7 +992,7 @@
               </tr>
             } @empty {
               <tr>
-                <td colspan="7" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                <td colspan="8" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
                   No purchase orders found for this tab.
                 </td>
               </tr>
