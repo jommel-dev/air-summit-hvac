@@ -1,56 +1,48 @@
-﻿import { CommonModule } from '@angular/common';
+﻿
+import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import {
-  ProductCapacityOption,
+  SalesOrderRow,
+  SalesTab,
   ProductOption,
+  SalesOrderPayload,
+  SalesOrderMigrationPreviewItem,
   SalesCustomerOption,
-  SalesOrderConcernDetailsPayload,
   SalesOrderDetailItem,
   SalesOrderDetailProductItem,
   SalesOrderDetailUnitType,
-  SalesOrderExpenseDetailsPayload,
   SalesOrderListItem,
-  SalesOrderMigrationPreviewItem,
-  SalesOrderPayload,
+  ProductCapacityOption,
+  SalesOrderExpenseDetailsPayload,
+  SalesReturnSerialOptionGroup,
   SalesOrderService,
-  SalesOrderTransferDetailsPayload,
 } from '../../shared/services/sales-order.service';
 import { MaterialTransactionItem } from '../../shared/services/sales-order-material.service';
-import { RbacService } from '../../shared/services/rbac.service';
-import { UserManagementService, UserApiItem } from '../../shared/services/user-management.service';
+import axios from 'axios';
+import { PDFDocument, StandardFonts, rgb, PDFFont } from 'pdf-lib';
 import {
   BusinessProfileSettings,
   BusinessSettingsService,
 } from '../../shared/services/business-settings.service';
-import axios from 'axios';
-import { PDFDocument, PDFFont, StandardFonts, rgb } from 'pdf-lib';
+import { RbacService } from '../../shared/services/rbac.service';
+import { UserManagementService, UserApiItem } from '../../shared/services/user-management.service';
 
-type SalesTab =
-  | 'schedules'
-  | 'services'
-  | 'projects'
-  | 'distribution'
-  | 'sales-receivable'
-  | 'remitted-sales';
+type SalesOrderErrorDialog = {
+  title: string;
+  message: string;
+  confirmText?: string;
+};
 
-interface SalesOrderRow {
-  id: number;
-  soNumber: string;
-  customerName: string;
-  totalAmount: number;
-  paymentMethod: string;
-  status: string;
-  salesType: string;
-  projectCode?: string;
-  projectName?: string;
-  scheduleDate: string;
-  serialCount?: number;
-  createdAt?: string | null;
-  concernStatus?: string;
+type SalesGuardDialogMode = 'close-confirm' | 'remove-serial-confirm' | 'refresh-confirm' | 'receive-confirm';
+
+interface SalesPendingSerialRemoval {
+  productIndex: number;
+  unitLabel: string;
+  serialNumber: string;
 }
 
 interface SalesUnitTypeFormItem {
@@ -61,18 +53,19 @@ interface SalesUnitTypeFormItem {
   scanInput: string;
   scanError: string;
   scanSuccess: string;
-  isScanning: boolean;
+  isScanning?: boolean;
 }
 
 interface SalesProductFormItem {
   productId: string;
   capacityId: string;
   unitPrice: number;
-  sellPrice: number | '';
-  discountPrice: number | '';
+  sellPrice: number | string;
+  discountPrice: number | string;
   unitTypes: SalesUnitTypeFormItem[];
   totalSetQty: number;
 }
+
 interface SalesServiceFormItem {
   serviceName: string;
   unitPrice: number;
@@ -80,37 +73,24 @@ interface SalesServiceFormItem {
   total: number;
 }
 
+type SalesPaymentMethod = 'Cash' | 'Bank Transfer' | 'Terms' | 'Terms with DP' | 'Cheque' | 'Credit Card' | 'Installment';
 interface SalesPaymentFormItem {
-  method: 'Cash' | 'Bank Transfer' | 'Terms' | 'Terms with DP' | 'Cheque' | 'Credit Card' | 'Installment';
+  method: SalesPaymentMethod;
   amount: number;
-  terms: string;
-  termsDueDate: string;
-  autoTermsDueDate: boolean;
-  status: string;
-  referenceNo: string;
-  paymentDate: string;
-  issuedBy: string;
-  ccCharge: string;
-  checkNo: string;
-  bankName: string;
-  bankAccount: string;
-  postDated: string;
-  downPayment: number;
+  terms?: string;
+  termsDueDate?: string;
+  autoTermsDueDate?: boolean;
+  status?: string;
+  referenceNo?: string;
+  paymentDate?: string;
+  issuedBy?: string;
+  ccCharge?: string;
+  checkNo?: string;
+  bankName?: string;
+  bankAccount?: string;
+  postDated?: string;
+  downPayment?: number;
 }
-
-type SalesGuardDialogMode = 'close-confirm' | 'refresh-confirm' | 'remove-serial-confirm' | 'receive-confirm';
-
-interface SalesPendingSerialRemoval {
-  productIndex: number;
-  unitLabel: string;
-  serialNumber: string;
-}
-
-interface SalesReturnSerialOptionGroup {
-  unitLabel: string;
-  serials: string[];
-}
-
 
 @Component({
   selector: 'app-sales-order',
@@ -118,8 +98,25 @@ interface SalesReturnSerialOptionGroup {
   templateUrl: './sales-order.component.html',
   styles: ``,
 })
+
 export class SalesOrderComponent {
-  receiverOptions: UserApiItem[] = [];
+    // Error dialog state for modal
+    isErrorDialogOpen = false;
+    errorDialog: SalesOrderErrorDialog | null = null;
+    /**
+     * Opens a modal dialog for error messages, matching SO Session Guard modal style.
+     */
+    openErrorDialog(message: string, title = 'Sales Order Error', confirmText = 'Close'): void {
+      this.errorDialog = { title, message, confirmText };
+      this.isErrorDialogOpen = true;
+    }
+
+    closeErrorDialog(): void {
+      this.isErrorDialogOpen = false;
+      this.errorDialog = null;
+    }
+
+    receiverOptions: UserApiItem[] = [];
   readonly salesTypeOptions = [
     'sales',
     'sales and service',
@@ -162,6 +159,8 @@ export class SalesOrderComponent {
   ) {}
 
   // ...existing code (all properties, methods, etc. go here, inside the class)...
+
+  // Example usage: Replace all direct uiError assignments in SO creation with openErrorDialog
 
   activeTab: SalesTab = 'schedules';
   isLoading = false;
@@ -260,8 +259,15 @@ export class SalesOrderComponent {
   branchOptions: Array<{ id: number; branchName: string }> = [];
   activeExpenseTabIndex = 0;
 
+  // Project search/picker properties
+  projectSearchInput = '';
+  projectSearchResults: any[] = [];
+  projectSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  selectedProjectDetails: any = null;
+
   form: any = {
     customer_id: '',
+    projectId: undefined as number | undefined,
     totalAmount: 0,
     scheduleDate: '',
     salesType: 'sales',
@@ -894,6 +900,73 @@ export class SalesOrderComponent {
     }, 150);
   }
 
+  onProjectSearchChange(value: string): void {
+    this.projectSearchInput = value;
+
+    if (this.projectSearchDebounceTimer) {
+      clearTimeout(this.projectSearchDebounceTimer);
+    }
+
+    if (!value || value.trim().length === 0) {
+      this.projectSearchResults = [];
+      this.projectSearchDebounceTimer = null;
+      return;
+    }
+
+    this.projectSearchDebounceTimer = setTimeout(() => {
+      void this.loadProjectSearchResults(value);
+      this.projectSearchDebounceTimer = null;
+    }, this.searchDebounceMs);
+  }
+
+  private async loadProjectSearchResults(query: string): Promise<void> {
+    try {
+      const response = await this.salesOrderService.searchProjects({
+        search: query,
+        page: 1,
+        limit: 10,
+      });
+      this.projectSearchResults = response.items || [];
+    } catch (error) {
+      console.error('Failed to search projects:', error);
+      this.projectSearchResults = [];
+    }
+  }
+
+  async selectProject(project: any): Promise<void> {
+    if (!project || !project.id) {
+      return;
+    }
+
+    try {
+      // Get full project details with related SOs
+      const projectDetails = await this.salesOrderService.getProjectWithRelatedSOs(project.id);
+      if (!projectDetails) {
+        console.error('Failed to load project details');
+        return;
+      }
+
+      // Update form with selected project
+      this.form.projectId = project.id;
+      this.form.projectCode = project.projectCode;
+      this.form.projectName = project.projectName;
+      this.selectedProjectDetails = projectDetails;
+      this.projectSearchResults = [];
+      this.projectSearchInput = '';
+    } catch (error) {
+      console.error('Failed to select project:', error);
+    }
+  }
+
+  clearProjectSelection(): void {
+    this.form.projectId = undefined;
+    this.form.projectCode = '';
+    this.form.projectName = '';
+    this.selectedProjectDetails = null;
+    this.projectSearchInput = '';
+    this.projectSearchResults = [];
+  }
+
   getFilteredCustomerOptions(): SalesCustomerOption[] {
     const normalizedQuery = String(this.customerSearch ?? '').trim().toLowerCase();
     if (!normalizedQuery) {
@@ -1155,7 +1228,12 @@ export class SalesOrderComponent {
     const salesType = this.form.salesType;
     const status = String(targetStatus ?? this.form.status ?? '').toLowerCase();
 
-    if (salesType === 'transfer' && ['for-delivery', 'remitted'].includes(status) && this.drawerMode !== 'create') {
+    // Skip serial validation during creation mode - allow saving draft first
+    if (this.drawerMode === 'create') {
+      return null;
+    }
+
+    if (salesType === 'transfer' && ['for-delivery', 'remitted'].includes(status)) {
       const missingSerials: string[] = [];
       (this.form.productItems ?? []).forEach((item: any, idx: number) => {
         (item.unitTypes ?? []).forEach((ut: any) => {
@@ -1171,13 +1249,13 @@ export class SalesOrderComponent {
       return null;
     }
 
-    if (salesType === 'transfer' && this.drawerMode === 'create') {
+    if (salesType === 'transfer') {
       return null;
     }
 
-    const isProductEdit = this.drawerMode === 'create' || this.form.productItems.some((item: any) => item._edited);
+    // For non-transfer types, require serials only when status is for-delivery or remitted
     const isDeliveryOrRemit = ['for-delivery', 'remitted'].includes(status);
-    if (!isProductEdit && !isDeliveryOrRemit) {
+    if (!isDeliveryOrRemit) {
       return null;
     }
 
@@ -3052,6 +3130,7 @@ export class SalesOrderComponent {
       totalAmount: Number(this.form.totalAmount) || 0,
       scheduleDate: this.form.scheduleDate || null,
       salesType: this.form.salesType || this.getSalesTypeFromActiveTab(),
+      projectId: this.form.projectId || undefined,
       projectName: this.form.projectName || undefined,
       projectCode: this.form.projectCode || undefined,
       installer: this.form.installer || undefined,
@@ -3481,6 +3560,7 @@ export class SalesOrderComponent {
       totalAmount: Number(detail.totalAmount) || Number(fallbackItem.totalAmount) || 0,
       scheduleDate: this.toDateInputValue(detail.scheduleDate),
       salesType: detail.salesType || this.getSalesTypeFromActiveTab(),
+      projectId: detail.projectId || undefined,
       projectName: detail.projectName ?? '',
       projectCode: detail.projectCode ?? '',
       installer: detail.installer ?? '',
@@ -3523,6 +3603,17 @@ export class SalesOrderComponent {
     this.selectedUnitTypeByProduct = {};
     this.form.productItems.forEach((_: unknown, index: number) => this.ensureSelectedUnitType(index));
     this.recalculateTotalAmount();
+
+    // Load project details if projectId exists
+    if (detail.projectId) {
+      this.salesOrderService.getProjectWithRelatedSOs(detail.projectId).then((projectDetail) => {
+        if (projectDetail) {
+          this.selectedProjectDetails = projectDetail;
+        }
+      }).catch(() => {
+        // Silently fail if project details cannot be loaded
+      });
+    }
   }
 
   private getAutoPaymentStatus(method: SalesPaymentFormItem['method']): string {
@@ -3571,12 +3662,12 @@ export class SalesOrderComponent {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const isOverdueDate = (rawDate: string): boolean => {
+    const isOverdueDate = (rawDate?: string | null): boolean => {
       if (!rawDate) {
         return false;
       }
 
-      const parsed = new Date(rawDate);
+      const parsed = new Date(String(rawDate));
       if (Number.isNaN(parsed.getTime())) {
         return false;
       }

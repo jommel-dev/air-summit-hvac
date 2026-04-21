@@ -1,3 +1,26 @@
+@if (isErrorDialogOpen && errorDialog) {
+  <div class="fixed inset-0 z-[100010] bg-gray-950/55 backdrop-blur-sm" (click)="closeErrorDialog()"></div>
+  <div class="fixed inset-0 z-[100011] flex items-center justify-center p-4">
+    <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-error-200 bg-white shadow-2xl dark:border-error-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+      <div class="border-b border-error-200 bg-gradient-to-r from-rose-50 via-white to-amber-50 px-6 py-5 dark:border-error-800 dark:from-rose-500/10 dark:via-gray-900 dark:to-amber-500/10">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-error-700 dark:text-error-300">Sales Order Error</p>
+        <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">{{ errorDialog.title }}</h3>
+      </div>
+      <div class="space-y-4 px-6 py-5">
+        <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">{{ errorDialog.message }}</p>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-3 border-t border-error-200 px-6 py-4 dark:border-error-800">
+        <button
+          type="button"
+          (click)="closeErrorDialog()"
+          class="rounded-lg border border-error-300 bg-error-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-error-600 dark:border-error-500/50 dark:bg-error-500 dark:hover:bg-error-600"
+        >
+          {{ errorDialog.confirmText || 'Close' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
 <div>
   <app-page-breadcrumb pageTitle="Sales Order" />
 
@@ -127,7 +150,7 @@
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.salesType || '-' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.projectCode || '-' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.projectName || '-' }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.serialCount ?? 0 }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.serialCount }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDate(order.createdAt) }}</td>
                 <td class="px-4 py-3 text-right">
                   <div class="inline-flex items-center gap-2">
@@ -402,6 +425,12 @@
       </div>
 
       <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+        @if (uiError) {
+          <div class="rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+            {{ uiError }}
+          </div>
+        }
+
         <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
           <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Sales Order</h4>
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -422,14 +451,87 @@
               }
             </div>
             @if (form.salesType === 'project') {
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Code</label>
-                <input type="text" [(ngModel)]="form.projectCode" name="projectCode" placeholder="Enter project code" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+              <div class="md:col-span-2">
+                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Select Project</label>
+                <div class="relative">
+                  <input
+                    type="text"
+                    [(ngModel)]="projectSearchInput"
+                    name="projectSearch"
+                    (ngModelChange)="onProjectSearchChange($event)"
+                    placeholder="Search by project code or name..."
+                    [readonly]="!!form.projectId"
+                    class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                  />
+                  @if (projectSearchResults.length > 0 && !form.projectId) {
+                    <div class="absolute top-full left-0 right-0 z-10 mt-1 max-h-64 overflow-y-auto rounded-lg border border-gray-300 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                      @for (project of projectSearchResults; track project.id) {
+                        <button
+                          type="button"
+                          (click)="selectProject(project)"
+                          class="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 dark:hover:bg-blue-900"
+                        >
+                          <div class="font-medium text-gray-900 dark:text-white">{{ project.projectCode }} - {{ project.projectName }}</div>
+                          <div class="text-xs text-gray-600 dark:text-gray-400">{{ project.projectType }} | Owner: {{ project.projectOwner }} | SOs: {{ project.relatedSOCount }}</div>
+                        </button>
+                      }
+                    </div>
+                  }
+                </div>
               </div>
-              <div>
-                <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Name</label>
-                <input type="text" [(ngModel)]="form.projectName" name="projectName" placeholder="Enter project name" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-              </div>
+              @if (form.projectId) {
+                <div class="md:col-span-2 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-900/20">
+                  <div class="flex items-center justify-between mb-2">
+                    <h4 class="font-medium text-blue-900 dark:text-blue-100">Selected Project: {{ form.projectCode }}</h4>
+                    <button type="button" (click)="clearProjectSelection()" class="text-xs px-2 py-1 text-blue-600 hover:bg-blue-100 rounded dark:text-blue-400 dark:hover:bg-blue-800">
+                      Change
+                    </button>
+                  </div>
+                  <div class="grid grid-cols-2 gap-2 text-sm mb-3">
+                    <div>
+                      <span class="text-gray-600 dark:text-gray-400">Name:</span>
+                      <span class="ml-1 text-gray-900 dark:text-white">{{ form.projectName }}</span>
+                    </div>
+                    <div>
+                      <span class="text-gray-600 dark:text-gray-400">Type:</span>
+                      <span class="ml-1 text-gray-900 dark:text-white">{{ selectedProjectDetails?.projectType }}</span>
+                    </div>
+                    <div>
+                      <span class="text-gray-600 dark:text-gray-400">Owner:</span>
+                      <span class="ml-1 text-gray-900 dark:text-white">{{ selectedProjectDetails?.projectOwner }}</span>
+                    </div>
+                    <div>
+                      <span class="text-gray-600 dark:text-gray-400">Status:</span>
+                      <span class="ml-1 text-gray-900 dark:text-white">{{ selectedProjectDetails?.projectStatus }}</span>
+                    </div>
+                  </div>
+                  @if (selectedProjectDetails?.relatedSalesOrders && selectedProjectDetails.relatedSalesOrders.length > 0) {
+                    <div class="mt-2 border-t border-blue-200 pt-2 dark:border-blue-800">
+                      <p class="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Related Sales Orders ({{ selectedProjectDetails.relatedSalesOrders.length }})</p>
+                      <div class="max-h-32 overflow-y-auto space-y-1">
+                        @for (so of selectedProjectDetails.relatedSalesOrders; track so.id) {
+                          <div class="text-xs p-1 bg-white dark:bg-gray-700 rounded">
+                            <span class="font-medium">{{ so.soNumber }}</span> -
+                            <span>{{ so.customerName }}</span> -
+                            <span class="text-gray-600 dark:text-gray-400">{{ so.status }}</span>
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  }
+                </div>
+              } @else {
+                <div class="md:col-span-2 grid grid-cols-2 gap-3">
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Code</label>
+                    <input type="text" [(ngModel)]="form.projectCode" name="projectCode" placeholder="Enter project code" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+                  <div>
+                    <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Name</label>
+                    <input type="text" [(ngModel)]="form.projectName" name="projectName" placeholder="Enter project name" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                  </div>
+                </div>
+              }
             }
             <div>
               <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Installer</label>
@@ -1060,7 +1162,7 @@
           </section>
         }
 
-        @if (['concern', 'service', 'sales and service'].includes(form.salesType)) {
+        @if (form.salesType === 'concern') {
           <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
             <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Concern Details</h4>
             <div class="grid gap-3 md:grid-cols-2">

@@ -724,15 +724,17 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     this.loadErrorMessage = '';
 
     try {
-      // Load both regular schedules and transfer/distribution SOs
-      const [schedulesResponse, distributionResponse] = await Promise.all([
+      // Load schedules, distribution SOs, and projects
+      const [schedulesResponse, distributionResponse, projectsResponse] = await Promise.all([
         this.salesOrderService.getSchedules({ page: 1, limit: 200 }),
         this.salesOrderService.getDistribution({ page: 1, limit: 200 }),
+        this.salesOrderService.getProjects({ page: 1, limit: 200 }),
       ]);
 
       const allItems = [
         ...(schedulesResponse.items ?? []),
         ...(distributionResponse.items ?? []),
+        ...(projectsResponse.items ?? []),
       ];
 
       // Deduplicate by id in case any overlap

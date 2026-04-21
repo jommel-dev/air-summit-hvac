@@ -109,6 +109,7 @@ export interface SalesOrderPayload {
   totalAmount?: number;
   scheduleDate?: string | null;
   salesType?: string;
+  projectId?: number;
   projectName?: string;
   projectCode?: string;
   installer?: string;
@@ -205,6 +206,35 @@ export interface SalesOrderListItem {
   createdAt: string | null;
   serialCount: number;
   concernStatus?: string;
+}
+
+export interface SalesOrderRow {
+  id: number;
+  soNumber: string;
+  customerName: string;
+  totalAmount: number;
+  paymentMethod: string;
+  status: string;
+  salesType?: string;
+  projectCode?: string;
+  projectName?: string;
+  scheduleDate?: string | null;
+  serialCount: number;
+  createdAt?: string | null;
+  concernStatus?: string;
+}
+
+export type SalesTab =
+  | 'schedules'
+  | 'services'
+  | 'projects'
+  | 'distribution'
+  | 'sales-receivable'
+  | 'remitted-sales';
+
+export interface SalesReturnSerialOptionGroup {
+  unitLabel: string;
+  serials: string[];
 }
 
 export interface SalesCustomerDetail {
@@ -422,6 +452,7 @@ export interface SalesOrderDetailItem {
   status: string;
   scheduleDate: string | null;
   salesType: string;
+  projectId?: number;
   projectName: string;
   projectCode: string;
   installer: string;
@@ -453,6 +484,37 @@ export interface ProductOption {
   unit?: string;
   unitTypes?: string[];
   capacities: ProductCapacityOption[];
+}
+
+export interface ProjectMasterOption {
+  id: number;
+  projectCode: string;
+  projectName: string;
+  projectType?: string;
+  projectOwner?: string;
+  projectLocation?: string;
+  projectStartDate?: string | null;
+  projectEndDate?: string | null;
+  projectManager?: string;
+  projectStatus?: string;
+  projectNotes?: string;
+  relatedSOCount?: number;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ProjectWithRelatedSOs extends ProjectMasterOption {
+  relatedSalesOrders: Array<{
+    id: number;
+    soNumber: string;
+    customerId: string;
+    customerName: string;
+    totalAmount: number;
+    status: string;
+    scheduleDate?: string | null;
+    createdAt?: string | null;
+  }>;
 }
 
 export interface SalesListMeta {
@@ -820,6 +882,38 @@ export class SalesOrderService {
     );
 
     return response.data;
+  }
+
+  async searchProjects(params: {
+    search?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+    branchId?: number;
+  }): Promise<{ items: ProjectMasterOption[]; meta: SalesListMeta }> {
+    const response = await apiClient.get<{ success: boolean; items?: ProjectMasterOption[]; meta?: SalesListMeta }>(
+      '/sales-order/projects/search',
+      { params },
+    );
+
+    return {
+      items: response.data.items ?? [],
+      meta: response.data.meta ?? { page: params.page ?? 1, limit: params.limit ?? 10, total: 0, totalPages: 1 },
+    };
+  }
+
+  async getProjectWithRelatedSOs(projectId: number): Promise<ProjectWithRelatedSOs | null> {
+    const response = await apiClient.get<{
+      success: boolean;
+      message?: string;
+      data?: ProjectWithRelatedSOs;
+    }>(`/sales-order/projects/${projectId}/related-orders`);
+
+    if (!response.data.success || !response.data.data) {
+      return null;
+    }
+
+    return response.data.data;
   }
 
   async getProducts(): Promise<ProductOption[]> {

@@ -15,6 +15,7 @@ import { MaterialInventoryComponent } from './pages/material-inventory/material-
 import { SalesOrderMaterialsComponent } from './pages/sales-order-materials/sales-order-materials.component';
 import { SettingsComponent } from './pages/settings/settings.component';
 import { AccountingComponent } from './pages/accounting/accounting.component';
+import { ProjectsComponent } from './pages/projects/projects.component';
 
 export const routes: Routes = [
   {
@@ -42,6 +43,16 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         title: 'Sales Order',
+      },
+      {
+        path: 'projects',
+        component: ProjectsComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'projects',
+          permission: 'canRead',
+        },
+        title: 'Projects',
       },
       {
         path: 'customers',

@@ -339,6 +339,118 @@ export class SalesOrderService {
     return this.normalizeText(insertedCustomer.rows[0]?.id);
   }
 
+  private async upsertProjectFromPayload(
+    executor: { query: PoolClient['query'] },
+    payload: Pick<CreateSalesOrderDto, 'projectId' | 'projectDetails' | 'projectCode' | 'projectName'>,
+    userId?: number,
+    branchId?: number,
+  ): Promise<number | null> {
+    // If projectId is provided, use it directly
+    if (payload.projectId) {
+      return payload.projectId;
+    }
+
+    // If no project details, return null
+    if (!payload.projectDetails && !payload.projectCode && !payload.projectName) {
+      return null;
+    }
+
+    const projectCode = this.normalizeText(payload.projectCode || payload.projectDetails?.projectCode);
+    const projectName = this.normalizeText(
+      payload.projectName || payload.projectDetails?.projectName || projectCode,
+    );
+
+    if (!projectCode || !projectName) {
+      throw new Error('Project code and name are required');
+    }
+
+    // Look up existing project by code
+    const existingProject = await executor.query<{ id: number }>(
+      `SELECT id FROM tblprojects WHERE project_code = $1 LIMIT 1`,
+      [projectCode],
+    );
+
+    if (existingProject.rowCount > 0) {
+      return existingProject.rows[0].id;
+    }
+
+    // Create new project if not found
+    const projectColumns = await this.getTableColumns(executor, 'tblprojects');
+    const projectCodeColumn = this.pickColumn(projectColumns, ['project_code']);
+    const projectNameColumn = this.pickColumn(projectColumns, ['project_name']);
+    const projectTypeColumn = this.pickColumn(projectColumns, ['project_type']);
+    const projectOwnerColumn = this.pickColumn(projectColumns, ['project_owner']);
+    const projectLocationColumn = this.pickColumn(projectColumns, ['project_location']);
+    const projectStartDateColumn = this.pickColumn(projectColumns, ['project_start_date']);
+    const projectEndDateColumn = this.pickColumn(projectColumns, ['project_end_date']);
+    const projectManagerColumn = this.pickColumn(projectColumns, ['project_manager']);
+    const projectStatusColumn = this.pickColumn(projectColumns, ['project_status']);
+    const projectNotesColumn = this.pickColumn(projectColumns, ['project_notes']);
+    const branchIdColumn = this.pickColumn(projectColumns, ['branch_id']);
+    const createdByColumn = this.pickColumn(projectColumns, ['created_by']);
+
+    if (!projectCodeColumn || !projectNameColumn) {
+      throw new Error('tblprojects columns are not properly configured');
+    }
+
+    const projectRecord: Record<string, unknown> = {
+      [projectCodeColumn]: projectCode,
+      [projectNameColumn]: projectName,
+    };
+
+    if (projectTypeColumn && payload.projectDetails?.projectType) {
+      projectRecord[projectTypeColumn] = this.normalizeText(
+        payload.projectDetails.projectType,
+      );
+    }
+    if (projectOwnerColumn && payload.projectDetails?.projectOwner) {
+      projectRecord[projectOwnerColumn] = this.normalizeText(payload.projectDetails.projectOwner);
+    }
+    if (projectLocationColumn && payload.projectDetails?.projectLocation) {
+      projectRecord[projectLocationColumn] = this.normalizeText(
+        payload.projectDetails.projectLocation,
+      );
+    }
+    if (projectStartDateColumn && payload.projectDetails?.projectStartDate) {
+      projectRecord[projectStartDateColumn] = this.toIsoDateOrNull(
+        payload.projectDetails.projectStartDate,
+      );
+    }
+    if (projectEndDateColumn && payload.projectDetails?.projectEndDate) {
+      projectRecord[projectEndDateColumn] = this.toIsoDateOrNull(
+        payload.projectDetails.projectEndDate,
+      );
+    }
+    if (projectManagerColumn && payload.projectDetails?.projectManager) {
+      projectRecord[projectManagerColumn] = this.normalizeText(
+        payload.projectDetails.projectManager,
+      );
+    }
+    if (projectStatusColumn) {
+      const status = this.normalizeText(
+        payload.projectDetails?.projectStatus || 'planning',
+      ).toLowerCase();
+      const validStatuses = ['planning', 'ongoing', 'completed', 'cancelled'];
+      projectRecord[projectStatusColumn] = validStatuses.includes(status) ? status : 'planning';
+    }
+    if (projectNotesColumn && payload.projectDetails?.projectNotes) {
+      projectRecord[projectNotesColumn] = this.normalizeText(payload.projectDetails.projectNotes);
+    }
+    if (branchIdColumn && branchId) {
+      projectRecord[branchIdColumn] = branchId;
+    }
+    if (createdByColumn && userId) {
+      projectRecord[createdByColumn] = userId;
+    }
+
+    const insertedProject = await this.runInsert(executor, 'tblprojects', projectRecord);
+    if (insertedProject.rowCount === 0) {
+      throw new Error('Failed to create project');
+    }
+
+    return Number(insertedProject.rows[0]?.id);
+  }
+
   private toIsoDateOrNull(value: unknown): string | null {
     if (!value) {
       return null;
@@ -2358,21 +2470,9 @@ export class SalesOrderService {
         OR EXISTS (SELECT 1 FROM tbltransfer_details td WHERE td.sales_id = base.id)
       )`);
     } else if (mode === 'sales-receivable') {
-      whereParts.push(`COALESCE(base.remaining_amount, 0) > 0`);
-      whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN (
-        'approved', 'released', 'delivered', 'partial', 'remitted'
-      ) OR LOWER(COALESCE(base.original_status, '')) = 'remitted'`);
+      whereParts.push(`LOWER(COALESCE(base.original_status, '')) = 'remitted'`);
     } else if (mode === 'remitted-sales') {
-      whereParts.push(`(
-        LOWER(COALESCE(base.original_status, '')) IN ('complete', 'completed')
-        OR LOWER(COALESCE(base.original_status, '')) = 'completed'
-        OR (
-          COALESCE(base.remaining_amount, 0) <= 0
-          AND LOWER(COALESCE(base.original_status, '')) IN (
-            'approved', 'released', 'delivered', 'partial', 'paid', 'remitted', 'completed'
-          )
-        )
-      )`);
+      whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN ('complete', 'completed')`);
     }
 
     if (Number.isFinite(branchId) && branchId > 0) {
@@ -2703,6 +2803,12 @@ export class SalesOrderService {
           customerId = await this.upsertCustomerFromPayload(client, payload);
         }
 
+        // Upsert project if project details provided
+        let projectId: number | null = null;
+        if (String(payload.salesType).toLowerCase() === 'project') {
+          projectId = await this.upsertProjectFromPayload(client, payload, userId, branchId);
+        }
+
         let computedProductTotal = 0;
         for (const item of productItems) {
           const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
@@ -2733,6 +2839,7 @@ export class SalesOrderService {
         const totalAmountColumn = this.pickColumn(salesColumns, ['total_amount', 'totalAmount']);
         const scheduleDateColumn = this.pickColumn(salesColumns, ['scheduleDate', 'schedule_date']);
         const salesTypeColumn = this.pickColumn(salesColumns, ['salesType', 'sales_type']);
+        const projectIdColumn = this.pickColumn(salesColumns, ['project_id', 'projectId']);
         const projectNameColumn = this.pickColumn(salesColumns, ['projectName', 'project_name']);
         const projectCodeColumn = this.pickColumn(salesColumns, ['projectCode', 'project_code']);
         const installerColumn = this.pickColumn(salesColumns, ['installer']);
@@ -2765,6 +2872,9 @@ export class SalesOrderService {
         }
         if (salesTypeColumn && payload.salesType !== undefined) {
           salesRecord[salesTypeColumn] = String(payload.salesType ?? '').trim();
+        }
+        if (projectIdColumn && projectId) {
+          salesRecord[projectIdColumn] = projectId;
         }
         if (projectNameColumn && payload['projectName'] !== undefined) {
           salesRecord[projectNameColumn] = String(payload['projectName'] ?? '').trim();
@@ -4766,6 +4876,257 @@ export class SalesOrderService {
     }
   }
 
+  async searchProjects(query: any) {
+    const search = String(query?.search ?? '').trim().toLowerCase();
+    const status = String(query?.status ?? '').trim().toLowerCase();
+    const page = this.normalizePage(query?.page ?? 1);
+    const limit = this.normalizeLimit(query?.limit ?? 10);
+    const offset = (page - 1) * limit;
+    const branchId = Number(query?.branchId);
+
+    try {
+      const params: unknown[] = [];
+      const whereParts: string[] = [];
+
+      if (search) {
+        params.push(`%${search}%`);
+        const index = params.length;
+        whereParts.push(`(
+          LOWER(COALESCE(p.project_code, '')) LIKE LOWER($${index})
+          OR LOWER(COALESCE(p.project_name, '')) LIKE LOWER($${index})
+        )`);
+      }
+
+      if (status) {
+        params.push(status);
+        whereParts.push(`LOWER(COALESCE(p.project_status, '')) = $${params.length}`);
+      }
+
+      if (Number.isFinite(branchId) && branchId > 0) {
+        params.push(branchId);
+        whereParts.push(`(p.branch_id = $${params.length} OR p.branch_id IS NULL)`);
+      }
+
+      const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+      // Count total
+      const countResult = await this.databaseService.query<{ total: string }>(
+        `SELECT COUNT(*)::text AS total FROM tblprojects p ${whereSql}`,
+        params,
+      );
+      const total = Number(countResult.rows[0]?.total ?? 0);
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+
+      // Get paginated results with related SO count
+      params.push(limit);
+      params.push(offset);
+      const listResult = await this.databaseService.query<{
+        id: number;
+        projectCode: string;
+        projectName: string;
+        projectType: string | null;
+        projectOwner: string | null;
+        projectLocation: string | null;
+        projectStartDate: string | null;
+        projectEndDate: string | null;
+        projectManager: string | null;
+        projectStatus: string;
+        projectNotes: string | null;
+        relatedSOCount: string;
+        createdBy: string | null;
+        createdAt: string | null;
+        updatedAt: string | null;
+      }>(
+        `SELECT
+           p.id,
+           p.project_code AS "projectCode",
+           p.project_name AS "projectName",
+           COALESCE(p.project_type, '') AS "projectType",
+           COALESCE(p.project_owner, '') AS "projectOwner",
+           COALESCE(p.project_location, '') AS "projectLocation",
+           p.project_start_date::text AS "projectStartDate",
+           p.project_end_date::text AS "projectEndDate",
+           COALESCE(p.project_manager, '') AS "projectManager",
+           COALESCE(p.project_status, 'planning') AS "projectStatus",
+           COALESCE(p.project_notes, '') AS "projectNotes",
+           COALESCE((SELECT COUNT(*)::text FROM tblsales_order so WHERE so.project_id = p.id), '0') AS "relatedSOCount",
+           COALESCE(p.created_by::text, '') AS "createdBy",
+           p.created_at::text AS "createdAt",
+           p.updated_at::text AS "updatedAt"
+         FROM tblprojects p
+         ${whereSql}
+         ORDER BY p.project_code ASC
+         LIMIT $${params.length - 1}
+         OFFSET $${params.length}`,
+        params,
+      );
+
+      return {
+        success: true,
+        items: listResult.rows.map((row) => ({
+          id: row.id,
+          projectCode: row.projectCode,
+          projectName: row.projectName,
+          projectType: row.projectType || '',
+          projectOwner: row.projectOwner || '',
+          projectLocation: row.projectLocation || '',
+          projectStartDate: row.projectStartDate,
+          projectEndDate: row.projectEndDate,
+          projectManager: row.projectManager || '',
+          projectStatus: row.projectStatus,
+          projectNotes: row.projectNotes || '',
+          relatedSOCount: Number(row.relatedSOCount ?? 0),
+          createdBy: row.createdBy || '',
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        })),
+        meta: {
+          page,
+          limit,
+          total,
+          totalPages,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to search projects',
+        items: [],
+        meta: { page, limit: 0, total: 0, totalPages: 1 },
+      };
+    }
+  }
+
+  async getProjectWithRelatedSOs(projectId: number) {
+    if (!Number.isFinite(projectId) || projectId <= 0) {
+      return {
+        success: false,
+        message: 'Invalid project id',
+      };
+    }
+
+    try {
+      // Get project details
+      const projectResult = await this.databaseService.query<{
+        id: number;
+        projectCode: string;
+        projectName: string;
+        projectType: string | null;
+        projectOwner: string | null;
+        projectOwnerIdField: string | null;
+        projectLocation: string | null;
+        projectStartDate: string | null;
+        projectEndDate: string | null;
+        projectManager: string | null;
+        projectManagerIdField: string | null;
+        projectStatus: string;
+        projectNotes: string | null;
+        branchId: string | null;
+        createdBy: string | null;
+        createdAt: string | null;
+        updatedAt: string | null;
+      }>(
+        `SELECT
+           p.id,
+           p.project_code AS "projectCode",
+           p.project_name AS "projectName",
+           COALESCE(p.project_type, '') AS "projectType",
+           COALESCE(p.project_owner, '') AS "projectOwner",
+           COALESCE(p.project_owner_id::text, '') AS "projectOwnerIdField",
+           COALESCE(p.project_location, '') AS "projectLocation",
+           p.project_start_date::text AS "projectStartDate",
+           p.project_end_date::text AS "projectEndDate",
+           COALESCE(p.project_manager, '') AS "projectManager",
+           COALESCE(p.project_manager_id::text, '') AS "projectManagerIdField",
+           COALESCE(p.project_status, 'planning') AS "projectStatus",
+           COALESCE(p.project_notes, '') AS "projectNotes",
+           COALESCE(p.branch_id::text, '') AS "branchId",
+           COALESCE(p.created_by::text, '') AS "createdBy",
+           p.created_at::text AS "createdAt",
+           p.updated_at::text AS "updatedAt"
+         FROM tblprojects p
+         WHERE p.id = $1
+         LIMIT 1`,
+        [projectId],
+      );
+
+      if (projectResult.rowCount === 0) {
+        return {
+          success: false,
+          message: `Project ${projectId} not found`,
+        };
+      }
+
+      const projectRow = projectResult.rows[0];
+
+      // Get related sales orders
+      const sosResult = await this.databaseService.query<{
+        id: number;
+        soNumber: string | null;
+        customerId: string | null;
+        customerName: string | null;
+        totalAmount: string | null;
+        status: string | null;
+        scheduleDate: string | null;
+        createdAt: string | null;
+      }>(
+        `SELECT
+           so.id,
+           COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber') AS "soNumber",
+           COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId') AS "customerId",
+           COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '') AS "customerName",
+           COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') AS "totalAmount",
+           COALESCE(so.status, 'pending') AS status,
+           COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', null) AS "scheduleDate",
+           COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt', null) AS "createdAt"
+         FROM tblsales_order so
+         LEFT JOIN tblcustomer c
+           ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
+         WHERE so.project_id = $1
+         ORDER BY so.created_at DESC NULLS LAST`,
+        [projectId],
+      );
+
+      return {
+        success: true,
+        data: {
+          id: projectRow.id,
+          projectCode: projectRow.projectCode,
+          projectName: projectRow.projectName,
+          projectType: projectRow.projectType || '',
+          projectOwner: projectRow.projectOwner || '',
+          projectOwnerIdField: projectRow.projectOwnerIdField || '',
+          projectLocation: projectRow.projectLocation || '',
+          projectStartDate: projectRow.projectStartDate,
+          projectEndDate: projectRow.projectEndDate,
+          projectManager: projectRow.projectManager || '',
+          projectManagerIdField: projectRow.projectManagerIdField || '',
+          projectStatus: projectRow.projectStatus,
+          projectNotes: projectRow.projectNotes || '',
+          branchId: projectRow.branchId || '',
+          createdBy: projectRow.createdBy || '',
+          createdAt: projectRow.createdAt,
+          updatedAt: projectRow.updatedAt,
+          relatedSalesOrders: sosResult.rows.map((row) => ({
+            id: row.id,
+            soNumber: row.soNumber || '',
+            customerId: row.customerId || '',
+            customerName: row.customerName || '',
+            totalAmount: this.toOptionalNumber(row.totalAmount) ?? 0,
+            status: row.status || 'pending',
+            scheduleDate: row.scheduleDate,
+            createdAt: row.createdAt,
+          })),
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to get project',
+      };
+    }
+  }
+
   async findOne(id: number) {
     if (!Number.isFinite(id) || id <= 0) {
       return {
@@ -4789,6 +5150,7 @@ export class SalesOrderService {
         status: string | null;
         scheduleDate: string | null;
         salesType: string | null;
+        projectId: string | null;
         installer: string | null;
         remarks: string | null;
         createdAt: string | null;
@@ -4807,6 +5169,7 @@ export class SalesOrderService {
            COALESCE(so.status, 'pending') AS status,
            COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', null) AS "scheduleDate",
            COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '') AS "salesType",
+           COALESCE(so.project_id::text, to_jsonb(so)->>'projectId', to_jsonb(so)->>'project_id', null) AS "projectId",
            COALESCE(to_jsonb(so)->>'projectName', to_jsonb(so)->>'project_name', '') AS "projectName",
            COALESCE(to_jsonb(so)->>'projectCode', to_jsonb(so)->>'project_code', '') AS "projectCode",
            COALESCE(to_jsonb(so)->>'installer', '') AS installer,
@@ -5060,6 +5423,9 @@ export class SalesOrderService {
           status: sales.status ?? 'pending',
           scheduleDate: sales.scheduleDate,
           salesType: sales.salesType ?? '',
+          projectId: this.toOptionalNumber(sales.projectId),
+          projectName: sales.projectName ?? '',
+          projectCode: sales.projectCode ?? '',
           installer: sales.installer ?? '',
           remarks: sales.remarks ?? '',
           paymentDetails: paymentResult.rows.map((payment) => ({
