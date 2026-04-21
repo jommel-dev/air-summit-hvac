@@ -1,5 +1,98 @@
-﻿-- Combined migration script generated on 2026-03-23 05:23:38
--- Source folder: c:\laragon\www\hvac-warehouse-and-sales\backend\sql\supabase
+﻿-- Combined migration script updated on 2026-04-19
+
+-- This migration is idempotent and safe to run multiple times.
+-- It includes all core tables, RBAC normalization, menu registry, and a seeded superadmin user.
+-- =========================
+-- SECTION: SUPERADMIN SEED
+-- =========================
+
+-- Seed superadmin role if not exists
+INSERT INTO public.tblrbac (id, "roleName", "roleMenus", "rolePermission", created_by, created_at)
+SELECT 1, 'Superadmin', 'all', 'all', 1, NOW()
+WHERE NOT EXISTS (SELECT 1 FROM public.tblrbac WHERE id = 1);
+
+
+-- Seed superadmin user if not exists (username: superadmin, password: SHA1('password'))
+INSERT INTO public.tblusers (id, username, password, fullname, status, is_deleted, created_at, created_by, "roleId")
+SELECT 1, 'superadmin',
+  encode(digest('password', 'sha1'), 'hex'),
+  'Super Admin', 1, false, NOW(), 1, 1
+WHERE NOT EXISTS (SELECT 1 FROM public.tblusers WHERE id = 1);
+
+-- =========================
+-- SECTION: MENU REGISTRY
+-- =========================
+
+CREATE TABLE IF NOT EXISTS public.auth_menus (
+  id BIGSERIAL PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  parent_key TEXT,
+  path TEXT,
+  icon TEXT,
+  order_index INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Seed main menus (example, adjust as needed)
+INSERT INTO public.auth_menus(key, label, parent_key, path, icon, order_index)
+VALUES
+  ('dashboard', 'Dashboard', NULL, '/dashboard', 'dashboard', 1),
+  ('projects', 'Projects', NULL, '/projects', 'folder', 2),
+  ('sales-order', 'Sales Orders', NULL, '/sales-orders', 'shopping_cart', 3),
+  ('purchase-order', 'Purchase Orders', NULL, '/purchase-orders', 'shopping_bag', 4),
+  ('inventory', 'Inventory', NULL, '/inventory', 'inventory', 5),
+  ('customers', 'Customers', NULL, '/customers', 'people', 6),
+  ('settings', 'Settings', NULL, '/settings', 'settings', 99)
+ON CONFLICT (key) DO NOTHING;
+
+-- =========================
+-- SECTION: TABLE COMMENTS & INDEXES
+-- =========================
+
+-- Add comments for clarity (example for a few tables)
+COMMENT ON TABLE public.tblbranches IS 'Company branches';
+COMMENT ON TABLE public.tblbrands IS 'Product and material brands';
+COMMENT ON TABLE public.tblproducts IS 'AC unit products';
+COMMENT ON TABLE public.tblmaterials IS 'Material inventory';
+COMMENT ON TABLE public.tblrbac IS 'Role-based access control';
+COMMENT ON TABLE public.tblusers IS 'System users';
+COMMENT ON TABLE public.tblsales_order IS 'Sales orders';
+COMMENT ON TABLE public.tblpurchase_orders IS 'Purchase orders';
+COMMENT ON TABLE public.tblcustomer IS 'Customers and sub-dealers';
+COMMENT ON TABLE public.tblquotation IS 'Sales quotations';
+COMMENT ON TABLE public.tblproject_details IS 'Project details for sales orders';
+COMMENT ON TABLE public.tblaudit_log IS 'System audit log';
+
+-- Add missing indexes for performance (examples)
+CREATE INDEX IF NOT EXISTS idx_tblusers_roleId ON public.tblusers("roleId");
+CREATE INDEX IF NOT EXISTS idx_tblusers_branchId ON public.tblusers("branchId");
+CREATE INDEX IF NOT EXISTS idx_tblsales_order_created_by ON public.tblsales_order(created_by);
+CREATE INDEX IF NOT EXISTS idx_tblpurchase_orders_created_by ON public.tblpurchase_orders(created_by);
+CREATE INDEX IF NOT EXISTS idx_tblrbac_roleName ON public.tblrbac("roleName");
+
+-- =========================
+-- SECTION: RBAC & PERMISSIONS ENHANCEMENT
+-- =========================
+
+-- Add more permission keys for new modules/features (examples)
+INSERT INTO public.auth_permission_keys(key, label, module, scope)
+VALUES
+  ('projects.view', 'View Projects', 'projects', 'feature'),
+  ('projects.create', 'Create Project', 'projects', 'action'),
+  ('projects.edit', 'Edit Project', 'projects', 'action'),
+  ('projects.delete', 'Delete Project', 'projects', 'action'),
+  ('inventory.view', 'View Inventory', 'inventory', 'feature'),
+  ('inventory.edit', 'Edit Inventory', 'inventory', 'action'),
+  ('settings.view', 'View Settings', 'settings', 'feature'),
+  ('settings.edit', 'Edit Settings', 'settings', 'action')
+ON CONFLICT (key) DO NOTHING;
+
+-- =========================
+-- END OF MIGRATION
+-- =========================
 
 
 -- ============================================================

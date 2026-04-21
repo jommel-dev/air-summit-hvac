@@ -138,6 +138,28 @@ export class SalesOrderController {
     return this.salesOrderService.getServices(this.withEffectiveBranchScope(query, request));
   }
 
+  @Get('projects/search')
+  searchProjects(
+    @Query() query: any,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const branchId = Number(
+      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
+    );
+    const enrichQuery = {
+      ...query,
+      branchId: Number.isFinite(branchId) ? branchId : undefined,
+    };
+    return this.salesOrderService.searchProjects(enrichQuery);
+  }
+
+  @Get('projects/:projectId/related-orders')
+  getProjectWithRelatedSOs(
+    @Param('projectId') projectId: string,
+  ) {
+    return this.salesOrderService.getProjectWithRelatedSOs(Number(projectId));
+  }
+
   @Get('projects')
   getProjects(
     @Query() query: ListSalesOrderQueryDto,

@@ -23,7 +23,8 @@ export type MenuKey =
   | 'material_inventory'
   | 'sales_order_materials'
   | 'user_management'
-  | 'settings';
+  | 'settings'
+  | 'projects';
 
 export type PermissionKey = 'canCreate' | 'canRead' | 'canUpdate' | 'canDelete' | 'canDoAll';
 
@@ -66,6 +67,7 @@ export class RbacService {
     'sales-order-materials': 'sales_order_materials',
     'user-management': 'user_management',
     settings: 'settings',
+    projects: 'projects',
   };
 
   private refreshCache(): void {
