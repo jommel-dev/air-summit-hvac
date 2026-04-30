@@ -300,7 +300,7 @@ export class DashboardService {
   private async updateSalesOrderStatusForSettlement(client: PoolClient, salesOrderId: number, branchId?: number): Promise<void> {
     const state = await this.loadSalesSettlementState(client, salesOrderId, branchId);
     const currentStatus = this.normalizeStatus(state.normalizedStatus);
-    if (['remitted', 'complete', 'completed', 'cancelled', 'rejected', 'void'].includes(currentStatus)) {
+    if (['complete', 'completed', 'cancelled', 'rejected', 'void'].includes(currentStatus)) {
       return;
     }
 
@@ -310,8 +310,10 @@ export class DashboardService {
     const totalAmount = this.toNumber(state.totalAmount);
     let nextStatus = currentStatus || 'pending';
 
-    if (Math.max(totalAmount - paidAmount, 0) <= 0) {
-      nextStatus = 'paid';
+    if (Math.max(totalAmount - paidAmount, 0) <= 0 && outstandingReceivableAmount <= 0) {
+      nextStatus = 'complete';
+    } else if (remainingAmount <= 0 && outstandingReceivableAmount > 0) {
+      nextStatus = 'remitted';
     } else if (paidAmount > 0 || outstandingReceivableAmount > 0 || remainingAmount < totalAmount) {
       nextStatus = 'partial';
     }
@@ -1289,7 +1291,7 @@ export class DashboardService {
           success: true,
           items: result.rows.map((row) => ({
             id: row.paymentId,
-            paymentId: Number(row.paymentId),
+            paymentId: row.paymentId,
             soNumber: row.soNumber,
             customer: row.customer,
             method: row.method === 'credit-card' ? 'Credit Card' : 'Cheque',
@@ -1432,8 +1434,8 @@ export class DashboardService {
     payload: { paymentId?: number; method?: DashboardReceivableVerificationMode },
     branchId?: number,
   ): Promise<{ success: boolean; message: string }> {
-    const paymentId = Number(payload.paymentId);
-    if (!Number.isFinite(paymentId) || paymentId <= 0) {
+    const paymentId = String(payload.paymentId ?? '').trim();
+    if (!paymentId) {
       throw new BadRequestException('A valid paymentId is required');
     }
 
@@ -1452,7 +1454,7 @@ export class DashboardService {
          FROM tblso_payments sp
          LEFT JOIN tblsales_order so
            ON so.id::text = COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId')
-         WHERE sp.id = $1
+         WHERE sp.id::text = $1
          LIMIT 1`,
         [paymentId],
       );
@@ -1487,7 +1489,7 @@ export class DashboardService {
       await client.query(
         `UPDATE tblso_payments
          SET ${updates.join(', ')}
-         WHERE id = $${updateParams.length}`,
+         WHERE id::text = $${updateParams.length}`,
         updateParams,
       );
 

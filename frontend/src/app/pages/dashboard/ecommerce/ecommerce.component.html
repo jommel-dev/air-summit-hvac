@@ -405,9 +405,10 @@
                     <td class="px-4 py-3 text-right">
                       <button
                         type="button"
-                        (click)="verifyReceivable(item)"
-                        [disabled]="verifyingReceivableId === item['paymentId'] || !canVerifyReceivable(item)"
+                        (click)="verifyReceivable(item, $event.shiftKey)"
+                        [disabled]="verifyingReceivableId !== null && verifyingReceivableId === $any(item['paymentId'])?.toString()"
                         class="rounded-lg border border-success-300 px-3 py-1.5 text-xs font-medium text-success-700 transition hover:bg-success-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-success-500/40 dark:text-success-300 dark:hover:bg-success-500/10"
+                        [title]="!canVerifyReceivable(item) ? 'Hold Shift and click to force verify' : ''"
                       >
                         {{ getReceivableVerifyLabel(item) }}
                       </button>

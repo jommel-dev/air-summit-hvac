@@ -2,6 +2,7 @@
 import { CreateSerialNumberDto } from './dto/create-serial-number.dto';
 import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditLogService, AuditActorContext } from 'src/audit-log/audit-log.service';
 import { ScanSalesOrderDto } from './dto/scan-sales-order.dto';
 import {
   ScanSalesOrderBatchDto,
@@ -85,7 +86,10 @@ type PurchaseSerialUnitTypeRow = {
 
 @Injectable()
 export class SerialNumberService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   private toOptionalNumber(value: unknown): number | null {
     if (value === null || value === undefined || value === '') {
@@ -2872,7 +2876,10 @@ export class SerialNumberService {
     };
   }
 
-  async removeSalesOrderSerial(dto: RemoveSalesOrderSerialDto) {
+  async removeSalesOrderSerial(
+    dto: RemoveSalesOrderSerialDto,
+    actor?: AuditActorContext,
+  ) {
     const serialNumber = this.normalizeSerialNumber(dto.serialNumber);
     const salesId = Number(dto.salesId);
     const unitType = this.normalizeUnitType(dto.unitType);
@@ -2889,11 +2896,17 @@ export class SerialNumberService {
       id: number;
       salesId: string | null;
       unitType: string | null;
+      status: string | null;
+      productId: string | null;
+      capacityId: string | null;
     }>(
       `SELECT
          sn.id,
          COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id', null) AS "salesId",
-         COALESCE(to_jsonb(sn)->>'unitType', to_jsonb(sn)->>'unit_type', null) AS "unitType"
+         COALESCE(to_jsonb(sn)->>'unitType', to_jsonb(sn)->>'unit_type', null) AS "unitType",
+         COALESCE(to_jsonb(sn)->>'status', null) AS status,
+         COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', null) AS "productId",
+         COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', null) AS "capacityId"
        FROM tblserial_numbers sn
        WHERE LOWER(
          regexp_replace(
@@ -2935,6 +2948,17 @@ export class SerialNumberService {
       };
     }
 
+    // Capture before state for audit logging
+    const beforeState = {
+      id: existing.id,
+      serialNumber: serialNumber,
+      salesId: existing.salesId,
+      unitType: existing.unitType,
+      status: existing.status,
+      productId: existing.productId,
+      capacityId: existing.capacityId,
+    };
+
     const serialColumns = await this.getTableColumns('tblserial_numbers');
     const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
     const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
@@ -2965,6 +2989,30 @@ export class SerialNumberService {
         success: false,
         message: 'Unable to remove serial number from sales order',
       };
+    }
+
+    // Capture after state for audit logging
+    const afterState = {
+      ...beforeState,
+      salesId: null,
+      status: 'in-stock',
+    };
+
+    // Log audit entry for serial number removal from sales order
+    if (actor) {
+      await this.auditLogService.logMutation({
+        action: 'DELETE',
+        entityType: 'serial-number',
+        entityId: existing.id,
+        actor,
+        description: `Removed serial number '${serialNumber}' from sales order #${salesId}`,
+        before: beforeState,
+        after: afterState,
+        metadata: {
+          salesOrderId: salesId,
+          unitType: unitType ?? existingUnitType,
+        },
+      });
     }
 
     return {
