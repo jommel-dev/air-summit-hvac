@@ -21,6 +21,7 @@ import { RemovePurchaseOrderSerialDto } from './dto/remove-purchase-order-serial
 import { RemoveSalesOrderSerialDto } from './dto/remove-sales-order-serial.dto';
 import { AdjustPurchaseUnitTypesDto } from './dto/adjust-purchase-unit-types.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { AuditActorContext } from 'src/audit-log/audit-log.service';
 
 @Controller('serial-number')
 @UseGuards(JwtAuthGuard)
@@ -135,8 +136,25 @@ export class SerialNumberController {
   }
 
   @Post('remove-sales-order')
-  removeSalesOrderSerial(@Body() dto: RemoveSalesOrderSerialDto) {
-    return this.serialNumberService.removeSalesOrderSerial(dto);
+  removeSalesOrderSerial(
+    @Body() dto: RemoveSalesOrderSerialDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    const userId = Number(request.user?.id ?? request.user?.userId ?? request.user?.sub) || undefined;
+    const username = String(request.user?.username ?? request.user?.name ?? '').trim() || undefined;
+    const roleName = String(request.user?.roleName ?? request.user?.role ?? '').trim() || undefined;
+    const branchId = Number(request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch) || undefined;
+    const ipAddress = String(request.ip ?? '').trim() || undefined;
+
+    const actor: AuditActorContext = {
+      userId: Number.isFinite(userId) ? userId : null,
+      username,
+      roleName,
+      branchId: Number.isFinite(branchId) ? branchId : null,
+      ipAddress: ipAddress ? ipAddress.split(',')[0].trim() : null,
+    };
+
+    return this.serialNumberService.removeSalesOrderSerial(dto, actor);
   }
 
   @Post('normalize-unit-types')

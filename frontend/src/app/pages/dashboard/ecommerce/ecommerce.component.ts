@@ -97,7 +97,7 @@ export class EcommerceComponent implements OnInit {
   settlementBankName = '';
   settlementCheckNo = '';
   settlementPostDated = '';
-  verifyingReceivableId: number | null = null;
+  verifyingReceivableId: string | null = null;
 
   // Operations Control Modal
   expandedOperationMode: DashboardOperationDetailMode | null = null;
@@ -449,13 +449,13 @@ export class EcommerceComponent implements OnInit {
     }
   }
 
-  async verifyReceivable(item: { [key: string]: unknown }): Promise<void> {
-    if (!this.canVerifyReceivable(item)) {
+  async verifyReceivable(item: { [key: string]: unknown }, force: boolean = false): Promise<void> {
+    if (!force && !this.canVerifyReceivable(item)) {
       return;
     }
 
-    const paymentId = Number(item['paymentId']);
-    if (!Number.isFinite(paymentId) || paymentId <= 0 || this.verifyingReceivableId === paymentId) {
+    const paymentId = String(item['paymentId'] ?? '').trim();
+    if (!paymentId || this.verifyingReceivableId === paymentId) {
       return;
     }
 
@@ -464,7 +464,7 @@ export class EcommerceComponent implements OnInit {
     this.verifyingReceivableId = paymentId;
 
     try {
-      await this.dashboardService.verifyReceivable({ paymentId, method });
+      await this.dashboardService.verifyReceivable({ paymentId: paymentId as unknown as number, method });
       const currentMode = this.expandedSalesSummaryMode;
       await this.loadDashboardOverview();
       if (currentMode) {
@@ -489,21 +489,25 @@ export class EcommerceComponent implements OnInit {
       return true;
     }
 
-    const postDated = new Date(String(rawPostDated));
-    if (Number.isNaN(postDated.getTime())) {
+    // Parse as local date to avoid UTC midnight shifting the date back by 1 day
+    const rawStr = String(rawPostDated);
+    const dateOnly = rawStr.slice(0, 10); // "YYYY-MM-DD"
+    const [year, month, day] = dateOnly.split('-').map(Number);
+    if (!year || !month || !day) {
       return true;
     }
 
+    const postDatedLocal = new Date(year, month - 1, day);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    postDated.setHours(0, 0, 0, 0);
 
-    return postDated <= today;
+    return postDatedLocal <= today;
   }
 
   getReceivableVerifyLabel(item: { [key: string]: unknown }): string {
     if (this.canVerifyReceivable(item)) {
-      return this.verifyingReceivableId === item['paymentId'] ? 'Verifying…' : 'Verify';
+      const paymentId = String(item['paymentId'] ?? '').trim();
+      return this.verifyingReceivableId !== null && this.verifyingReceivableId === paymentId ? 'Verifying…' : 'Verify';
     }
 
     return 'Waiting for date';
