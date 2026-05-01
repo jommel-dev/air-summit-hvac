@@ -332,9 +332,54 @@
       </div>
 
       @if (isDealerStakeholder(selectedCustomer)) {
-        <div class="rounded-xl border border-gray-200 bg-gray-50 px-5 py-4 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
-          Dealer records are sourced from the vendor master in tblvendors. Sales orders, payments, SOA, and concerns are not tracked in this drawer.
-        </div>
+        @if (isDealerPoLoading) {
+          <div class="py-6 text-center text-sm text-gray-500 dark:text-gray-400">Loading purchase orders...</div>
+        } @else {
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div class="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
+              <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total POs</p>
+              <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ dealerPoSummary.totalCount }}</p>
+            </div>
+            <div class="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
+              <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Total Charge</p>
+              <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ formatAmount(dealerPoSummary.totalCharge) }}</p>
+            </div>
+            <div class="rounded-xl border border-error-200 bg-error-50/40 p-3 dark:border-error-500/30 dark:bg-error-500/10">
+              <p class="text-xs uppercase tracking-wide text-error-600 dark:text-error-400">Outstanding Balance</p>
+              <p class="mt-1 text-lg font-semibold text-error-700 dark:text-error-300">{{ formatAmount(dealerPoSummary.outstandingBalance) }}</p>
+            </div>
+            <div class="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
+              <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Terms POs</p>
+              <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ formatAmount(dealerPoSummary.termsTotal) }}</p>
+            </div>
+          </div>
+          @if (dealerPurchaseOrders.length > 0) {
+            <div class="mt-4 overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
+              <table class="w-full min-w-[520px]">
+                <thead>
+                  <tr class="border-b border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/50">
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">PO Number</th>
+                    <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+                    <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (po of dealerPurchaseOrders; track po.id) {
+                    <tr class="border-b border-gray-100 last:border-b-0 dark:border-gray-800/70">
+                      <td class="px-4 py-3 text-sm font-medium text-gray-800 dark:text-white/90">{{ po.poNumber || ('#' + po.id) }}</td>
+                      <td class="px-4 py-3 text-right text-sm text-gray-700 dark:text-gray-300">{{ formatAmount(po.totalAmount) }}</td>
+                      <td class="px-4 py-3"><span class="inline-flex rounded-full px-2 py-1 text-xs font-medium" [class]="statusBadgeClass(po.status)">{{ po.status }}</span></td>
+                      <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{{ formatDate(po.createdAt) }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          } @else {
+            <div class="mt-4 rounded-xl border border-dashed border-gray-300 py-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">No purchase orders found for this dealer.</div>
+          }
+        }
       } @else {
         <!-- Tab Navigation -->
         <div class="flex gap-1 rounded-xl border border-gray-200 bg-gray-50 p-1 dark:border-gray-700 dark:bg-gray-800">

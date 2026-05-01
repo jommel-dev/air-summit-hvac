@@ -290,6 +290,19 @@ export interface ProductOption {
 
 @Injectable({ providedIn: 'root' })
 export class PurchaseOrderService {
+  async getPurchasesByVendor(
+    vendorId: string,
+    params: { page?: number; limit?: number } = {},
+  ): Promise<PurchaseOrderListResult> {
+    const response = await apiClient.get<PurchaseOrderApiResponse>('/purchase/master-data', {
+      params: { vendorId, page: params.page ?? 1, limit: params.limit ?? 100 },
+    });
+    return {
+      items: response.data.items ?? [],
+      meta: response.data.meta,
+    };
+  }
+
   async createPurchase(payload: CreatePurchaseRequestPayload): Promise<CreatePurchaseResponse> {
     const response = await apiClient.post<CreatePurchaseResponse>('/purchase', payload);
     return response.data;

@@ -58,6 +58,11 @@ export class CustomersComponent implements OnInit {
   statements: SalesStatementOfAccountItem[] = [];
   isDetailLoading = false;
 
+  // Dealer PO state
+  dealerPurchaseOrders: import('../../shared/services/purchase-order.service').PurchaseOrderItem[] = [];
+  dealerPoSummary = { totalCharge: 0, totalPaid: 0, outstandingBalance: 0, termsTotal: 0, totalCount: 0 };
+  isDealerPoLoading = false;
+
   soaForm = { periodFrom: this.defaultPeriodFrom(), periodTo: this.defaultPeriodTo(), dueDate: '', notes: '' };
   isSaving = false;
   isGeneratingSoa = false;
@@ -198,6 +203,7 @@ export class CustomersComponent implements OnInit {
       this.statements = [];
       this.paymentSummary = { totalCharges: 0, totalManualPayments: 0, outstandingBalance: 0 };
       this.isDetailLoading = false;
+      void this.loadDealerPurchaseOrders(customer.id);
       return;
     }
     void this.loadCustomerDetails(customer.id);
@@ -298,6 +304,40 @@ export class CustomersComponent implements OnInit {
       void this.loadCustomers();
     } catch (error: unknown) {
       this.uiError = (error as Error)?.message || 'Failed to delete';
+    }
+  }
+
+  private async loadDealerPurchaseOrders(vendorId: string): Promise<void> {
+    this.isDealerPoLoading = true;
+    this.dealerPurchaseOrders = [];
+    this.dealerPoSummary = { totalCharge: 0, totalPaid: 0, outstandingBalance: 0, termsTotal: 0, totalCount: 0 };
+    try {
+      const result = await this.purchaseOrderService.getPurchasesByVendor(vendorId);
+      this.dealerPurchaseOrders = result.items;
+      let totalCharge = 0;
+      let totalPaid = 0;
+      let termsTotal = 0;
+      for (const po of result.items) {
+        totalCharge += Number(po.totalAmount ?? 0);
+        const status = String(po.status ?? '').toLowerCase();
+        if (['approved', 'completed', 'received'].includes(status)) {
+          totalPaid += Number(po.totalAmount ?? 0);
+        }
+        if (status === 'terms' || status.includes('term')) {
+          termsTotal += Number(po.totalAmount ?? 0);
+        }
+      }
+      this.dealerPoSummary = {
+        totalCharge,
+        totalPaid,
+        outstandingBalance: Math.max(totalCharge - totalPaid, 0),
+        termsTotal,
+        totalCount: result.items.length,
+      };
+    } catch (error: unknown) {
+      this.uiError = (error as Error)?.message || 'Failed to load purchase orders';
+    } finally {
+      this.isDealerPoLoading = false;
     }
   }
 
