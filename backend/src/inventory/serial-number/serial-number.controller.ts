@@ -239,6 +239,19 @@ export class SerialNumberController {
     return this.serialNumberService.update(+id, updateSerialNumberDto);
   }
 
+  @Delete('in-stock')
+  deleteInStockByScope(
+    @Query('productId') productId: string,
+    @Query('capacityId') capacityId: string,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const role = String(request.user?.roleName ?? '').trim().toLowerCase();
+    if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
+      return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
+    }
+    return this.serialNumberService.deleteInStockByScope(productId, capacityId);
+  }
+
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.serialNumberService.remove(+id);

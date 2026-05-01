@@ -2251,9 +2251,13 @@ export class SalesOrderComponent {
                   ? await this.salesOrderService.getSalesReceivable(query)
                   : await this.salesOrderService.getRemittedSales(query);
 
+      console.log('[Tab Debug] tab:', tab, '| items:', result.items?.length, '| meta:', result.meta);
+      console.log('[Tab Debug] warehouseman branchId from JWT:', this.rbacService.getBranchId());
+
       this.orders = this.mapListItemsToRows(result.items);
       this.applyMeta(result.meta);
     } catch (error: unknown) {
+      console.error('[Tab Debug] loadTabData error:', error);
       if (axios.isAxiosError(error)) {
         this.errorMessage =
           (error.response?.data as { message?: string } | undefined)?.message ??

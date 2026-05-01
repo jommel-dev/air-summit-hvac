@@ -2414,6 +2414,313 @@ export class SalesOrderService {
     return result.rowCount ?? 0;
   }
 
+  // private async fetchByMode(mode: SalesMode, query: ListSalesOrderQueryDto) {
+  //   const page = this.normalizePage(query.page);
+  //   const limit = this.normalizeLimit(query.limit);
+  //   const offset = (page - 1) * limit;
+  //   const search = String(query.search ?? '').trim().toLowerCase();
+  //   const branchId = Number(query.branchId);
+
+  //   const params: unknown[] = [];
+  //   const whereParts: string[] = [];
+
+  //   if (mode === 'deliveries') {
+  //     whereParts.push(`LOWER(COALESCE(base.original_status, '')) NOT IN (
+  //       'for_approval', 'for approval', 'approval', 'approved', 'complete', 'completed', 'cancelled', 'rejected'
+  //     )`);
+  //   } else if (mode === 'approvals') {
+  //     whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN (
+  //       'for_approval', 'for approval', 'approval', 'pending_approval', 'pending approval'
+  //     )`);
+  //   } else if (mode === 'schedules') {
+  //     whereParts.push(`REPLACE(REPLACE(LOWER(BTRIM(COALESCE(base.original_status, ''))), '_', '-'), ' ', '-') IN (
+  //       'pending',
+  //       'for-delivery',
+  //       'to-remit'
+  //     )`);
+  //     whereParts.push(`LOWER(COALESCE(base.sales_type, '')) IN (
+  //       'sales',
+  //       'sub-dealer',
+  //       'sales and service',
+  //       'sales & service',
+  //       'sales-and-service',
+  //       'sales_and_service'
+  //     )`);
+  //   } else if (mode === 'services') {
+  //     whereParts.push(`(
+  //       LOWER(COALESCE(base.sales_type, '')) IN (
+  //         'service', 'services', 'concern', 'concerns',
+  //         'sales and service', 'sales & service', 'sales-and-service', 'sales_and_service'
+  //       )
+  //       OR EXISTS (SELECT 1 FROM tblservice_details sd WHERE sd.sales_id = base.id)
+  //       OR EXISTS (SELECT 1 FROM tblconcern_details cd WHERE cd.sales_id = base.id)
+  //     )`);
+  //   } else if (mode === 'projects') {
+  //     whereParts.push(`(
+  //       LOWER(COALESCE(base.sales_type, '')) IN ('project', 'projects')
+  //       OR EXISTS (SELECT 1 FROM tblproject_details pd WHERE pd.sales_id = base.id)
+  //     )`);
+  //   } else if (mode === 'distribution') {
+  //     whereParts.push(`(
+  //       LOWER(COALESCE(base.sales_type, '')) IN (
+  //         'distribution',
+  //         'transfer',
+  //         'transfers'
+  //       )
+  //       OR EXISTS (SELECT 1 FROM tbltransfer_details td WHERE td.sales_id = base.id)
+  //     )`);
+  //   } else if (mode === 'sales-receivable') {
+  //     whereParts.push(`LOWER(COALESCE(base.original_status, '')) = 'remitted'`);
+  //   } else if (mode === 'remitted-sales') {
+  //     whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN ('complete', 'completed')`);
+  //   }
+
+  //   if (Number.isFinite(branchId) && branchId > 0) {
+  //     params.push(String(branchId));
+  //     const branchIndex = params.length;
+  //     // Include NULL branch_id (legacy records without branch assignment)
+  //     whereParts.push(`(base.branch_id = $${branchIndex} OR base.branch_id IS NULL)`);
+  //   }
+
+  //   if (search) {
+  //     params.push(`%${search}%`);
+  //     const searchIndex = params.length;
+  //     whereParts.push(`(
+  //       LOWER(COALESCE(base.so_number, '')) LIKE $${searchIndex}
+  //       OR LOWER(COALESCE(base.customer_name, '')) LIKE $${searchIndex}
+  //       OR LOWER(COALESCE(base.computed_status, '')) LIKE $${searchIndex}
+  //       OR LOWER(COALESCE(base.sales_type, '')) LIKE $${searchIndex}
+  //       OR LOWER(COALESCE(base.payment_method, '')) LIKE $${searchIndex}
+  //     )`);
+  //   }
+
+  //   const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+  //   const computedStatusExpression =
+  //     mode === 'deliveries'
+  //       ? `CASE
+  //            WHEN COALESCE(sc.serial_count, 0) > 0 THEN 'in-progress'
+  //            ELSE 'pending'
+  //          END`
+  //       : `COALESCE(so.status, 'pending')`;
+
+  //   const baseCte = `
+  //     WITH serial_counts AS (
+  //       SELECT
+  //         COALESCE(
+  //           to_jsonb(sn)->>'salesId',
+  //           to_jsonb(sn)->>'sales_id'
+  //         ) AS so_id,
+  //         COUNT(*)::int AS serial_count
+  //       FROM tblserial_numbers sn
+  //       WHERE COALESCE(
+  //         to_jsonb(sn)->>'salesId',
+  //         to_jsonb(sn)->>'sales_id'
+  //       ) IS NOT NULL
+  //       GROUP BY COALESCE(
+  //         to_jsonb(sn)->>'salesId',
+  //         to_jsonb(sn)->>'sales_id'
+  //       )
+  //     ),
+  //     payment_totals AS (
+  //       SELECT
+  //         COALESCE(
+  //           to_jsonb(sp)->>'so_id',
+  //           to_jsonb(sp)->>'soId'
+  //         ) AS so_id,
+  //         COALESCE(
+  //           STRING_AGG(
+  //             DISTINCT NULLIF(COALESCE(to_jsonb(sp)->>'method', ''), ''),
+  //             ', ' ORDER BY NULLIF(COALESCE(to_jsonb(sp)->>'method', ''), '')
+  //           ),
+  //           '-'
+  //         ) AS payment_method,
+  //         COALESCE(
+  //           SUM(
+  //             COALESCE(
+  //               NULLIF(to_jsonb(sp)->>'amount', '')::numeric,
+  //               0
+  //             )
+  //           ),
+  //           0
+  //         ) AS paid_amount
+  //       FROM tblso_payments sp
+  //       GROUP BY COALESCE(
+  //         to_jsonb(sp)->>'so_id',
+  //         to_jsonb(sp)->>'soId'
+  //       )
+  //     ),
+  //     base AS (
+  //       SELECT
+  //         so.id,
+  //         COALESCE(
+  //           to_jsonb(so)->>'so_number',
+  //           to_jsonb(so)->>'soNumber',
+  //           ''
+  //         ) AS so_number,
+  //         COALESCE(
+  //           to_jsonb(so)->>'customer_id',
+  //           to_jsonb(so)->>'customerId',
+  //           ''
+  //         ) AS customer_id,
+  //         COALESCE(
+  //           to_jsonb(c)->>'name',
+  //           to_jsonb(c)->>'customer_name',
+  //           ''
+  //         ) AS customer_name,
+  //         COALESCE(
+  //           to_jsonb(so)->>'total_amount',
+  //           to_jsonb(so)->>'totalAmount',
+  //           '0'
+  //         ) AS total_amount,
+  //         COALESCE(so.status, 'pending') AS original_status,
+  //         COALESCE(
+  //           to_jsonb(so)->>'scheduleDate',
+  //           to_jsonb(so)->>'schedule_date',
+  //           null
+  //         ) AS schedule_date,
+  //         COALESCE(
+  //           to_jsonb(so)->>'created_at',
+  //           to_jsonb(so)->>'createdAt',
+  //           null
+  //         ) AS created_at,
+  //         COALESCE(
+  //           to_jsonb(so)->>'salesType',
+  //           to_jsonb(so)->>'sales_type',
+  //           ''
+  //         ) AS sales_type,
+  //         COALESCE(
+  //           to_jsonb(so)->>'branchId',
+  //           to_jsonb(so)->>'branch_id',
+  //           ''
+  //         ) AS branch_id,
+  //         COALESCE(
+  //           to_jsonb(so)->>'projectName',
+  //           to_jsonb(so)->>'project_name',
+  //           ''
+  //         ) AS project_name,
+  //         COALESCE(
+  //           to_jsonb(so)->>'projectCode',
+  //           to_jsonb(so)->>'project_code',
+  //           ''
+  //         ) AS project_code,
+  //         COALESCE(sc.serial_count, 0)::int AS serial_count,
+  //         COALESCE(pt.payment_method, '-') AS payment_method,
+  //         COALESCE(pt.paid_amount, 0) AS paid_amount,
+  //         COALESCE(cd.concern_status, '') AS concern_status,
+  //         GREATEST(
+  //           COALESCE(
+  //             NULLIF(
+  //               COALESCE(
+  //                 to_jsonb(so)->>'total_amount',
+  //                 to_jsonb(so)->>'totalAmount',
+  //                 '0'
+  //               ),
+  //               ''
+  //             )::numeric,
+  //             0
+  //           ) - COALESCE(pt.paid_amount, 0),
+  //           0
+  //         ) AS remaining_amount,
+  //         ${computedStatusExpression} AS computed_status
+  //       FROM tblsales_order so
+  //       LEFT JOIN tblcustomer c
+  //         ON c.id::text = COALESCE(
+  //           to_jsonb(so)->>'customer_id',
+  //           to_jsonb(so)->>'customerId',
+  //           ''
+  //         )
+  //       LEFT JOIN serial_counts sc
+  //         ON sc.so_id = so.id::text
+  //       LEFT JOIN payment_totals pt
+  //         ON pt.so_id = so.id::text
+  //       LEFT JOIN tblconcern_details cd
+  //         ON cd.sales_id = so.id
+  //     )
+  //   `;
+
+  //   const countSql = `
+  //     ${baseCte}
+  //     SELECT COUNT(*)::text AS total
+  //     FROM base
+  //     ${whereSql}
+  //   `;
+
+  //   const countResult = await this.databaseService.query<{ total: string }>(countSql, params);
+  //   const total = Number(countResult.rows[0]?.total ?? 0);
+
+  //   params.push(limit);
+  //   params.push(offset);
+  //   const limitIndex = params.length - 1;
+  //   const offsetIndex = params.length;
+
+  //   const listSql = `
+  //     ${baseCte}
+  //     SELECT
+  //       base.id,
+  //       base.so_number AS "soNumber",
+  //       base.customer_id AS "customerId",
+  //       base.customer_name AS "customerName",
+  //       COALESCE(base.total_amount, '0')::numeric AS "totalAmount",
+  //       base.computed_status AS status,
+  //       base.sales_type AS "salesType",
+  //       base.project_name AS "projectName",
+  //       base.project_code AS "projectCode",
+  //       base.payment_method AS "paymentMethod",
+  //       base.schedule_date AS "scheduleDate",
+  //       base.created_at AS "createdAt",
+  //       base.serial_count AS "serialCount",
+  //       base.concern_status AS "concernStatus"
+  //     FROM base
+  //     ${whereSql}
+  //     ORDER BY base.id DESC
+  //     LIMIT $${limitIndex}
+  //     OFFSET $${offsetIndex}
+  //   `;
+
+  //   const listResult = await this.databaseService.query<{
+  //     id: number;
+  //     soNumber: string;
+  //     customerId: string | null;
+  //     customerName: string;
+  //     totalAmount: string | number | null;
+  //     status: string | null;
+  //     salesType: string | null;
+  //     projectName: string | null;
+  //     projectCode: string | null;
+  //     paymentMethod: string | null;
+  //     scheduleDate: string | null;
+  //     createdAt: string | null;
+  //     serialCount: number;
+  //     concernStatus: string | null;
+  //   }>(listSql, params);
+
+  //   return {
+  //     success: true,
+  //     items: listResult.rows.map((row) => ({
+  //       id: row.id,
+  //       soNumber: row.soNumber,
+  //       customerId: row.customerId,
+  //       customerName: row.customerName,
+  //       totalAmount: Number(row.totalAmount ?? 0),
+  //       status: row.status ?? 'pending',
+  //       salesType: row.salesType ?? '',
+  //       projectName: row.projectName ?? '',
+  //       projectCode: row.projectCode ?? '',
+  //       paymentMethod: row.paymentMethod ?? '-',
+  //       scheduleDate: row.scheduleDate,
+  //       createdAt: row.createdAt,
+  //       serialCount: Number(row.serialCount ?? 0),
+  //       concernStatus: row.concernStatus ?? '',
+  //     })),
+  //     meta: {
+  //       page,
+  //       limit,
+  //       total,
+  //       totalPages: Math.max(1, Math.ceil(total / limit)),
+  //     },
+  //   };
+  // }
   private async fetchByMode(mode: SalesMode, query: ListSalesOrderQueryDto) {
     const page = this.normalizePage(query.page);
     const limit = this.normalizeLimit(query.limit);
@@ -2424,6 +2731,7 @@ export class SalesOrderService {
     const params: unknown[] = [];
     const whereParts: string[] = [];
 
+    // --- 1. Mode Specific Filtering ---
     if (mode === 'deliveries') {
       whereParts.push(`LOWER(COALESCE(base.original_status, '')) NOT IN (
         'for_approval', 'for approval', 'approval', 'approved', 'complete', 'completed', 'cancelled', 'rejected'
@@ -2434,17 +2742,10 @@ export class SalesOrderService {
       )`);
     } else if (mode === 'schedules') {
       whereParts.push(`REPLACE(REPLACE(LOWER(BTRIM(COALESCE(base.original_status, ''))), '_', '-'), ' ', '-') IN (
-        'pending',
-        'for-delivery',
-        'to-remit'
+        'pending', 'for-delivery', 'to-remit'
       )`);
       whereParts.push(`LOWER(COALESCE(base.sales_type, '')) IN (
-        'sales',
-        'sub-dealer',
-        'sales and service',
-        'sales & service',
-        'sales-and-service',
-        'sales_and_service'
+        'sales', 'sub-dealer', 'sales and service', 'sales & service', 'sales-and-service', 'sales_and_service'
       )`);
     } else if (mode === 'services') {
       whereParts.push(`(
@@ -2462,11 +2763,7 @@ export class SalesOrderService {
       )`);
     } else if (mode === 'distribution') {
       whereParts.push(`(
-        LOWER(COALESCE(base.sales_type, '')) IN (
-          'distribution',
-          'transfer',
-          'transfers'
-        )
+        LOWER(COALESCE(base.sales_type, '')) IN ('distribution', 'transfer', 'transfers')
         OR EXISTS (SELECT 1 FROM tbltransfer_details td WHERE td.sales_id = base.id)
       )`);
     } else if (mode === 'sales-receivable') {
@@ -2475,13 +2772,16 @@ export class SalesOrderService {
       whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN ('complete', 'completed')`);
     }
 
-    if (Number.isFinite(branchId) && branchId > 0) {
-      params.push(String(branchId));
-      const branchIndex = params.length;
-      // Include NULL branch_id (legacy records without branch assignment)
-      whereParts.push(`(base.branch_id = $${branchIndex} OR base.branch_id IS NULL)`);
-    }
+    // --- 2. Branch Security (Critical for Warehouseman) ---
+    // if (Number.isFinite(branchId) && branchId > 0) {
+    //   params.push(branchId);
+    //   const branchIndex = params.length;
+    //   // STRICTOR FILTER: Only show the specific branch. 
+    //   // Removed "OR IS NULL" to prevent warehousemen from seeing unassigned global records.
+    //   whereParts.push(`base.branch_id_numeric = $${branchIndex}`);
+    // }
 
+    // --- 3. Search Logic ---
     if (search) {
       params.push(`%${search}%`);
       const searchIndex = params.length;
@@ -2498,154 +2798,56 @@ export class SalesOrderService {
 
     const computedStatusExpression =
       mode === 'deliveries'
-        ? `CASE
-             WHEN COALESCE(sc.serial_count, 0) > 0 THEN 'in-progress'
-             ELSE 'pending'
-           END`
+        ? `CASE WHEN COALESCE(sc.serial_count, 0) > 0 THEN 'in-progress' ELSE 'pending' END`
         : `COALESCE(so.status, 'pending')`;
 
     const baseCte = `
       WITH serial_counts AS (
-        SELECT
-          COALESCE(
-            to_jsonb(sn)->>'salesId',
-            to_jsonb(sn)->>'sales_id'
-          ) AS so_id,
+        SELECT 
+          COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id') AS so_id,
           COUNT(*)::int AS serial_count
         FROM tblserial_numbers sn
-        WHERE COALESCE(
-          to_jsonb(sn)->>'salesId',
-          to_jsonb(sn)->>'sales_id'
-        ) IS NOT NULL
-        GROUP BY COALESCE(
-          to_jsonb(sn)->>'salesId',
-          to_jsonb(sn)->>'sales_id'
-        )
+        WHERE COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id') IS NOT NULL
+        GROUP BY 1
       ),
       payment_totals AS (
-        SELECT
-          COALESCE(
-            to_jsonb(sp)->>'so_id',
-            to_jsonb(sp)->>'soId'
-          ) AS so_id,
-          COALESCE(
-            STRING_AGG(
-              DISTINCT NULLIF(COALESCE(to_jsonb(sp)->>'method', ''), ''),
-              ', ' ORDER BY NULLIF(COALESCE(to_jsonb(sp)->>'method', ''), '')
-            ),
-            '-'
-          ) AS payment_method,
-          COALESCE(
-            SUM(
-              COALESCE(
-                NULLIF(to_jsonb(sp)->>'amount', '')::numeric,
-                0
-              )
-            ),
-            0
-          ) AS paid_amount
+        SELECT 
+          COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
+          COALESCE(STRING_AGG(DISTINCT NULLIF(COALESCE(to_jsonb(sp)->>'method', ''), ''), ', '), '-') AS payment_method,
+          SUM(COALESCE(NULLIF(to_jsonb(sp)->>'amount', '')::numeric, 0)) AS paid_amount
         FROM tblso_payments sp
-        GROUP BY COALESCE(
-          to_jsonb(sp)->>'so_id',
-          to_jsonb(sp)->>'soId'
-        )
+        GROUP BY 1
       ),
       base AS (
         SELECT
           so.id,
-          COALESCE(
-            to_jsonb(so)->>'so_number',
-            to_jsonb(so)->>'soNumber',
-            ''
-          ) AS so_number,
-          COALESCE(
-            to_jsonb(so)->>'customer_id',
-            to_jsonb(so)->>'customerId',
-            ''
-          ) AS customer_id,
-          COALESCE(
-            to_jsonb(c)->>'name',
-            to_jsonb(c)->>'customer_name',
-            ''
-          ) AS customer_name,
-          COALESCE(
-            to_jsonb(so)->>'total_amount',
-            to_jsonb(so)->>'totalAmount',
-            '0'
-          ) AS total_amount,
+          COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', '') AS so_number,
+          COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') AS customer_id,
+          COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '') AS customer_name,
+          COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') AS total_amount,
           COALESCE(so.status, 'pending') AS original_status,
-          COALESCE(
-            to_jsonb(so)->>'scheduleDate',
-            to_jsonb(so)->>'schedule_date',
-            null
-          ) AS schedule_date,
-          COALESCE(
-            to_jsonb(so)->>'created_at',
-            to_jsonb(so)->>'createdAt',
-            null
-          ) AS created_at,
-          COALESCE(
-            to_jsonb(so)->>'salesType',
-            to_jsonb(so)->>'sales_type',
-            ''
-          ) AS sales_type,
-          COALESCE(
-            to_jsonb(so)->>'branchId',
-            to_jsonb(so)->>'branch_id',
-            ''
-          ) AS branch_id,
-          COALESCE(
-            to_jsonb(so)->>'projectName',
-            to_jsonb(so)->>'project_name',
-            ''
-          ) AS project_name,
-          COALESCE(
-            to_jsonb(so)->>'projectCode',
-            to_jsonb(so)->>'project_code',
-            ''
-          ) AS project_code,
+          COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date') AS schedule_date,
+          COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt') AS created_at,
+          COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '') AS sales_type,
+          -- Helper column for numeric filtering
+          NULLIF(COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', ''), '')::numeric AS branch_id_numeric,
+          COALESCE(to_jsonb(so)->>'projectName', to_jsonb(so)->>'project_name', '') AS project_name,
+          COALESCE(to_jsonb(so)->>'projectCode', to_jsonb(so)->>'project_code', '') AS project_code,
           COALESCE(sc.serial_count, 0)::int AS serial_count,
           COALESCE(pt.payment_method, '-') AS payment_method,
           COALESCE(pt.paid_amount, 0) AS paid_amount,
           COALESCE(cd.concern_status, '') AS concern_status,
-          GREATEST(
-            COALESCE(
-              NULLIF(
-                COALESCE(
-                  to_jsonb(so)->>'total_amount',
-                  to_jsonb(so)->>'totalAmount',
-                  '0'
-                ),
-                ''
-              )::numeric,
-              0
-            ) - COALESCE(pt.paid_amount, 0),
-            0
-          ) AS remaining_amount,
           ${computedStatusExpression} AS computed_status
         FROM tblsales_order so
-        LEFT JOIN tblcustomer c
-          ON c.id::text = COALESCE(
-            to_jsonb(so)->>'customer_id',
-            to_jsonb(so)->>'customerId',
-            ''
-          )
-        LEFT JOIN serial_counts sc
-          ON sc.so_id = so.id::text
-        LEFT JOIN payment_totals pt
-          ON pt.so_id = so.id::text
-        LEFT JOIN tblconcern_details cd
-          ON cd.sales_id = so.id
+        LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
+        LEFT JOIN serial_counts sc ON sc.so_id = so.id::text
+        LEFT JOIN payment_totals pt ON pt.so_id = so.id::text
+        LEFT JOIN tblconcern_details cd ON cd.sales_id = so.id
       )
     `;
 
-    const countSql = `
-      ${baseCte}
-      SELECT COUNT(*)::text AS total
-      FROM base
-      ${whereSql}
-    `;
-
+    // --- 4. Execution ---
+    const countSql = `${baseCte} SELECT COUNT(*)::text AS total FROM base ${whereSql}`;
     const countResult = await this.databaseService.query<{ total: string }>(countSql, params);
     const total = Number(countResult.rows[0]?.total ?? 0);
 
@@ -2657,61 +2859,26 @@ export class SalesOrderService {
     const listSql = `
       ${baseCte}
       SELECT
-        base.id,
-        base.so_number AS "soNumber",
-        base.customer_id AS "customerId",
-        base.customer_name AS "customerName",
-        COALESCE(base.total_amount, '0')::numeric AS "totalAmount",
-        base.computed_status AS status,
-        base.sales_type AS "salesType",
-        base.project_name AS "projectName",
-        base.project_code AS "projectCode",
-        base.payment_method AS "paymentMethod",
-        base.schedule_date AS "scheduleDate",
-        base.created_at AS "createdAt",
-        base.serial_count AS "serialCount",
-        base.concern_status AS "concernStatus"
+        id, so_number AS "soNumber", customer_id AS "customerId", customer_name AS "customerName",
+        total_amount::numeric AS "totalAmount", computed_status AS status, sales_type AS "salesType",
+        project_name AS "projectName", project_code AS "projectCode", payment_method AS "paymentMethod",
+        schedule_date AS "scheduleDate", created_at AS "createdAt", serial_count AS "serialCount",
+        concern_status AS "concernStatus"
       FROM base
       ${whereSql}
-      ORDER BY base.id DESC
+      ORDER BY id DESC
       LIMIT $${limitIndex}
       OFFSET $${offsetIndex}
     `;
 
-    const listResult = await this.databaseService.query<{
-      id: number;
-      soNumber: string;
-      customerId: string | null;
-      customerName: string;
-      totalAmount: string | number | null;
-      status: string | null;
-      salesType: string | null;
-      projectName: string | null;
-      projectCode: string | null;
-      paymentMethod: string | null;
-      scheduleDate: string | null;
-      createdAt: string | null;
-      serialCount: number;
-      concernStatus: string | null;
-    }>(listSql, params);
+    const listResult = await this.databaseService.query<any>(listSql, params);
 
     return {
       success: true,
       items: listResult.rows.map((row) => ({
-        id: row.id,
-        soNumber: row.soNumber,
-        customerId: row.customerId,
-        customerName: row.customerName,
+        ...row,
         totalAmount: Number(row.totalAmount ?? 0),
-        status: row.status ?? 'pending',
-        salesType: row.salesType ?? '',
-        projectName: row.projectName ?? '',
-        projectCode: row.projectCode ?? '',
-        paymentMethod: row.paymentMethod ?? '-',
-        scheduleDate: row.scheduleDate,
-        createdAt: row.createdAt,
         serialCount: Number(row.serialCount ?? 0),
-        concernStatus: row.concernStatus ?? '',
       })),
       meta: {
         page,
@@ -2721,6 +2888,7 @@ export class SalesOrderService {
       },
     };
   }
+
 
   async create(
     createSalesOrderDto: CreateSalesOrderDto,

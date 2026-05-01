@@ -575,6 +575,19 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     }
 
     const productItems = this.mapDetailProducts(detail);
+
+    // Check if any product has required unit types with qty > 0
+    const hasRequiredSerials = productItems.some((product) =>
+      product.unitTypes.some((unitType) => Math.max(0, Number(unitType.value) || 0) > 0),
+    );
+
+    if (hasRequiredSerials && this.selectedOrderDetail?.id !== orderId) {
+      return {
+        ok: false,
+        message: 'Please open the SO details and scan the required serial numbers before moving to For-Delivery.',
+      };
+    }
+
     const incompleteItems: string[] = [];
 
     for (const product of productItems) {
@@ -724,20 +737,29 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     this.loadErrorMessage = '';
 
     try {
-      // Load schedules, distribution SOs, and projects
-      const [schedulesResponse, distributionResponse, projectsResponse] = await Promise.all([
+      const results = await Promise.allSettled([
         this.salesOrderService.getSchedules({ page: 1, limit: 200 }),
         this.salesOrderService.getDistribution({ page: 1, limit: 200 }),
         this.salesOrderService.getProjects({ page: 1, limit: 200 }),
       ]);
 
-      const allItems = [
-        ...(schedulesResponse.items ?? []),
-        ...(distributionResponse.items ?? []),
-        ...(projectsResponse.items ?? []),
-      ];
+      const allItems: SalesOrderListItem[] = [];
+      const errors: string[] = [];
 
-      // Deduplicate by id in case any overlap
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          allItems.push(...(result.value.items ?? []));
+        } else {
+          const msg = result.reason instanceof Error ? result.reason.message : String(result.reason ?? '');
+          errors.push(msg);
+        }
+      }
+
+      if (errors.length > 0) {
+        console.warn('Some schedule endpoints failed:', errors);
+      }
+
+      // Deduplicate by id
       const seen = new Set<number>();
       const deduped = allItems.filter((item) => {
         if (seen.has(item.id)) return false;
@@ -746,9 +768,19 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       });
 
       this.todaySchedules = deduped.filter(
-        (item) => this.isToday(item.scheduleDate) && this.isPendingStatus(item.status),
+        (item) => this.isActiveWarehouseStatus(item.status) && this.isToday(item.scheduleDate),
       );
+
+      console.log('[Schedule Debug] Total fetched:', deduped.length);
+      console.log('[Schedule Debug] Today filter results:', this.todaySchedules.length);
+      console.log('[Schedule Debug] Sample items:', deduped.slice(0, 5).map(i => ({ id: i.id, status: i.status, scheduleDate: i.scheduleDate, salesType: i.salesType })));
+      console.log('[Schedule Debug] Today token:', this.toLocalDateToken(new Date()));
+
       this.selectedOrderId = this.todaySchedules[0]?.id ?? null;
+
+      if (this.todaySchedules.length === 0 && errors.length === results.length) {
+        this.loadErrorMessage = 'Unable to load today schedules. ' + errors[0];
+      }
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
         this.loadErrorMessage =
@@ -1139,8 +1171,14 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     return this.toLocalDateToken(parsed) === today;
   }
 
+  private isActiveWarehouseStatus(value: string | null | undefined): boolean {
+    const normalized = String(value ?? '').trim().toLowerCase().replace(/[_\s]+/g, '-');
+    return ['pending', 'for-delivery', 'to-remit', 'in-progress', 'released'].includes(normalized);
+  }
+
   private isPendingStatus(value: string | null | undefined): boolean {
-    return String(value ?? '').trim().toLowerCase() === 'pending';
+    const normalized = String(value ?? '').trim().toLowerCase().replace(/[_\s]+/g, '-');
+    return ['pending', 'for-delivery', 'to-remit'].includes(normalized);
   }
 
   private toLocalDateToken(date: Date): string {

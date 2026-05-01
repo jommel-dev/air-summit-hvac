@@ -702,21 +702,23 @@ export class QuotationComponent implements OnInit, OnDestroy {
         penaltyFee: this.form.termsConditions.penaltyFee,
         warranty: this.form.termsConditions.warranty,
       },
-      productItems: this.form.productItems.map((item) => ({
-        productId: item.productId ? Number(item.productId) : undefined,
-        capacityId: item.capacityId ? Number(item.capacityId) : undefined,
-        unitPrice: Number(item.unitPrice ?? 0),
-        sellPrice: Number(item.sellPrice ?? 0),
-        discountPrice: Number(item.discountPrice ?? 0),
-        totalSetQty: Number(item.totalSetQty ?? 0),
-        unitTypesQty: [
-          {
-            label: 'grouping',
-            value: String(item.grouping ?? '').trim(),
-          },
-        ],
-        remarks: this.serializeItemMeta(item),
-      })),
+      productItems: this.form.productItems.map((item) => {
+        const product = this.catalogProducts.find((p) => String(p.id) === String(item.productId));
+        const unitTypes: Array<{ label: string; value: number }> = (product?.unitTypes ?? []).map((ut) => ({
+          label: String(ut).trim().toLowerCase(),
+          value: Number(item.totalSetQty ?? 0),
+        }));
+        return {
+          productId: item.productId ? Number(item.productId) : undefined,
+          capacityId: item.capacityId ? Number(item.capacityId) : undefined,
+          unitPrice: Number(item.unitPrice ?? 0),
+          sellPrice: Number(item.sellPrice ?? 0),
+          discountPrice: Number(item.discountPrice ?? 0),
+          totalSetQty: Number(item.totalSetQty ?? 0),
+          unitTypesQty: unitTypes.length > 0 ? unitTypes : [{ label: 'set', value: Number(item.totalSetQty ?? 0) }],
+          remarks: this.serializeItemMeta(item),
+        };
+      }),
     };
 
     this.isSubmitting = true;

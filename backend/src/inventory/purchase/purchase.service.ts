@@ -3287,6 +3287,13 @@ export class PurchaseService {
       whereParts.push(`(base.branch_id = $${branchIndex} OR base.branch_id IS NULL)`);
     }
 
+    const vendorId = String(query.vendorId ?? '').trim();
+    if (vendorId) {
+      params.push(vendorId);
+      const vendorParamIdx = params.length;
+      whereParts.push(`base.vendor_id = $${vendorParamIdx}`);
+    }
+
     const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
 
     const computedStatusExpression =

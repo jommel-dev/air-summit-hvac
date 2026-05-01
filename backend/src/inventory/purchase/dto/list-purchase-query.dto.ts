@@ -3,4 +3,5 @@ export class ListPurchaseQueryDto {
   limit?: number;
   search?: string;
   branchId?: number;
+  vendorId?: string;
 }

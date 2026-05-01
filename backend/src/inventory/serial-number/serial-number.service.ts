@@ -3083,6 +3083,47 @@ export class SerialNumberService {
     };
   }
 
+  async deleteInStockByScope(productIdInput: string, capacityIdInput: string) {
+    const productId = Number(productIdInput);
+    const capacityId = Number(capacityIdInput);
+
+    if (!Number.isFinite(productId) || productId <= 0) {
+      return { success: false, message: 'productId must be a valid number' };
+    }
+
+    if (!Number.isFinite(capacityId) || capacityId <= 0) {
+      return { success: false, message: 'capacityId must be a valid number' };
+    }
+
+    const inStockStatuses = ['in-stock', 'in_stock', 'instock', ''];
+    const excludedStatuses = [
+      'scanned', 'reserved', 'delivered', 'installed', 'sold',
+      'released', 'out', 'outbound', 'for-delivery',
+    ];
+
+    const result = await this.databaseService.query<{ id: number }>(
+      `DELETE FROM tblserial_numbers
+       WHERE COALESCE(
+         to_jsonb(tblserial_numbers)->>'productId',
+         to_jsonb(tblserial_numbers)->>'product_id', ''
+       ) = $1::text
+       AND COALESCE(
+         to_jsonb(tblserial_numbers)->>'capacityId',
+         to_jsonb(tblserial_numbers)->>'capacity_id', ''
+       ) = $2::text
+       AND LOWER(TRIM(COALESCE(to_jsonb(tblserial_numbers)->>'status', ''))) NOT IN (${excludedStatuses.map((_, i) => `$${i + 3}`).join(', ')})
+       RETURNING id`,
+      [String(productId), String(capacityId), ...excludedStatuses],
+    );
+
+    const deleted = result.rowCount ?? 0;
+    return {
+      success: true,
+      message: `Deleted ${deleted} in-stock serial number(s)`,
+      deleted,
+    };
+  }
+
   create(createSerialNumberDto: CreateSerialNumberDto) {
     void createSerialNumberDto;
     return 'This action adds a new serialNumber';

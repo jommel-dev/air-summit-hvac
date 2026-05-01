@@ -175,6 +175,9 @@ export class InventoryComponent implements OnInit {
   isBulkUpdating = false;
   bulkUpdateMessage = '';
   bulkUpdateError = '';
+  isDeletingInStockSerials = false;
+  deleteInStockMessage = '';
+  deleteInStockError = '';
 
   // CSV upload modal
   isCsvModalOpen = false;
@@ -2722,6 +2725,53 @@ export class InventoryComponent implements OnInit {
     this.selectedSerials.clear();
     this.bulkUpdateMessage = '';
     this.bulkUpdateError = '';
+  }
+
+  async deleteAllInStockSerials(): Promise<void> {
+    if (!this.selectedProductId || !this.selectedCapacityId || this.isDeletingInStockSerials) {
+      return;
+    }
+
+    const count = this.capacityStockSummary?.counts.inStock ?? 0;
+    if (count === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete all ${count} in-stock serial number(s) for ${this.selectedCapacity?.name ?? 'this capacity'}? This is for reinventory purposes and cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    this.isDeletingInStockSerials = true;
+    this.deleteInStockError = '';
+    this.deleteInStockMessage = '';
+
+    try {
+      const response = await apiClient.delete<{ success: boolean; message?: string; deleted?: number }>(
+        '/serial-number/in-stock',
+        { params: { productId: this.selectedProductId, capacityId: this.selectedCapacityId } },
+      );
+
+      if (!response.data.success) {
+        this.deleteInStockError = response.data.message ?? 'Unable to delete in-stock serials';
+        return;
+      }
+
+      this.deleteInStockMessage = response.data.message ?? `Deleted ${response.data.deleted ?? count} in-stock serial(s)`;
+      await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.deleteInStockError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Unable to delete in-stock serials';
+      } else {
+        this.deleteInStockError = 'Unable to delete in-stock serials';
+      }
+    } finally {
+      this.isDeletingInStockSerials = false;
+    }
   }
 
   async bulkMarkAsInstalled(): Promise<void> {
