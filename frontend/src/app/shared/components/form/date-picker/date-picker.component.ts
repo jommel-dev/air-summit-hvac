@@ -16,11 +16,9 @@ export class DatePickerComponent {
   @Input() defaultDate?: string | Date | string[] | Date[];
   @Input() label?: string;
   @Input() placeholder?: string;
-  @Input() minDate?: string | Date;
   @Output() dateChange = new EventEmitter<any>();
 
   @ViewChild('dateInput', { static: false }) dateInput!: ElementRef<HTMLInputElement>;
-  @ViewChild('calendarWrapper', { static: false }) calendarWrapper!: ElementRef<HTMLDivElement>;
 
   private flatpickrInstance: flatpickr.Instance | undefined;
 
@@ -43,4 +41,3 @@ export class DatePickerComponent {
     }
   }
 }
-
