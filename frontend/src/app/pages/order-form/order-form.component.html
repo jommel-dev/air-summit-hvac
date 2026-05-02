@@ -159,10 +159,11 @@
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Schedule Date <span class="text-red-500">*</span></label>
                 <app-date-picker
-                  id="schedule-date"
                   placeholder="Select a schedule date"
-                  minDate="tomorrow"
-                  (dateChange)="onScheduleDateChange($event)" />
+                  (dateChange)="onScheduleDateChange($event)"
+                  class="block"
+                />
+
               </div>
 
               <!-- Customer Name with autocomplete -->
