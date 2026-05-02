@@ -31,8 +31,7 @@ export class DatePickerComponent {
       dateFormat: 'Y-m-d',
       defaultDate: this.defaultDate,
       minDate: this.minDate,
-      appendTo: document.body,
-      position: 'above',
+      static: true,
       disableMobile: true,
       onChange: (selectedDates, dateStr, instance) => {
         this.dateChange.emit({ selectedDates, dateStr, instance });
