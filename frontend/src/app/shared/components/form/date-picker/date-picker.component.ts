@@ -1,6 +1,7 @@
 
 import { Component, Input, Output, EventEmitter, ElementRef, ViewChild } from '@angular/core';
 import flatpickr from 'flatpickr';
+import 'flatpickr/dist/flatpickr.css';
 import { LabelComponent } from '../label/label.component';
 
 @Component({
