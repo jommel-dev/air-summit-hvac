@@ -17,6 +17,7 @@ export class DatePickerComponent {
   @Input() defaultDate?: string | Date | string[] | Date[];
   @Input() label?: string;
   @Input() placeholder?: string;
+  @Input() minDate?: string | Date;
   @Output() dateChange = new EventEmitter<any>();
 
   @ViewChild('dateInput', { static: false }) dateInput!: ElementRef<HTMLInputElement>;
@@ -26,10 +27,13 @@ export class DatePickerComponent {
   ngAfterViewInit() {
     this.flatpickrInstance = flatpickr(this.dateInput.nativeElement, {
       mode: this.mode,
-      static: true,
       monthSelectorType: 'static',
       dateFormat: 'Y-m-d',
       defaultDate: this.defaultDate,
+      minDate: this.minDate,
+      appendTo: document.body,
+      position: 'auto',
+      disableMobile: true,
       onChange: (selectedDates, dateStr, instance) => {
         this.dateChange.emit({ selectedDates, dateStr, instance });
       }

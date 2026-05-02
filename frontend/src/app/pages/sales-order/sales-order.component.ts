@@ -488,12 +488,21 @@ export class SalesOrderComponent {
               .map((entry: any) => String(entry?.label ?? '').trim().toLowerCase())
               .filter((label: string, index: number, self: string[]) => label.length > 0 && self.indexOf(label) === index);
             const labelsFromSerial = Object.keys(serialNumbers).filter((label, index, self) => self.indexOf(label) === index);
+
+            // Fall back to catalog unitTypes before 'set'
+            const catalogProd = this.catalogProducts.find((p) => String(p.id) === String(product?.productId));
+            const catalogUnitTypesFallback = (catalogProd?.unitTypes ?? [])
+              .map((u: string) => String(u).trim().toLowerCase())
+              .filter(Boolean);
+
             const labels =
               labelsFromPayload.length > 0
                 ? labelsFromPayload
                 : labelsFromSerial.length > 0
                   ? labelsFromSerial
-                  : ['set'];
+                  : catalogUnitTypesFallback.length > 0
+                    ? catalogUnitTypesFallback
+                    : ['set'];
 
             const qtyMap = new Map<string, number>();
             for (const entry of unitTypesFromPayload) {
@@ -1276,6 +1285,56 @@ export class SalesOrderComponent {
   }
 
   pendingReceiveOrder: SalesOrderRow | null = null;
+  isCancelModalOpen = false;
+  pendingCancelOrder: SalesOrderRow | null = null;
+  cancelRemarks = '';
+  cancelModalError = '';
+  cancellingOrderIds = new Set<number>();
+
+  openCancelModal(order: SalesOrderRow): void {
+    this.pendingCancelOrder = order;
+    this.cancelRemarks = '';
+    this.cancelModalError = '';
+    this.isCancelModalOpen = true;
+  }
+
+  closeCancelModal(): void {
+    this.isCancelModalOpen = false;
+    this.pendingCancelOrder = null;
+    this.cancelRemarks = '';
+    this.cancelModalError = '';
+  }
+
+  async confirmCancelOrder(): Promise<void> {
+    const order = this.pendingCancelOrder;
+    if (!order) return;
+    if (!this.cancelRemarks.trim()) {
+      this.cancelModalError = 'Cancellation reason is required.';
+      return;
+    }
+    this.cancellingOrderIds.add(order.id);
+    this.cancelModalError = '';
+    try {
+      const response = await this.salesOrderService.updateSalesOrder(order.id, {
+        productItems: [],
+        status: 'cancelled',
+        remarks: `Cancelled: ${this.cancelRemarks.trim()}`,
+      });
+      if (!response.success) {
+        this.cancelModalError = response.message ?? 'Failed to cancel order.';
+        return;
+      }
+      this.uiMessage = `Sales order ${order.soNumber || order.id} has been cancelled.`;
+      this.closeCancelModal();
+      await this.loadTabData(this.activeTab);
+    } catch (error: unknown) {
+      this.cancelModalError = axios.isAxiosError(error)
+        ? ((error.response?.data as { message?: string })?.message ?? 'Failed to cancel order.')
+        : 'Failed to cancel order.';
+    } finally {
+      this.cancellingOrderIds.delete(order.id);
+    }
+  }
 
   async markOrderAsReceived(order: SalesOrderRow): Promise<void> {
     if (this.activeTab !== 'sales-receivable' || this.receivingOrderIds.has(order.id)) {
@@ -3443,6 +3502,12 @@ export class SalesOrderComponent {
       .map((label) => String(label).trim().toLowerCase() || 'set')
       .filter((label, index, self) => self.indexOf(label) === index);
 
+    // Look up the product's registered unitTypes from the catalog
+    const catalogProduct = this.catalogProducts.find((p) => String(p.id) === String(product.productId));
+    const catalogUnitTypes = (catalogProduct?.unitTypes ?? [])
+      .map((u) => String(u).trim().toLowerCase())
+      .filter(Boolean);
+
     const savedTotalSetQty = Math.max(0, Math.floor(Number(product.totalSetQty) || 0));
     const payloadMaxQty = unitTypesFromPayload.reduce(
       (maxQty: number, entry: SalesOrderDetailUnitType) => Math.max(maxQty, Math.max(0, Math.floor(Number(entry.value) || 0))),
@@ -3460,12 +3525,15 @@ export class SalesOrderComponent {
           ? payloadMaxQty
           : serialMaxQty;
 
+    // Priority: saved unitTypesQty labels > serial keys > catalog unitTypes > fallback 'set'
     const labels =
       normalizedLabelsFromPayload.length > 0
         ? normalizedLabelsFromPayload
         : normalizedLabelsFromSerial.length > 0
           ? normalizedLabelsFromSerial
-          : ['set'];
+          : catalogUnitTypes.length > 0
+            ? catalogUnitTypes
+            : ['set'];
 
     const qtyMap = new Map<string, number>();
     for (const entry of unitTypesFromPayload) {

@@ -1,0 +1,514 @@
+<!-- Sticky Top Nav Bar -->
+<div class="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
+  <div class="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3 min-w-0">
+    <img
+      [src]="businessLogo() || '/images/fwdslogo.png'"
+      alt="Logo"
+      class="h-10 w-10 sm:h-12 sm:w-auto sm:max-w-[160px] object-contain shrink-0 block"
+      style="min-width:40px" />
+    @if (businessName()) {
+      <span class="font-bold text-gray-800 text-sm sm:text-base leading-tight truncate min-w-0">{{ businessName() }}</span>
+    }
+  </div>
+</div>
+
+<div class="min-h-screen bg-gray-50 py-8 px-4">
+  <div class="max-w-5xl mx-auto">
+    <img
+      [src]="businessLogo() || '/images/fwdslogo.png'"
+      alt="Logo"
+      class="h-16 mx-auto mb-4 object-contain block"
+      style="min-width:40px" />
+    <!-- Header -->
+    <div class="text-center mb-8">
+      <h1 class="text-2xl sm:text-3xl font-bold text-gray-900">Place an Order</h1>
+      <p class="text-gray-500 mt-1 text-sm sm:text-base">Fill in the details below to submit your request</p>
+    </div>
+
+    <!-- Success State -->
+    @if (submitted()) {
+
+      <!-- Step 1: Order confirmed + feedback prompt -->
+      @if (feedbackStep() === 'form') {
+        <div class="bg-white rounded-2xl shadow p-8 max-w-lg mx-auto">
+          <!-- Order confirmed banner -->
+          <div class="text-center mb-6">
+            <div class="text-5xl mb-3">✅</div>
+            <h2 class="text-xl font-bold text-gray-800 mb-1">Order Submitted!</h2>
+            <p class="text-sm text-gray-600 mb-2">{{ successMsg() }}</p>
+            <p class="text-xs text-gray-400 bg-blue-50 border border-blue-100 rounded-xl px-4 py-2">
+              Please wait for the {{ businessName() || 'HVAC Warehouse and Sales' }} personnel to contact you for verification of your order and scheduled installation.
+            </p>
+          </div>
+
+          <div class="border-t border-gray-100 pt-6">
+            <h3 class="text-base font-semibold text-gray-800 mb-1 text-center">💬 How was your experience?</h3>
+            <p class="text-xs text-gray-400 text-center mb-5">Take a moment to rate our ordering system. It only takes a few seconds!</p>
+
+            <!-- Star Rating -->
+            <div class="mb-5">
+              <p class="text-sm font-medium text-gray-700 mb-2">Overall Rating <span class="text-red-500">*</span></p>
+              <div class="flex items-center gap-1">
+                @for (star of stars; track star) {
+                  <button type="button"
+                    (click)="feedbackRating.set(star)"
+                    (mouseenter)="feedbackHovered.set(star)"
+                    (mouseleave)="feedbackHovered.set(0)"
+                    class="text-4xl transition-transform hover:scale-110 focus:outline-none leading-none"
+                    [style.color]="displayFeedbackRating() >= star ? '#f59e0b' : '#d1d5db'">
+                    ★
+                  </button>
+                }
+                @if (displayFeedbackRating() > 0) {
+                  <span class="ml-2 text-xl">{{ ratingEmojis[displayFeedbackRating()] }}</span>
+                  <span class="text-sm font-semibold text-gray-700">{{ ratingLabels[displayFeedbackRating()] }}</span>
+                }
+              </div>
+            </div>
+
+            <!-- Would Recommend -->
+            <div class="mb-5">
+              <p class="text-sm font-medium text-gray-700 mb-2">Would you recommend our ordering system? <span class="text-red-500">*</span></p>
+              <div class="flex gap-3">
+                <button type="button" (click)="feedbackRecommend.set(true)"
+                  [class]="feedbackRecommend() === true
+                    ? 'flex-1 flex items-center justify-center gap-2 rounded-xl border-2 border-green-500 bg-green-50 py-2.5 text-sm font-semibold text-green-700 transition'
+                    : 'flex-1 flex items-center justify-center gap-2 rounded-xl border-2 border-gray-200 py-2.5 text-sm text-gray-600 hover:border-green-300 transition'">
+                  👍 Yes!
+                </button>
+                <button type="button" (click)="feedbackRecommend.set(false)"
+                  [class]="feedbackRecommend() === false
+                    ? 'flex-1 flex items-center justify-center gap-2 rounded-xl border-2 border-red-400 bg-red-50 py-2.5 text-sm font-semibold text-red-600 transition'
+                    : 'flex-1 flex items-center justify-center gap-2 rounded-xl border-2 border-gray-200 py-2.5 text-sm text-gray-600 hover:border-red-300 transition'">
+                  👎 Not yet
+                </button>
+              </div>
+            </div>
+
+            <!-- Insights -->
+            <div class="mb-5">
+              <p class="text-sm font-medium text-gray-700 mb-1">Any suggestions or insights? <span class="text-gray-400 font-normal">(optional)</span></p>
+              <textarea rows="3" placeholder="e.g. The process was easy! I suggest adding more payment options..."
+                [ngModel]="feedbackInsights()" (ngModelChange)="feedbackInsights.set($event)"
+                class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+            </div>
+
+            @if (feedbackError()) {
+              <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2 mb-4">
+                {{ feedbackError() }}
+              </div>
+            }
+
+            <div class="flex gap-3">
+              <button (click)="skipFeedback()"
+                class="flex-1 border border-gray-300 rounded-xl py-2.5 text-sm text-gray-500 hover:bg-gray-50 transition">
+                Skip
+              </button>
+              <button (click)="submitFeedback()" [disabled]="feedbackSubmitting()"
+                class="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl py-2.5 text-sm font-semibold transition">
+                {{ feedbackSubmitting() ? 'Sending...' : 'Send Feedback' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Step 2: All done -->
+      @if (feedbackStep() === 'done') {
+        <div class="bg-white rounded-2xl shadow p-10 text-center max-w-lg mx-auto">
+          <div class="text-6xl mb-4">🎉</div>
+          <h2 class="text-2xl font-bold text-gray-800 mb-2">All Done!</h2>
+          <p class="text-gray-500 mb-6 text-sm">Your order is confirmed and your feedback has been received. We'll be in touch soon!</p>
+          <button (click)="resetForm()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+            Submit Another Order
+          </button>
+        </div>
+      }
+
+    }
+
+    @if (!submitted()) {
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- Left: Form -->
+        <div class="lg:col-span-2 space-y-6">
+
+          <!-- Order Type -->
+          <div class="bg-white rounded-2xl shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">Order Type</h2>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              @for (type of salesTypes; track type.value) {
+                <button
+                  (click)="salesType.set(type.value)"
+                  [class]="salesType() === type.value
+                    ? 'flex flex-col items-center p-4 rounded-xl border-2 border-blue-500 bg-blue-50 text-blue-700 font-semibold transition'
+                    : 'flex flex-col items-center p-4 rounded-xl border-2 border-gray-200 hover:border-blue-300 text-gray-600 transition'">
+                  <span class="text-2xl mb-1">{{ type.icon }}</span>
+                  <span class="text-sm">{{ type.label }}</span>
+                </button>
+              }
+            </div>
+          </div>
+
+          <!-- Customer Details -->
+          <div class="bg-white rounded-2xl shadow p-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">Customer Details</h2>
+            <div class="space-y-4">
+
+              <!-- Schedule Date -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Schedule Date <span class="text-red-500">*</span></label>
+                <app-date-picker
+                  id="schedule-date"
+                  placeholder="Select a schedule date"
+                  minDate="tomorrow"
+                  (dateChange)="onScheduleDateChange($event)" />
+              </div>
+
+              <!-- Customer Name with autocomplete -->
+              <div class="relative">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Customer Name <span class="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  placeholder="Type to search existing customers..."
+                  [ngModel]="customerName()"
+                  (ngModelChange)="onCustomerNameInput($event)"
+                  (blur)="showSuggestions.set(false)"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                @if (showSuggestions() && customerSuggestions().length > 0) {
+                  <div class="absolute z-10 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                    @for (s of customerSuggestions(); track s.id) {
+                      <button
+                        type="button"
+                        (mousedown)="selectCustomer(s)"
+                        class="w-full text-left px-4 py-2 hover:bg-blue-50 text-sm">
+                        <span class="font-medium">{{ s.name }}</span>
+                        @if (s.address) { <span class="text-gray-400 ml-2">{{ s.address }}</span> }
+                      </button>
+                    }
+                  </div>
+                }
+              </div>
+
+              <!-- Address -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                <input
+                  type="text"
+                  placeholder="Full address"
+                  [ngModel]="address()"
+                  (ngModelChange)="address.set($event)"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+
+              <!-- Contact Number -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Contact Number</label>
+                <input
+                  type="tel"
+                  placeholder="e.g. 09XX-XXX-XXXX"
+                  [ngModel]="contactNumber()"
+                  (ngModelChange)="contactNumber.set($event)"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+
+              <!-- Landmark -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Landmark</label>
+                <input
+                  type="text"
+                  placeholder="Nearby landmark for delivery"
+                  [ngModel]="landmark()"
+                  (ngModelChange)="landmark.set($event)"
+                  class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+
+              <!-- Payment Method (Order / Sub Dealer only) -->
+              @if (isProductType()) {
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Payment Method <span class="text-red-500">*</span></label>
+                  <select
+                    [ngModel]="paymentMethod()"
+                    (ngModelChange)="paymentMethod.set($event)"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    @for (m of paymentMethods; track m) {
+                      <option [value]="m">{{ m }}</option>
+                    }
+                  </select>
+                </div>
+              }
+            </div>
+          </div>
+
+          <!-- Product Catalog (Order / Sub Dealer only) -->
+          @if (isProductType()) {
+            <div class="bg-white rounded-2xl shadow p-6">
+              <h2 class="text-lg font-semibold text-gray-800 mb-4">Products</h2>
+
+              <!-- Step 1: Brand Search -->
+              <div class="relative mb-5">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Search Brand</label>
+                <div class="relative">
+                  <input
+                    type="text"
+                    placeholder="Type a brand name..."
+                    [ngModel]="brandSearch()"
+                    (ngModelChange)="brandSearch.set($event); showBrandSuggestions.set(true); selectedBrandName.set(''); selectedProduct.set(null); selectedCapacity.set(null)"
+                    (focus)="showBrandSuggestions.set(true)"
+                    (blur)="showBrandSuggestions.set(false)"
+                    autocomplete="off"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">🔍</span>
+                </div>
+                @if (showBrandSuggestions() && filteredBrandSuggestions().length > 0) {
+                  <div class="absolute z-20 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 max-h-52 overflow-y-auto">
+                    @for (brand of filteredBrandSuggestions(); track brand) {
+                      <button
+                        type="button"
+                        (mousedown)="selectBrand(brand)"
+                        class="w-full text-left px-4 py-2.5 hover:bg-blue-50 text-sm flex items-center gap-2"
+                        [class.bg-blue-50]="selectedBrandName() === brand"
+                        [class.font-semibold]="selectedBrandName() === brand">
+                        <span class="text-base">📁</span> {{ brand }}
+                      </button>
+                    }
+                  </div>
+                }
+              </div>
+
+              @if (loading()) {
+                <div class="text-center py-10 text-gray-400">Loading products...</div>
+              }
+
+              <!-- Step 2: Product Cards -->
+              @if (selectedBrandName() && !selectedProduct()) {
+                <div>
+                  <p class="text-xs text-gray-500 mb-3 uppercase tracking-wide font-medium">{{ selectedBrandName() }} — Select a Product</p>
+                  @if (productsForBrand().length === 0) {
+                    <p class="text-sm text-gray-400 text-center py-6">No products found for this brand.</p>
+                  }
+                  <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    @for (product of productsForBrand(); track product.id) {
+                      <button type="button" (click)="selectProduct(product)"
+                        class="rounded-xl border-2 border-gray-200 p-4 text-left hover:border-blue-400 hover:bg-blue-50 transition group">
+                        <p class="text-2xl mb-2">📦</p>
+                        <p class="text-sm font-semibold text-gray-800 group-hover:text-blue-700 leading-tight">{{ product.name }}</p>
+                        <p class="text-xs text-gray-400 mt-1">{{ product.capacities.length }} size{{ product.capacities.length !== 1 ? 's' : '' }}</p>
+                      </button>
+                    }
+                  </div>
+                </div>
+              }
+
+              <!-- Step 3: Capacity + Qty + Add to Cart -->
+              @if (selectedProduct()) {
+                <div>
+                  <div class="flex items-center gap-2 mb-4">
+                    <button type="button" (click)="selectedProduct.set(null); selectedCapacity.set(null)"
+                      class="text-xs text-blue-600 hover:underline">← Back</button>
+                    <span class="text-gray-300">|</span>
+                    <p class="text-sm font-semibold text-gray-800">{{ selectedProduct()!.brandName }} — {{ selectedProduct()!.name }}</p>
+                  </div>
+                  <p class="text-xs text-gray-500 mb-3 uppercase tracking-wide font-medium">Select Capacity / Size</p>
+                  <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
+                    @for (cap of selectedProduct()!.capacities; track cap.id) {
+                      <button type="button" (click)="selectCapacity(cap)"
+                        [class]="selectedCapacity()?.id === cap.id
+                          ? 'rounded-xl border-2 border-blue-500 bg-blue-50 p-3 text-left transition'
+                          : 'rounded-xl border-2 border-gray-200 p-3 text-left hover:border-blue-300 hover:bg-gray-50 transition'">
+                        <p class="text-sm font-bold text-gray-800">{{ cap.capacity }}</p>
+                        @if (cap.sellPrice > 0) {
+                          <p class="text-xs text-blue-600 mt-1">₱{{ cap.sellPrice | number:'1.2-2' }}</p>
+                        }
+                      </button>
+                    }
+                  </div>
+                  @if (selectedCapacity()) {
+                    <div class="flex items-center gap-3 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3">
+                      <div class="flex-1 min-w-0">
+                        <p class="text-sm font-semibold text-gray-800">{{ selectedProduct()!.name }} — {{ selectedCapacity()!.capacity }}</p>
+                        @if (selectedCapacity()!.sellPrice > 0) {
+                          <p class="text-xs text-blue-600">₱{{ selectedCapacity()!.sellPrice | number:'1.2-2' }} each</p>
+                        }
+                      </div>
+                      <div class="flex items-center gap-1 shrink-0">
+                        <button type="button" (click)="pendingQty.set(pendingQty() > 1 ? pendingQty() - 1 : 1)"
+                          class="w-8 h-8 rounded-full bg-white border border-gray-300 font-bold hover:bg-gray-100 flex items-center justify-center text-lg leading-none">−</button>
+                        <input
+                          type="number"
+                          min="1"
+                          [ngModel]="pendingQty()"
+                          (ngModelChange)="pendingQty.set($event < 1 ? 1 : $event)"
+                          class="w-14 text-center text-sm font-bold border border-gray-300 rounded-lg py-1 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        <button type="button" (click)="pendingQty.set(pendingQty() + 1)"
+                          class="w-8 h-8 rounded-full bg-white border border-gray-300 font-bold hover:bg-gray-100 flex items-center justify-center text-lg leading-none">+</button>
+                      </div>
+                      <button type="button" (click)="confirmAddToCart()"
+                        class="shrink-0 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 rounded-lg transition">
+                        Add to Cart
+                      </button>
+                    </div>
+                  }
+                </div>
+              }
+
+              @if (!selectedBrandName() && !loading()) {
+                <p class="text-center text-gray-400 text-sm py-6">Search for a brand above to browse products.</p>
+              }
+            </div>
+          }
+
+          <!-- Service Selection -->
+          @if (salesType() === 'service') {
+            <div class="bg-white rounded-2xl shadow p-6">
+              <h2 class="text-lg font-semibold text-gray-800 mb-1">Services Offered</h2>
+              <p class="text-sm text-gray-400 mb-4">Select all services that apply</p>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                @for (svc of serviceOptions; track svc) {
+                  <button type="button" (click)="toggleService(svc)"
+                    [class]="selectedServices().includes(svc)
+                      ? 'flex items-center gap-2 rounded-xl border-2 border-blue-500 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700 transition'
+                      : 'flex items-center gap-2 rounded-xl border-2 border-gray-200 px-4 py-3 text-sm text-gray-600 hover:border-blue-300 transition'">
+                    <span>{{ selectedServices().includes(svc) ? '✅' : '⬜' }}</span>
+                    {{ svc }}
+                  </button>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- Concern Form -->
+          @if (salesType() === 'concern') {
+            <div class="bg-white rounded-2xl shadow p-6">
+              <h2 class="text-lg font-semibold text-gray-800 mb-4">Concern Details</h2>
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Subject <span class="text-red-500">*</span></label>
+                  <input type="text" placeholder="Brief subject of your concern"
+                    [ngModel]="concernSubject()" (ngModelChange)="concernSubject.set($event)"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Description <span class="text-red-500">*</span></label>
+                  <textarea rows="4" placeholder="Describe your concern in detail..."
+                    [ngModel]="concernDescription()" (ngModelChange)="concernDescription.set($event)"
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+                </div>
+              </div>
+            </div>
+          }
+        </div>
+
+        <!-- Right: Summary / Submit -->
+        <div class="lg:col-span-1">
+          <div class="bg-white rounded-2xl shadow p-6 sticky top-20">
+
+            <!-- Cart for Order/Sub Dealer -->
+            @if (isProductType()) {
+              <h2 class="text-lg font-semibold text-gray-800 mb-4">🛒 Cart</h2>
+              @if (cart().length === 0) {
+                <p class="text-gray-400 text-sm text-center py-6">No items added yet.</p>
+              }
+              <div class="space-y-3">
+                @for (item of cart(); track item.capacityId) {
+                  <div class="flex items-start justify-between gap-2 border-b pb-3">
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-medium text-gray-800 truncate">{{ item.brandName }} {{ item.productName }}</p>
+                      <p class="text-xs text-gray-400">{{ item.capacity }}</p>
+                      @if (item.price > 0) {
+                        <p class="text-xs text-blue-600">₱{{ item.price | number:'1.2-2' }} × {{ item.qty }}</p>
+                      }
+                    </div>
+                    <div class="flex items-center gap-1 shrink-0">
+                      <button (click)="item.qty === 1 ? requestRemove(item) : updateQty(item, item.qty - 1)" class="w-6 h-6 rounded-full bg-gray-100 hover:bg-red-100 text-xs font-bold">−</button>
+                      <input
+                        type="number"
+                        min="1"
+                        [ngModel]="item.qty"
+                        (ngModelChange)="updateQty(item, $event < 1 ? 0 : $event)"
+                        class="w-12 text-center text-sm font-bold border border-gray-200 rounded-md py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                      <button (click)="updateQty(item, item.qty + 1)" class="w-6 h-6 rounded-full bg-blue-100 hover:bg-blue-200 text-xs font-bold">+</button>
+                    </div>
+                  </div>
+                }
+              </div>
+              @if (cartTotal() > 0) {
+                <div class="mt-4 pt-3 border-t flex justify-between text-sm font-semibold">
+                  <span>Total</span>
+                  <span class="text-blue-600">₱{{ cartTotal() | number:'1.2-2' }}</span>
+                </div>
+              }
+            }
+
+            <!-- Service summary -->
+            @if (salesType() === 'service') {
+              <h2 class="text-lg font-semibold text-gray-800 mb-4">🔧 Selected Services</h2>
+              @if (selectedServices().length === 0) {
+                <p class="text-gray-400 text-sm text-center py-6">No services selected yet.</p>
+              }
+              <div class="space-y-2">
+                @for (svc of selectedServices(); track svc) {
+                  <div class="flex items-center justify-between bg-blue-50 rounded-lg px-3 py-2">
+                    <span class="text-sm font-medium text-blue-700">{{ svc }}</span>
+                    <button (click)="toggleService(svc)" class="text-xs text-red-400 hover:text-red-600">✕</button>
+                  </div>
+                }
+              </div>
+            }
+
+            <!-- Concern summary -->
+            @if (salesType() === 'concern') {
+              <h2 class="text-lg font-semibold text-gray-800 mb-4">📋 Concern Summary</h2>
+              @if (concernSubject()) {
+                <p class="text-sm font-medium text-gray-700 mb-1">{{ concernSubject() }}</p>
+              }
+              @if (concernDescription()) {
+                <p class="text-xs text-gray-500 line-clamp-4">{{ concernDescription() }}</p>
+              }
+              @if (!concernSubject() && !concernDescription()) {
+                <p class="text-gray-400 text-sm text-center py-6">Fill in the concern details on the left.</p>
+              }
+            }
+
+            @if (errorMsg()) {
+              <div class="mt-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
+                {{ errorMsg() }}
+              </div>
+            }
+
+            <button
+              (click)="submit()"
+              [disabled]="submitting()"
+              class="mt-5 w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold py-3 rounded-xl transition">
+              {{ submitting() ? 'Submitting...' : 'Submit Order' }}
+            </button>
+          </div>
+        </div>
+
+      </div>
+    }
+  </div>
+</div>
+
+<!-- Remove Item Confirmation Modal -->
+@if (pendingRemoveItem()) {
+  <div class="fixed inset-0 z-[99999] bg-gray-900/50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center" (click)="$event.stopPropagation()">
+      <div class="text-4xl mb-3">🗑️</div>
+      <h3 class="text-base font-semibold text-gray-800 mb-1">Remove Item?</h3>
+      <p class="text-sm text-gray-500 mb-5">
+        Remove <span class="font-medium text-gray-700">{{ pendingRemoveItem()!.brandName }} {{ pendingRemoveItem()!.productName }} — {{ pendingRemoveItem()!.capacity }}</span> from your cart?
+      </p>
+      <div class="flex gap-3">
+        <button (click)="cancelRemove()"
+          class="flex-1 border border-gray-300 rounded-xl py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+          Keep It
+        </button>
+        <button (click)="confirmRemove()"
+          class="flex-1 bg-red-500 hover:bg-red-600 text-white rounded-xl py-2 text-sm font-medium transition">
+          Remove
+        </button>
+      </div>
+    </div>
+  </div>
+}

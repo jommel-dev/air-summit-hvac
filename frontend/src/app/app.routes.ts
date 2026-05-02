@@ -1,4 +1,6 @@
 import { Routes } from '@angular/router';
+import { OrderFormComponent } from './pages/order-form/order-form.component';
+import { FeedbackComponent } from './pages/feedback/feedback.component';
 import { EcommerceComponent } from './pages/dashboard/ecommerce/ecommerce.component';
 import { NotFoundComponent } from './pages/other-page/not-found/not-found.component';
 import { AppLayoutComponent } from './shared/layout/app-layout/app-layout.component';
@@ -155,6 +157,18 @@ export const routes: Routes = [
         title: 'Settings',
       },
     ]
+  },
+  // public feedback (no auth required)
+  {
+    path: 'feedback',
+    component: FeedbackComponent,
+    title: 'Share Your Feedback',
+  },
+  // public order form (no auth required)
+  {
+    path: 'order-form',
+    component: OrderFormComponent,
+    title: 'Place an Order',
   },
   // auth pages
   {

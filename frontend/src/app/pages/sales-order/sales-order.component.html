@@ -174,6 +174,16 @@
                         {{ returningOrderIds.has(order.id) ? 'Processing...' : 'Returned Units' }}
                       </button>
                     }
+                    @if (activeTab === 'schedules' && canEditSalesOrder()) {
+                      <button
+                        type="button"
+                        (click)="openCancelModal(order)"
+                        [disabled]="cancellingOrderIds.has(order.id)"
+                        class="rounded-lg border border-error-300 px-3 py-1.5 text-xs font-medium text-error-700 transition hover:bg-error-50 disabled:opacity-60 dark:border-error-700 dark:text-error-400 dark:hover:bg-error-500/10"
+                      >
+                        Cancel
+                      </button>
+                    }
                     @if (canEditSalesOrder()) {
                       <button
                         type="button"
@@ -1535,6 +1545,49 @@
             [class]="getGuardDialogConfirmButtonClasses()"
           >
             {{ getGuardDialogConfirmText() }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  @if (isCancelModalOpen) {
+    <div class="fixed inset-0 z-100006 bg-gray-950/55 backdrop-blur-sm" (click)="!cancellingOrderIds.has(pendingCancelOrder?.id ?? -1) && closeCancelModal()"></div>
+    <div class="fixed inset-0 z-100007 flex items-center justify-center p-4">
+      <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <div class="border-b border-error-200 bg-gradient-to-r from-rose-50 via-white to-red-50 px-6 py-5 dark:border-error-800 dark:from-rose-500/10 dark:via-gray-900 dark:to-red-500/10">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-error-700 dark:text-error-300">Cancel Order</p>
+          <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">
+            Cancel SO {{ pendingCancelOrder?.soNumber || pendingCancelOrder?.id }}
+          </h3>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ pendingCancelOrder?.customerName }}</p>
+        </div>
+        <div class="space-y-4 px-6 py-5">
+          @if (cancelModalError) {
+            <div class="rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+              {{ cancelModalError }}
+            </div>
+          }
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Cancellation Reason <span class="text-error-500">*</span></label>
+            <textarea
+              [(ngModel)]="cancelRemarks"
+              name="cancelRemarks"
+              rows="4"
+              placeholder="Describe why this order is being cancelled..."
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            ></textarea>
+          </div>
+        </div>
+        <div class="flex items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          <button type="button" (click)="closeCancelModal()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
+            Back
+          </button>
+          <button type="button" (click)="confirmCancelOrder()"
+            [disabled]="cancellingOrderIds.has(pendingCancelOrder?.id ?? -1)"
+            class="rounded-lg border border-error-300 bg-error-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-error-600 disabled:opacity-60">
+            {{ cancellingOrderIds.has(pendingCancelOrder?.id ?? -1) ? 'Cancelling...' : 'Confirm Cancellation' }}
           </button>
         </div>
       </div>
