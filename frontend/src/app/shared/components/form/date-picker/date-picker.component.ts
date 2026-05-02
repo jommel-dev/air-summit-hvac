@@ -32,7 +32,7 @@ export class DatePickerComponent {
       defaultDate: this.defaultDate,
       minDate: this.minDate,
       appendTo: document.body,
-      position: 'auto',
+      position: 'above',
       disableMobile: true,
       onChange: (selectedDates, dateStr, instance) => {
         this.dateChange.emit({ selectedDates, dateStr, instance });
