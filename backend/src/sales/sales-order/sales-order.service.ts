@@ -3672,7 +3672,7 @@ export class SalesOrderService {
             if (priorityColumn) {
               const priority = String(details.priority ?? '').trim().toLowerCase();
               const validPriorities = ['low', 'medium', 'high', 'urgent'];
-              record[priorityColumn] = validPriorities.includes(priority) ? priority : '';
+              record[priorityColumn] = validPriorities.includes(priority) ? priority : null;
             }
             if (assignedToColumn && details.assignedTo !== undefined) record[assignedToColumn] = this.toOptionalNumber(details.assignedTo);
             if (resolutionNotesColumn) record[resolutionNotesColumn] = String(details.resolutionNotes ?? '').trim();

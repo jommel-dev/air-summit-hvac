@@ -20,6 +20,8 @@ import { MaterialTransactionsModule } from './inventory/material-transactions/ma
 import { SettingsModule } from './settings/settings.module';
 import { AccountingModule } from './accounting/accounting.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
+import { PublicOrderFormModule } from './sales/public-order-form/public-order-form.module';
+import { PublicFeedbackModule } from './sales/public-feedback/public-feedback.module';
 
 @Module({
   imports: [
@@ -45,6 +47,8 @@ import { AuditLogModule } from './audit-log/audit-log.module';
     SettingsModule,
     AccountingModule,
     AuditLogModule,
+    PublicOrderFormModule,
+    PublicFeedbackModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,5 +1,6 @@
 import { Component, HostListener, OnInit } from '@angular/core';
-import { DecimalPipe } from '@angular/common';
+import { DecimalPipe, DatePipe } from '@angular/common';
+import { apiClient } from '../../../shared/services/api-client';
 import {
   DashboardActivityItem,
   DashboardKpiCard,
@@ -14,7 +15,7 @@ import {
 
 @Component({
   selector: 'app-ecommerce',
-  imports: [DecimalPipe],
+  imports: [DecimalPipe, DatePipe],
   templateUrl: './ecommerce.component.html',
 })
 export class EcommerceComponent implements OnInit {
@@ -111,10 +112,33 @@ export class EcommerceComponent implements OnInit {
     'stock-alerts',
   ];
 
+  // Feedback
+  feedbackSummary: { total: number; avgRating: number; recommendPercent: number } | null = null;
+  feedbackItems: Array<{ id: number; rating: number; wouldRecommend: boolean; insights: string | null; name: string | null; createdAt: string }> = [];
+  feedbackLoading = false;
+
   constructor(private readonly dashboardService: DashboardService) {}
 
   ngOnInit(): void {
     void this.loadDashboardOverview();
+    void this.loadFeedback();
+  }
+
+  async loadFeedback(): Promise<void> {
+    this.feedbackLoading = true;
+    try {
+      const [summaryRes, listRes] = await Promise.all([
+        apiClient.get<{ success: boolean; data: { total: number; avgRating: number; recommendPercent: number } }>('/public/feedback/summary'),
+        apiClient.get<{ success: boolean; items: Array<{ id: number; rating: number; wouldRecommend: boolean; insights: string | null; name: string | null; createdAt: string }> }>('/public/feedback/list'),
+      ]);
+      if (summaryRes.data.success) this.feedbackSummary = summaryRes.data.data;
+      if (listRes.data.success) this.feedbackItems = listRes.data.items ?? [];
+    } catch {}
+    finally { this.feedbackLoading = false; }
+  }
+
+  getFeedbackStars(rating: number): string[] {
+    return [1,2,3,4,5].map(s => s <= rating ? '★' : '☆');
   }
 
   async loadDashboardOverview(): Promise<void> {
