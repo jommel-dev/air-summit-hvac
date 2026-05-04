@@ -30,6 +30,8 @@ import {
 } from '../../shared/services/business-settings.service';
 import { RbacService } from '../../shared/services/rbac.service';
 import { UserManagementService, UserApiItem } from '../../shared/services/user-management.service';
+import { AuditLogFrontendService } from '../../shared/services/audit-log.service';
+import { ModalComponent } from '../../shared/components/ui/modal/modal.component';
 
 type SalesOrderErrorDialog = {
   title: string;
@@ -94,7 +96,7 @@ interface SalesPaymentFormItem {
 
 @Component({
   selector: 'app-sales-order',
-  imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, ModalComponent],
   templateUrl: './sales-order.component.html',
   styles: ``,
 })
@@ -155,7 +157,8 @@ export class SalesOrderComponent {
     private readonly route: ActivatedRoute,
     private readonly sanitizer: DomSanitizer,
     private readonly rbacService: RbacService,
-    private readonly userManagementService: UserManagementService
+    private readonly userManagementService: UserManagementService,
+    private readonly auditLogService: AuditLogFrontendService,
   ) {}
 
   // ...existing code (all properties, methods, etc. go here, inside the class)...
@@ -196,6 +199,23 @@ export class SalesOrderComponent {
   isGuardDialogOpen = false;
   pendingSerialRemoval: SalesPendingSerialRemoval | null = null;
   pendingRefreshEvent: BeforeUnloadEvent | null = null;
+  errorModal = {
+    isOpen: false,
+    title: '',
+    message: '',
+  };
+
+  private openErrorModal(title: string, message: string): void {
+    this.errorModal = {
+      isOpen: true,
+      title,
+      message,
+    };
+  }
+
+  closeErrorModal(): void {
+    this.errorModal.isOpen = false;
+  }
   isReturnModalOpen = false;
   pendingReturnOrder: SalesOrderRow | null = null;
   isReturnModalLoading = false;
@@ -1357,20 +1377,20 @@ export class SalesOrderComponent {
         remarks: 'Marked as received from Sales Receivable table',
       });
       if (!response.success) {
-        this.uiError = response.message ?? 'Failed to mark sales order as received';
+        this.openErrorModal('Receive Error', response.message ?? 'Failed to mark sales order as received');
         this.receivingOrderIds.delete(order.id);
         return;
       }
       this.uiMessage = 'Sales order marked as received successfully.';
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
+      let errorMessage = 'Failed to mark sales order as received';
       if (axios.isAxiosError(error)) {
-        this.uiError =
+        errorMessage =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to mark sales order as received';
-      } else {
-        this.uiError = 'Failed to mark sales order as received';
       }
+      this.openErrorModal('Receive Error', errorMessage);
     } finally {
       this.receivingOrderIds.delete(order.id);
       this.pendingReceiveOrder = null;
@@ -1389,7 +1409,7 @@ export class SalesOrderComponent {
     try {
       const detail = await this.salesOrderService.getSalesOrderById(order.id);
       if (!detail) {
-        this.uiError = 'Failed to load sales order details for DR printing';
+        this.openErrorModal('Print Error', 'Failed to load sales order details for DR printing');
         return;
       }
 
@@ -1405,15 +1425,15 @@ export class SalesOrderComponent {
       const blobUrl = URL.createObjectURL(blob);
       this.openDrPreview(blobUrl, `DR-${order.soNumber || order.id}.pdf`);
     } catch (error: unknown) {
+      let errorMessage = 'Failed to print Delivery Receipt';
       if (axios.isAxiosError(error)) {
-        this.uiError =
+        errorMessage =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to print Delivery Receipt';
       } else if (error instanceof Error) {
-        this.uiError = error.message;
-      } else {
-        this.uiError = 'Failed to print Delivery Receipt';
+        errorMessage = error.message;
       }
+      this.openErrorModal('Print Error', errorMessage);
     } finally {
       this.printingOrderIds.delete(order.id);
     }
@@ -2054,22 +2074,22 @@ export class SalesOrderComponent {
     try {
       const detail = await this.salesOrderService.getSalesOrderById(orderId);
       if (!detail) {
-        this.uiError = 'Failed to load sales order details';
+        this.openErrorModal('Load Error', 'Failed to load sales order details');
         return;
       }
 
       this.applyDetailToForm(detail, fallback);
       this.captureDrawerBaselineSnapshot();
     } catch (error: unknown) {
+      let errorMessage = 'Failed to load sales order details';
       if (axios.isAxiosError(error)) {
-        this.uiError =
+        errorMessage =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to load sales order details';
       } else if (error instanceof Error) {
-        this.uiError = error.message;
-      } else {
-        this.uiError = 'Failed to load sales order details';
+        errorMessage = error.message;
       }
+      this.openErrorModal('Load Error', errorMessage);
     }
   }
 
@@ -2813,7 +2833,22 @@ export class SalesOrderComponent {
       });
 
       if (!response.success) {
-        unitEntry.scanError = response.message ?? 'Failed to scan serial number';
+        this.openErrorModal('Scan Error', response.message ?? 'Failed to scan serial number');
+        void this.auditLogService.createAuditLog({
+          action: 'SERIAL_SCAN_FAILURE',
+          entityType: 'SalesOrder',
+          entityId: this.editingSalesId,
+          metadata: {
+            serialNumber,
+            reason: 'api_scan_failure',
+            message: response.message ?? 'Failed to scan serial number',
+            productIndex,
+            unitLabel,
+            expectedProductId: productId,
+            expectedCapacityId: capacityId,
+            event: 'api_failure',
+          },
+        });
         return;
       }
 
@@ -2837,13 +2872,28 @@ export class SalesOrderComponent {
       unitEntry.serialInput = unitEntry.serials.join('\n');
       this.focusSerialScanInput(productIndex, unitLabel);
     } catch (error: unknown) {
+      let errorMessage = 'Failed to scan serial number';
       if (axios.isAxiosError(error)) {
-        unitEntry.scanError =
+        errorMessage =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to scan serial number';
-      } else {
-        unitEntry.scanError = 'Failed to scan serial number';
       }
+      this.openErrorModal('Scan Error', errorMessage);
+      void this.auditLogService.createAuditLog({
+        action: 'SERIAL_SCAN_FAILURE',
+        entityType: 'SalesOrder',
+        entityId: this.editingSalesId,
+        metadata: {
+          serialNumber,
+          reason: 'api_exception',
+          message: errorMessage,
+          productIndex,
+          unitLabel,
+          expectedProductId: productId,
+          expectedCapacityId: capacityId,
+          event: 'api_failure',
+        },
+      });
     } finally {
       unitEntry.isScanning = false;
     }
@@ -2986,7 +3036,7 @@ export class SalesOrderComponent {
       if (this.drawerMode === 'create') {
         const response = await this.salesOrderService.createSalesOrder(payload);
         if (!response.success) {
-          this.uiError = response.message ?? 'Failed to create sales order';
+          this.openErrorModal('Submit Error', response.message ?? 'Failed to create sales order');
           return;
         }
         this.uiMessage = response.message ?? 'Sales order created successfully';
@@ -2999,7 +3049,7 @@ export class SalesOrderComponent {
 
         const response = await this.salesOrderService.updateSalesOrder(targetId, payload);
         if (!response.success) {
-          this.uiError = response.message ?? 'Failed to update sales order';
+          this.openErrorModal('Submit Error', response.message ?? 'Failed to update sales order');
           return;
         }
         this.uiMessage = response.message ?? 'Sales order updated successfully';
@@ -3009,13 +3059,13 @@ export class SalesOrderComponent {
       this.page = 1;
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
+      let errorMessage = 'Failed to submit sales order';
       if (axios.isAxiosError(error)) {
-        this.uiError =
+        errorMessage =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to submit sales order';
-      } else {
-        this.uiError = 'Failed to submit sales order';
       }
+      this.openErrorModal('Submit Error', errorMessage);
     } finally {
       this.isSubmitting = false;
     }
@@ -3050,7 +3100,7 @@ export class SalesOrderComponent {
       });
 
       if (!response.success) {
-        this.uiError = response.message ?? 'Failed to remit sales';
+        this.openErrorModal('Remit Error', response.message ?? 'Failed to remit sales');
         return;
       }
 
@@ -3059,13 +3109,13 @@ export class SalesOrderComponent {
       this.page = 1;
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
+      let errorMessage = 'Failed to remit sales';
       if (axios.isAxiosError(error)) {
-        this.uiError =
+        errorMessage =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to remit sales';
-      } else {
-        this.uiError = 'Failed to remit sales';
       }
+      this.openErrorModal('Remit Error', errorMessage);
     } finally {
       this.isRemitting = false;
     }
@@ -3100,7 +3150,7 @@ export class SalesOrderComponent {
     try {
       const response = await this.salesOrderService.updateSalesOrder(targetId, payload);
       if (!response.success) {
-        this.uiError = response.message ?? 'Failed to send sales order for delivery';
+        this.openErrorModal('Delivery Error', response.message ?? 'Failed to send sales order for delivery');
         return;
       }
 
@@ -3109,13 +3159,13 @@ export class SalesOrderComponent {
       this.page = 1;
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
+      let errorMessage = 'Failed to send sales order for delivery';
       if (axios.isAxiosError(error)) {
-        this.uiError =
+        errorMessage =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to send sales order for delivery';
-      } else {
-        this.uiError = 'Failed to send sales order for delivery';
       }
+      this.openErrorModal('Delivery Error', errorMessage);
     } finally {
       this.isSendingForDelivery = false;
     }

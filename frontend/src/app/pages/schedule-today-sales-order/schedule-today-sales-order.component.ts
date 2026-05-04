@@ -9,6 +9,8 @@ import {
   SalesOrderService,
 } from '../../shared/services/sales-order.service';
 import { NotificationService } from '../../shared/services/notification.service';
+import { AuditLogFrontendService } from '../../shared/services/audit-log.service';
+import { ModalComponent } from '../../shared/components/ui/modal/modal.component';
 import axios from 'axios';
 
 interface WarehouseUnitTypeScanItem {
@@ -53,7 +55,7 @@ interface TodaySchedulePendingSerialRemoval {
 
 @Component({
   selector: 'app-schedule-today-sales-order',
-  imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, ModalComponent],
   templateUrl: './schedule-today-sales-order.component.html',
 })
 export class ScheduleTodaySalesOrderComponent implements OnInit {
@@ -76,6 +78,23 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
   isGuardDialogOpen = false;
   pendingSerialRemoval: TodaySchedulePendingSerialRemoval | null = null;
   catalogProducts: ProductOption[] = [];
+  errorModal = {
+    isOpen: false,
+    title: '',
+    message: '',
+  };
+
+  private openErrorModal(title: string, message: string): void {
+    this.errorModal = {
+      isOpen: true,
+      title,
+      message,
+    };
+  }
+
+  closeErrorModal(): void {
+    this.errorModal.isOpen = false;
+  }
   private readonly serialScanDebounceMs = 120;
   private readonly serialBatchSize = 20;
   private readonly serialBatchIdleMs = 1000;
@@ -94,6 +113,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
   constructor(
     private readonly salesOrderService: SalesOrderService,
     private readonly notificationService: NotificationService,
+    private readonly auditLogService: AuditLogFrontendService,
   ) {}
 
   ngOnInit(): void {
@@ -354,6 +374,19 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     if (!serialNumber) {
       if (showEmptyError) {
         unitEntry.scanError = 'Enter serial number before scanning';
+        void this.auditLogService.createAuditLog({
+          action: 'SERIAL_SCAN_FAILURE',
+          entityType: 'SalesOrder',
+          entityId: detail.id,
+          metadata: {
+            serialNumber: unitEntry.scanInput,
+            reason: 'empty_serial_input',
+            message: 'Enter serial number before scanning',
+            productIndex,
+            unitLabel,
+            event: 'ui_validation_failure',
+          },
+        });
       }
       return;
     }
@@ -362,12 +395,40 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     const capacityId = Number(item.capacityId);
     if (!Number.isFinite(productId) || !Number.isFinite(capacityId)) {
       unitEntry.scanError = 'Invalid product/capacity for serial scan';
+      void this.auditLogService.createAuditLog({
+        action: 'SERIAL_SCAN_FAILURE',
+        entityType: 'SalesOrder',
+        entityId: detail.id,
+        metadata: {
+          serialNumber,
+          reason: 'invalid_product_capacity',
+          message: 'Invalid product/capacity for serial scan',
+          productIndex,
+          unitLabel,
+          event: 'ui_validation_failure',
+        },
+      });
       return;
     }
 
     const allowedQty = Number(unitEntry.value) || 0;
     if (allowedQty > 0 && unitEntry.serials.length >= allowedQty) {
       unitEntry.scanError = `Limit reached. ${unitLabel} allows only ${allowedQty} serial number${allowedQty > 1 ? 's' : ''}`;
+      void this.auditLogService.createAuditLog({
+        action: 'SERIAL_SCAN_FAILURE',
+        entityType: 'SalesOrder',
+        entityId: detail.id,
+        metadata: {
+          serialNumber,
+          reason: 'quantity_limit_reached',
+          message: `Limit reached. ${unitLabel} allows only ${allowedQty} serial number${allowedQty > 1 ? 's' : ''}`,
+          productIndex,
+          unitLabel,
+          allowedQty,
+          currentCount: unitEntry.serials.length,
+          event: 'ui_validation_failure',
+        },
+      });
       return;
     }
 
@@ -384,6 +445,19 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
 
     if (existsInOtherUnitType) {
       unitEntry.scanError = 'Serial number already exists in another unit type for this product';
+      void this.auditLogService.createAuditLog({
+        action: 'SERIAL_SCAN_FAILURE',
+        entityType: 'SalesOrder',
+        entityId: detail.id,
+        metadata: {
+          serialNumber,
+          reason: 'duplicate_in_other_unit_type',
+          message: 'Serial number already exists in another unit type for this product',
+          productIndex,
+          unitLabel,
+          event: 'ui_validation_failure',
+        },
+      });
       return;
     }
 
@@ -394,6 +468,19 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       unitEntry.scanError = 'Serial number already scanned for this unit type';
       unitEntry.scanInput = '';
       this.focusSerialScanInput(productIndex, unitLabel);
+      void this.auditLogService.createAuditLog({
+        action: 'SERIAL_SCAN_FAILURE',
+        entityType: 'SalesOrder',
+        entityId: detail.id,
+        metadata: {
+          serialNumber,
+          reason: 'duplicate_in_current_unit_type',
+          message: 'Serial number already scanned for this unit type',
+          productIndex,
+          unitLabel,
+          event: 'ui_validation_failure',
+        },
+      });
       return;
     }
 
@@ -1009,6 +1096,21 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
           this.removeLocalSerial(unitEntry, entry.serialNumber);
           unitEntry.scanError = result?.message ?? 'Failed to save serial number';
           unitEntry.scanSuccess = '';
+          void this.auditLogService.createAuditLog({
+            action: 'SERIAL_SCAN_FAILURE',
+            entityType: 'SalesOrder',
+            entityId: entry.salesId,
+            metadata: {
+              serialNumber: entry.serialNumber,
+              reason: 'api_scan_failure',
+              message: result?.message ?? 'Failed to save serial number',
+              productIndex: entry.productIndex,
+              unitLabel: entry.unitLabel,
+              expectedProductId: entry.productId,
+              expectedCapacityId: entry.capacityId,
+              event: 'api_failure',
+            },
+          });
           return;
         }
 
@@ -1024,22 +1126,21 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       });
 
       if (!response.success && (response.summary?.failureCount ?? 0) > 0) {
-        this.detailError = response.message ?? 'Some serial numbers failed to save.';
-      } else {
-        this.detailError = '';
+        this.openErrorModal('Scan Failed', response.message ?? 'Some serial numbers failed to save.');
       }
 
       return true;
     } catch (error: unknown) {
       this.queuedSerialScans = [...batch, ...this.queuedSerialScans];
-      this.detailError = 'Failed to save scanned serial numbers. Retrying automatically.';
+      let errorMessage = 'Failed to save scanned serial numbers. Retrying automatically.';
       this.setBatchScanError(batch, 'Failed to save serial numbers. They remain queued.');
 
       if (axios.isAxiosError(error)) {
-        this.detailError =
-          (error.response?.data as { message?: string } | undefined)?.message ?? this.detailError;
+        errorMessage =
+          (error.response?.data as { message?: string } | undefined)?.message ?? errorMessage;
       }
 
+      this.openErrorModal('Scan Error', errorMessage);
       return false;
     } finally {
       this.isFlushingQueuedSerials = false;

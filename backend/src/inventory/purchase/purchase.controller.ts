@@ -13,6 +13,7 @@ import { CreatePurchaseDto } from './dto/create-purchase.dto';
 import { UpdatePurchaseDto } from './dto/update-purchase.dto';
 import { UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { resolveBranchId } from 'src/common/utils/resolve-branch-id';
 import { ListPurchaseQueryDto } from './dto/list-purchase-query.dto';
 import { DeletePurchaseWithAuthDto } from './dto/delete-purchase-with-auth.dto';
 import { AuditActorContext } from 'src/audit-log/audit-log.service';
@@ -43,13 +44,13 @@ export class PurchaseController {
     query: ListPurchaseQueryDto,
     request: { user?: Record<string, unknown> },
   ): ListPurchaseQueryDto {
-    const branchId = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
+    const branchId = resolveBranchId(request, query.branchId ?? undefined);
 
     return {
       ...query,
-      branchId: Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
+      branchId: branchId !== undefined && Number.isFinite(branchId) && branchId > 0
+        ? branchId
+        : undefined,
     };
   }
 

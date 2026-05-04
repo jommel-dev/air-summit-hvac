@@ -176,6 +176,32 @@ export class SerialNumberService {
     return normalized;
   }
 
+  private async logSerialScanAudit(
+    action: 'SERIAL_SCAN_SUCCESS' | 'SERIAL_SCAN_FAILURE' | 'SERIAL_SCAN_ERROR',
+    entityType: string,
+    entityId: string | number | null,
+    serialNumber: string,
+    message: string,
+    metadata: Record<string, unknown> | null,
+    actor?: AuditActorContext,
+  ): Promise<void> {
+    await this.auditLogService.log({
+      action,
+      entityType,
+      entityId,
+      userId: actor?.userId ?? null,
+      username: actor?.username ?? null,
+      roleName: actor?.roleName ?? null,
+      branchId: actor?.branchId ?? null,
+      ipAddress: actor?.ipAddress ?? null,
+      metadata: {
+        serialNumber,
+        message,
+        ...metadata,
+      },
+    });
+  }
+
   private parseConfiguredProductUnitTypes(value: unknown): string[] {
     if (Array.isArray(value)) {
       return value
@@ -860,6 +886,12 @@ export class SerialNumberService {
            to_jsonb(sn)->>'branchid',
            ''
          ) = $3::text
+         OR COALESCE(
+           to_jsonb(sn)->>'branchId',
+           to_jsonb(sn)->>'branch_id',
+           to_jsonb(sn)->>'branchid',
+           ''
+         ) IN ('', '0')
        )
        ORDER BY sn.id`,
       [String(productId), String(capacityId), branchId !== null ? String(branchId) : null],
@@ -951,7 +983,11 @@ export class SerialNumberService {
     const capacityId = Number(capacityIdInput);
     const branchId =
       branchIdInput === undefined || branchIdInput === null ? null : Number(branchIdInput);
-
+    console.log('getSerialNumbersByScope called with', {
+      productId,
+      capacityId,
+      branchIdInput,
+    });
     if (!Number.isFinite(productId) || productId <= 0) {
       return { success: false, message: 'productId must be a valid number' };
     }
@@ -1020,6 +1056,12 @@ export class SerialNumberService {
            to_jsonb(sn)->>'branchid',
            ''
          ) = $3::text
+         OR COALESCE(
+           to_jsonb(sn)->>'branchId',
+           to_jsonb(sn)->>'branch_id',
+           to_jsonb(sn)->>'branchid',
+           ''
+         ) IN ('', '0')
        )
        ORDER BY sn.id`,
       [String(productId), String(capacityId), branchId !== null ? String(branchId) : null],
@@ -1925,7 +1967,7 @@ export class SerialNumberService {
     };
   }
 
-  async scanSalesOrder(dto: ScanSalesOrderDto, userId?: number) {
+  async scanSalesOrder(dto: ScanSalesOrderDto, actor?: AuditActorContext) {
     const serialNumber = this.normalizeSerialNumber(dto.serialNumber);
     const salesId = Number(dto.salesId);
     const branchId =
@@ -1945,19 +1987,54 @@ export class SerialNumberService {
         ? null
         : Number(dto.expectedCapacityId);
     const expectedUnitType = this.normalizeUnitType(dto.expectedUnitType);
+    const userId = actor?.userId ?? undefined;
+
+    const auditMetadata = {
+      branchId,
+      expectedProductId,
+      expectedCapacityId,
+      expectedUnitType,
+      event: 'scanSalesOrder',
+    };
+
+    const auditFailure = async (message: string) => {
+      await this.logSerialScanAudit(
+        'SERIAL_SCAN_FAILURE',
+        'SalesOrder',
+        salesId,
+        serialNumber,
+        message,
+        auditMetadata,
+        actor,
+      );
+      return { success: false, message, item: undefined };
+    };
+
+    const auditSuccess = async (result: { success: true; message: string; item?: { serialNumber?: string | null } }) => {
+      await this.logSerialScanAudit(
+        'SERIAL_SCAN_SUCCESS',
+        'SalesOrder',
+        salesId,
+        serialNumber,
+        result.message,
+        auditMetadata,
+        actor,
+      );
+      return result;
+    };
 
     // Pick previousSalesId column if available
     const serialColumns = await this.getTableColumns('tblserial_numbers');
     const serialPreviousSalesIdColumn = this.pickColumn(serialColumns, ['previousSalesId', 'previous_sales_id']);
 
     if (!serialNumber) {
-      return { success: false, message: 'serialNumber is required' };
+      return auditFailure('serialNumber is required');
     }
     if (!Number.isFinite(salesId) || salesId <= 0) {
-      return { success: false, message: 'salesId must be a valid number' };
+      return auditFailure('salesId must be a valid number');
     }
     if (branchId !== null && (!Number.isFinite(branchId) || branchId <= 0)) {
-      return { success: false, message: 'branchId must be a valid number' };
+      return auditFailure('branchId must be a valid number');
     }
 
     const serialNumberColumn = this.pickColumn(serialColumns, [
@@ -1974,17 +2051,11 @@ export class SerialNumberService {
     ]);
 
     if (!serialNumberColumn) {
-      return {
-        success: false,
-        message: 'Serial number column is not configured in tblserial_numbers',
-      };
+      return auditFailure('Serial number column is not configured in tblserial_numbers');
     }
 
     if (!serialSalesIdColumn) {
-      return {
-        success: false,
-        message: 'Sales reference column is not configured in tblserial_numbers',
-      };
+      return auditFailure('Sales reference column is not configured in tblserial_numbers');
     }
 
     const serialResult = await this.databaseService.query<SerialScanRow>(
@@ -2042,7 +2113,7 @@ export class SerialNumberService {
     );
 
     if (serialResult.rowCount === 0) {
-      return { success: false, message: 'Serial number not found' };
+      return auditFailure('Serial number not found');
     }
 
     const serial = serialResult.rows[0];
@@ -2054,61 +2125,55 @@ export class SerialNumberService {
       expectedProductId !== null &&
       Number(serial.productId) !== Number(expectedProductId)
     ) {
-      return {
-        success: false,
-        message: await this.buildProductMismatchMessage({
+      return auditFailure(
+        await this.buildProductMismatchMessage({
           expectedProductId,
           expectedCapacityId,
           actualProductName: serial.productName,
           actualCapacityName: serial.capacity,
           purchaseId: serial.purchaseId,
         }),
-      };
+      );
     }
 
     if (
       expectedCapacityId !== null &&
       Number(serial.capacityId) !== Number(expectedCapacityId)
     ) {
-      return {
-        success: false,
-        message: await this.buildCapacityMismatchMessage({
+      return auditFailure(
+        await this.buildCapacityMismatchMessage({
           expectedProductId,
           expectedCapacityId,
           actualProductName: serial.productName,
           actualCapacityName: serial.capacity,
           purchaseId: serial.purchaseId,
         }),
-      };
+      );
     }
 
     if (expectedUnitType) {
       const scannedUnitType = this.normalizeUnitType(serial.unitType);
       if (scannedUnitType && scannedUnitType !== expectedUnitType) {
-        return {
-          success: false,
-          message: `Serial number unit type mismatch. Expected ${expectedUnitType}`,
-        };
+        return auditFailure(`Serial number unit type mismatch. Expected ${expectedUnitType}`);
       }
     }
 
     // If serial is already assigned to a different SO, block
     if (Number.isFinite(currentSalesId) && currentSalesId > 0 && currentSalesId !== salesId) {
       const salesReference = await this.getSalesOrderReference(currentSalesId);
-      return {
-        success: false,
-        message: salesReference
+      return auditFailure(
+        salesReference
           ? `Serial number is already assigned to ${salesReference}`
           : `Serial number is already assigned to sales order #${currentSalesId}`,
-      };
+      );
     }
 
     if (reservedStatuses.has(normalizedStatus) && currentSalesId === salesId) {
-      return {
+      return auditSuccess({
         success: true,
         message: 'Serial number already scanned for this sales order',
         item: serial,
-      };
+      });
     }
 
     // If serial is being reassigned to a new SO (after transfer), set previousSalesId
@@ -2131,13 +2196,10 @@ export class SerialNumberService {
     const updateResult = await this.runUpdateById('tblserial_numbers', serial.id, updateRecord);
 
     if (updateResult.rowCount === 0) {
-      return {
-        success: false,
-        message: 'Unable to update serial number for sales order',
-      };
+      return auditFailure('Unable to update serial number for sales order');
     }
 
-    return {
+    return auditSuccess({
       success: true,
       message: 'Serial number scanned successfully',
       item: {
@@ -2146,11 +2208,12 @@ export class SerialNumberService {
         status: 'reserved',
         branchId: branchId !== null ? String(branchId) : serial.branchId,
       },
-    };
+    });
   }
 
-  async scanSalesOrderBatch(dto: ScanSalesOrderBatchDto, userId?: number) {
+  async scanSalesOrderBatch(dto: ScanSalesOrderBatchDto, actor?: AuditActorContext) {
     const items = Array.isArray(dto.items) ? dto.items : [];
+    const auditMetadata = { event: 'scanSalesOrderBatch' };
     if (items.length === 0) {
       return {
         success: false,
@@ -2187,7 +2250,7 @@ export class SerialNumberService {
       };
 
       try {
-        const result = await this.scanSalesOrder(payload, userId);
+        const result = await this.scanSalesOrder(payload, actor);
         results.push({
           serialNumber: this.normalizeSerialNumber(entry.serialNumber),
           success: Boolean(result.success),
@@ -2197,13 +2260,26 @@ export class SerialNumberService {
           },
         });
       } catch (error: unknown) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Internal Server Error while scanning serial number';
+        await this.logSerialScanAudit(
+          'SERIAL_SCAN_ERROR',
+          'SalesOrder',
+          entry.salesId,
+          this.normalizeSerialNumber(entry.serialNumber),
+          message,
+          {
+            ...auditMetadata,
+            event: 'scanSalesOrderBatch',
+          },
+          actor,
+        );
         results.push({
           serialNumber: this.normalizeSerialNumber(entry.serialNumber),
           success: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : 'Internal Server Error while scanning serial number',
+          message,
           item: {
             serialNumber: null,
           },
@@ -2229,7 +2305,7 @@ export class SerialNumberService {
     };
   }
 
-  async scanPurchaseOrder(dto: ScanPurchaseOrderDto, userId?: number, branchIdInput?: number) {
+  async scanPurchaseOrder(dto: ScanPurchaseOrderDto, actor?: AuditActorContext, branchIdInput?: number) {
     const serialNumber = this.normalizeSerialNumber(dto.serialNumber);
     const purchaseId = Number(dto.purchaseId);
     const requestBranchId =
@@ -2251,15 +2327,50 @@ export class SerialNumberService {
         ? null
         : Number(dto.expectedCapacityId);
     const unitType = this.normalizeUnitType(dto.unitType ?? 'set') || 'set';
+    const userId = actor?.userId ?? undefined;
+
+    const auditMetadata = {
+      requestBranchId,
+      expectedProductId,
+      expectedCapacityId,
+      unitType,
+      event: 'scanPurchaseOrder',
+    };
+
+    const auditFailure = async (message: string) => {
+      await this.logSerialScanAudit(
+        'SERIAL_SCAN_FAILURE',
+        'PurchaseOrder',
+        purchaseId,
+        serialNumber,
+        message,
+        auditMetadata,
+        actor,
+      );
+      return { success: false, message, item: undefined };
+    };
+
+    const auditSuccess = async (result: { success: true; message: string; item?: { serialNumber?: string | null; unitType?: string | null } }) => {
+      await this.logSerialScanAudit(
+        'SERIAL_SCAN_SUCCESS',
+        'PurchaseOrder',
+        purchaseId,
+        serialNumber,
+        result.message,
+        auditMetadata,
+        actor,
+      );
+      return result;
+    };
 
     if (!serialNumber) {
-      return { success: false, message: 'serialNumber is required' };
+      return auditFailure('serialNumber is required');
     }
     if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
-      return { success: false, message: 'purchaseId must be a valid number' };
+      return auditFailure('purchaseId must be a valid number');
     }
     if (requestBranchId !== null && (!Number.isFinite(requestBranchId) || requestBranchId <= 0)) {
-      return { success: false, message: 'branchId must be a valid number' };
+      return auditFailure('branchId must be a valid number');
     }
 
     let purchaseBranchIdRaw: string | null = null;
@@ -2396,19 +2507,15 @@ export class SerialNumberService {
 
     if (serialResult.rowCount === 0) {
       if (expectedProductId === null || !Number.isFinite(expectedProductId) || expectedProductId <= 0) {
-        return {
-          success: false,
-          message:
-            'Serial number not found. expectedProductId is required to create a new serial for purchase order.',
-        };
+        return auditFailure(
+          'Serial number not found. expectedProductId is required to create a new serial for purchase order.',
+        );
       }
 
       if (expectedCapacityId === null || !Number.isFinite(expectedCapacityId) || expectedCapacityId <= 0) {
-        return {
-          success: false,
-          message:
-            'Serial number not found. expectedCapacityId is required to create a new serial for purchase order.',
-        };
+        return auditFailure(
+          'Serial number not found. expectedCapacityId is required to create a new serial for purchase order.',
+        );
       }
 
       const productExistsResult = await this.databaseService.query<{ id: number }>(
@@ -2420,10 +2527,7 @@ export class SerialNumberService {
       );
 
       if (productExistsResult.rowCount === 0) {
-        return {
-          success: false,
-          message: `Product ID ${expectedProductId} does not exist`,
-        };
+        return auditFailure(`Product ID ${expectedProductId} does not exist`);
       }
 
       const capacityExistsResult = await this.databaseService.query<{ id: number }>(
@@ -2435,10 +2539,7 @@ export class SerialNumberService {
       );
 
       if (capacityExistsResult.rowCount === 0) {
-        return {
-          success: false,
-          message: `Capacity ID ${expectedCapacityId} does not exist`,
-        };
+        return auditFailure(`Capacity ID ${expectedCapacityId} does not exist`);
       }
 
       const existingBySerialResult = await this.databaseService.query<{ id: number }>(
@@ -2497,7 +2598,7 @@ export class SerialNumberService {
       }
 
       if (!createdId) {
-        return this.scanPurchaseOrder(dto, userId, branchId ?? undefined);
+        return this.scanPurchaseOrder(dto, actor, branchId ?? undefined);
       }
 
       const createdResult = await this.databaseService.query<
@@ -2530,15 +2631,12 @@ export class SerialNumberService {
       );
 
       if (createdResult.rowCount === 0) {
-        return {
-          success: false,
-          message: 'Serial number was created but cannot be retrieved',
-        };
+        return auditFailure('Serial number was created but cannot be retrieved');
       }
 
       const created = createdResult.rows[0];
 
-      return {
+      return auditSuccess({
         success: true,
         message: 'Serial number created and scanned successfully',
         item: {
@@ -2549,7 +2647,7 @@ export class SerialNumberService {
           branchId: branchId !== null ? String(branchId) : created.branchId,
           unitType,
         },
-      };
+      });
     }
 
     const serial = serialResult.rows[0];
@@ -2591,12 +2689,11 @@ export class SerialNumberService {
 
     if (Number.isFinite(currentSalesId) && currentSalesId > 0) {
       const salesReference = await this.getSalesOrderReference(currentSalesId);
-      return {
-        success: false,
-        message: salesReference
+      return auditFailure(
+        salesReference
           ? `Serial number is already assigned to ${salesReference}`
           : `Serial number is already assigned to sales order #${currentSalesId}`,
-      };
+      );
     }
 
     if (
@@ -2605,38 +2702,31 @@ export class SerialNumberService {
       currentPurchaseId !== purchaseId
     ) {
       const purchaseReference = await this.getPurchaseOrderReference(currentPurchaseId);
-      return {
-        success: false,
-        message: purchaseReference
+      return auditFailure(
+        purchaseReference
           ? `Serial number is already linked to ${purchaseReference}`
           : `Serial number is already linked to purchase order #${currentPurchaseId}`,
-      };
+      );
     }
 
     if (['sold', 'released', 'out', 'outbound'].includes(normalizedStatus)) {
-      return {
-        success: false,
-        message: `Serial number cannot be used with status '${normalizedStatus || 'unknown'}'`,
-      };
+      return auditFailure(`Serial number cannot be used with status '${normalizedStatus || 'unknown'}'`);
     }
 
     if (currentPurchaseId === purchaseId) {
       const currentUnitType = this.normalizeUnitType(serial.unitType);
       if (currentUnitType === unitType.toLowerCase()) {
-        return {
+        return auditSuccess({
           success: true,
           message: 'Serial number already scanned for this purchase order',
           item: {
             ...serial,
             unitType: currentUnitType,
           },
-        };
+        });
       }
 
-      return {
-        success: false,
-        message: `Serial number already scanned under unit type '${currentUnitType || 'unknown'}'`,
-      };
+      return auditFailure(`Serial number already scanned under unit type '${currentUnitType || 'unknown'}'`);
     }
 
     const updateRecord: Record<string, unknown> = {};
@@ -2666,13 +2756,10 @@ export class SerialNumberService {
     );
 
     if (updateResult.rowCount === 0) {
-      return {
-        success: false,
-        message: 'Unable to update serial number for purchase order',
-      };
+      return auditFailure('Unable to update serial number for purchase order');
     }
 
-    return {
+    return auditSuccess({
       success: true,
       message: 'Serial number scanned successfully',
       item: {
@@ -2683,10 +2770,10 @@ export class SerialNumberService {
         branchId: branchId !== null ? String(branchId) : serial.branchId,
         unitType,
       },
-    };
+    });
   }
 
-  async scanPurchaseOrderBatch(dto: ScanPurchaseOrderBatchDto, userId?: number, branchIdInput?: number) {
+  async scanPurchaseOrderBatch(dto: ScanPurchaseOrderBatchDto, actor?: AuditActorContext, branchIdInput?: number) {
     const items = Array.isArray(dto.items) ? dto.items : [];
     if (items.length === 0) {
       return {
@@ -2717,7 +2804,7 @@ export class SerialNumberService {
       };
 
       try {
-        const result = await this.scanPurchaseOrder(payload, userId, branchIdInput);
+        const result = await this.scanPurchaseOrder(payload, actor, branchIdInput);
         results.push({
           serialNumber: this.normalizeSerialNumber(entry.serialNumber),
           success: Boolean(result.success),
@@ -2728,6 +2815,22 @@ export class SerialNumberService {
           },
         });
       } catch (error: unknown) {
+        await this.logSerialScanAudit(
+          'SERIAL_SCAN_ERROR',
+          'PurchaseOrder',
+          Number(entry.purchaseId) || 0,
+          this.normalizeSerialNumber(entry.serialNumber),
+          `Unexpected error during purchase order batch scan: ${error instanceof Error ? error.message : String(error)}`,
+          {
+            requestBranchId: entry.branchId,
+            expectedProductId: entry.expectedProductId,
+            expectedCapacityId: entry.expectedCapacityId,
+            unitType: entry.unitType,
+            event: 'scanPurchaseOrderBatch',
+          },
+          actor,
+        );
+
         results.push({
           serialNumber: this.normalizeSerialNumber(entry.serialNumber),
           success: false,
