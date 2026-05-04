@@ -45,12 +45,34 @@ export interface AuditLogListResponse {
 
 export interface AuditLogDetailResponse {
   success: boolean;
-  message?: string;
   item?: AuditLogListItem;
+  message?: string;
+}
+
+export interface AuditLogEntry {
+  action: string;
+  entityType: string;
+  entityId?: string | number | null;
+  userId?: number | null;
+  username?: string | null;
+  roleName?: string | null;
+  branchId?: number | null;
+  ipAddress?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface AuditLogCreateResponse {
+  success: boolean;
+  message?: string;
+  id?: number;
 }
 
 @Injectable({ providedIn: 'root' })
 export class AuditLogFrontendService {
+  async createAuditLog(entry: AuditLogEntry): Promise<AuditLogCreateResponse> {
+    const response = await apiClient.post<AuditLogCreateResponse>('/audit-logs', entry);
+    return response.data;
+  }
   async getAuditLogs(params?: {
     page?: number;
     limit?: number;

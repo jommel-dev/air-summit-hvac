@@ -22,25 +22,31 @@ import { RemoveSalesOrderSerialDto } from './dto/remove-sales-order-serial.dto';
 import { AdjustPurchaseUnitTypesDto } from './dto/adjust-purchase-unit-types.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { AuditActorContext } from 'src/audit-log/audit-log.service';
+import { resolveBranchId } from 'src/common/utils/resolve-branch-id';
 
 @Controller('serial-number')
 @UseGuards(JwtAuthGuard)
 export class SerialNumberController {
   constructor(private readonly serialNumberService: SerialNumberService) {}
 
-  private resolveBranchId(
-    request: { user?: Record<string, unknown> },
-    branchIdQuery?: string,
-  ): number | undefined {
-    const branchIdFromToken = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
-    const normalizedTokenBranchId =
-      Number.isFinite(branchIdFromToken) && branchIdFromToken > 0
-        ? branchIdFromToken
-        : undefined;
+  private resolveAuditActor(
+    request: { user?: Record<string, unknown>; ip?: string },
+  ): AuditActorContext {
+    const userId = Number(request.user?.sub ?? request.user?.id ?? request.user?.userId);
+    const normalizedUserId = Number.isFinite(userId) ? userId : null;
+    const username = String(request.user?.username ?? request.user?.name ?? '').trim() || null;
+    const roleName = String(request.user?.roleName ?? request.user?.role ?? '').trim() || null;
+    const branchId = Number(request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch);
+    const normalizedBranchId = Number.isFinite(branchId) ? branchId : null;
+    const ipAddress = String(request.ip ?? '').trim().split(',')[0]?.trim() || null;
 
-    return normalizedTokenBranchId;
+    return {
+      userId: normalizedUserId,
+      username,
+      roleName,
+      branchId: normalizedBranchId,
+      ipAddress,
+    };
   }
 
   @Post('insert-bulk')
@@ -85,49 +91,43 @@ export class SerialNumberController {
   @Post('scan-sales-order')
   scanSalesOrder(
     @Body() dto: ScanSalesOrderDto,
-    @Req() request: { user?: { sub?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    const userId = Number(request.user?.sub);
-    const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
-
-    return this.serialNumberService.scanSalesOrder(dto, normalizedUserId);
+    const actor = this.resolveAuditActor(request);
+    return this.serialNumberService.scanSalesOrder(dto, actor);
   }
 
   @Post('scan-sales-order/batch')
   scanSalesOrderBatch(
     @Body() dto: ScanSalesOrderBatchDto,
-    @Req() request: { user?: { sub?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    const userId = Number(request.user?.sub);
-    const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
-
-    return this.serialNumberService.scanSalesOrderBatch(dto, normalizedUserId);
+    const actor = this.resolveAuditActor(request);
+    return this.serialNumberService.scanSalesOrderBatch(dto, actor);
   }
 
   @Post('scan-purchase-order')
   scanPurchaseOrder(
     @Body() dto: ScanPurchaseOrderDto,
     @Query('branchId') branchIdQuery: string | undefined,
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    const userId = Number(request.user?.sub);
-    const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
-    const branchId = this.resolveBranchId(request, branchIdQuery);
+    const actor = this.resolveAuditActor(request);
+    const branchId = resolveBranchId(request, branchIdQuery);
 
-    return this.serialNumberService.scanPurchaseOrder(dto, normalizedUserId, branchId);
+    return this.serialNumberService.scanPurchaseOrder(dto, actor, branchId);
   }
 
   @Post('scan-purchase-order/batch')
   scanPurchaseOrderBatch(
     @Body() dto: ScanPurchaseOrderBatchDto,
     @Query('branchId') branchIdQuery: string | undefined,
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    const userId = Number(request.user?.sub);
-    const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
-    const branchId = this.resolveBranchId(request, branchIdQuery);
+    const actor = this.resolveAuditActor(request);
+    const branchId = resolveBranchId(request, branchIdQuery);
 
-    return this.serialNumberService.scanPurchaseOrderBatch(dto, normalizedUserId, branchId);
+    return this.serialNumberService.scanPurchaseOrderBatch(dto, actor, branchId);
   }
 
   @Post('remove-purchase-order')
@@ -184,7 +184,7 @@ export class SerialNumberController {
     @Query('branchId') branchIdQuery: string | undefined,
     @Req() request: { user?: Record<string, unknown> },
   ) {
-    const branchId = this.resolveBranchId(request, branchIdQuery);
+    const branchId = resolveBranchId(request, branchIdQuery);
 
     return this.serialNumberService.getCapacityStockSummary(
       productId,
@@ -200,7 +200,7 @@ export class SerialNumberController {
     @Query('branchId') branchIdQuery: string | undefined,
     @Req() request: { user?: Record<string, unknown> },
   ) {
-    const branchId = this.resolveBranchId(request, branchIdQuery);
+    const branchId = resolveBranchId(request, branchIdQuery);
     return this.serialNumberService.getSerialNumbersByScope(
       productId,
       capacityId,
@@ -218,7 +218,7 @@ export class SerialNumberController {
     @Query('branchId') branchIdQuery: string | undefined,
     @Req() request: { user?: Record<string, unknown> },
   ) {
-    const branchId = this.resolveBranchId(request, branchIdQuery);
+    const branchId = resolveBranchId(request, branchIdQuery);
     return this.serialNumberService.getLandCostingReport({
       monthsInput,
       dateFromInput,

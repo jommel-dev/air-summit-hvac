@@ -15,6 +15,8 @@ import {
   VendorOption,
 } from '../../shared/services/purchase-order.service';
 import { RbacService } from '../../shared/services/rbac.service';
+import { AuditLogFrontendService } from '../../shared/services/audit-log.service';
+import { ModalComponent } from '../../shared/components/ui/modal/modal.component';
 import axios from 'axios';
 
 type PurchaseTab = 'deliveries' | 'approvals' | 'master-data';
@@ -86,7 +88,7 @@ interface QueuedPurchaseSerialScan {
 
 @Component({
   selector: 'app-purchase-order',
-  imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, ModalComponent],
   templateUrl: './purchase-order.component.html',
   styles: ``,
 })
@@ -147,6 +149,23 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   cancellingPurchaseIds = new Set<number>();
   deletingPurchaseIds = new Set<number>();
   poActionDialogMode: PurchaseActionDialogMode | null = null;
+  errorModal = {
+    isOpen: false,
+    title: '',
+    message: '',
+  };
+
+  private openErrorModal(title: string, message: string): void {
+    this.errorModal = {
+      isOpen: true,
+      title,
+      message,
+    };
+  }
+
+  closeErrorModal(): void {
+    this.errorModal.isOpen = false;
+  }
   poActionTargetItem: PurchaseOrderItem | null = null;
   deleteAuthPassword = '';
   deleteAuthUsername = '';
@@ -213,6 +232,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   constructor(
     private readonly purchaseOrderService: PurchaseOrderService,
     private readonly rbacService: RbacService,
+    private readonly auditLogService: AuditLogFrontendService,
   ) {}
 
   ngOnInit(): void {
@@ -2376,18 +2396,18 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       }
 
       if (failureCount > 0) {
-        this.createError = `${failureCount} serial number${failureCount > 1 ? 's' : ''} failed to import.`;
+        this.openErrorModal('Import Failed', `${failureCount} serial number${failureCount > 1 ? 's' : ''} failed to import.`);
       }
     } catch (error: unknown) {
+      let errorMessage = 'Failed to import CSV serial numbers.';
       if (axios.isAxiosError(error)) {
-        this.createError =
+        errorMessage =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Failed to import CSV serial numbers.';
       } else if (error instanceof Error) {
-        this.createError = error.message;
-      } else {
-        this.createError = 'Failed to import CSV serial numbers.';
+        errorMessage = error.message;
       }
+      this.openErrorModal('Import Error', errorMessage);
     } finally {
       this.isImportingSerials = false;
     }
@@ -2858,6 +2878,19 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     if (!serialNumber) {
       if (showEmptyError) {
         unitEntry.scanError = emptyMessage;
+        void this.auditLogService.createAuditLog({
+          action: 'SERIAL_SCAN_FAILURE',
+          entityType: 'PurchaseOrder',
+          entityId: this.editingPurchaseId,
+          metadata: {
+            serialNumber: rawSerialInput,
+            reason: 'empty_serial_input',
+            message: emptyMessage,
+            productIndex,
+            unitLabel,
+            event: 'ui_validation_failure',
+          },
+        });
       }
       return;
     }
@@ -2871,18 +2904,47 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
     if (!Number.isFinite(productId) || !Number.isFinite(capacityId)) {
       unitEntry.scanError = 'Select product and capacity before scanning serial numbers';
+      void this.auditLogService.createAuditLog({
+        action: 'SERIAL_SCAN_FAILURE',
+        entityType: 'PurchaseOrder',
+        entityId: this.editingPurchaseId,
+        metadata: {
+          serialNumber,
+          reason: 'missing_product_capacity',
+          message: 'Select product and capacity before scanning serial numbers',
+          productIndex,
+          unitLabel,
+          event: 'ui_validation_failure',
+        },
+      });
       return;
     }
 
     const allowedQty = Number(unitEntry.value) || 0;
     if (allowedQty > 0 && unitEntry.serials.length >= allowedQty) {
+      const errorMessage = `Limit reached. ${unitLabel} allows only ${allowedQty} serial number${allowedQty > 1 ? 's' : ''}`;
       this.setTransientScanError(
         productIndex,
         unitLabel,
-        `Limit reached. ${unitLabel} allows only ${allowedQty} serial number${allowedQty > 1 ? 's' : ''}`,
+        errorMessage,
       );
       unitEntry.scanInput = '';
       this.focusSerialScanInput(productIndex, unitLabel);
+      void this.auditLogService.createAuditLog({
+        action: 'SERIAL_SCAN_FAILURE',
+        entityType: 'PurchaseOrder',
+        entityId: this.editingPurchaseId,
+        metadata: {
+          serialNumber,
+          reason: 'quantity_limit_reached',
+          message: errorMessage,
+          productIndex,
+          unitLabel,
+          allowedQty,
+          currentCount: unitEntry.serials.length,
+          event: 'ui_validation_failure',
+        },
+      });
       return;
     }
 
@@ -2899,6 +2961,19 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
     if (existsInOtherUnitType) {
       unitEntry.scanError = 'Serial number already exists in another unit type for this product';
+      void this.auditLogService.createAuditLog({
+        action: 'SERIAL_SCAN_FAILURE',
+        entityType: 'PurchaseOrder',
+        entityId: this.editingPurchaseId,
+        metadata: {
+          serialNumber,
+          reason: 'duplicate_in_other_unit_type',
+          message: 'Serial number already exists in another unit type for this product',
+          productIndex,
+          unitLabel,
+          event: 'ui_validation_failure',
+        },
+      });
       return;
     }
 
@@ -2909,6 +2984,19 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       unitEntry.scanError = 'Serial number already scanned for this unit type';
       unitEntry.scanInput = '';
       this.focusSerialScanInput(productIndex, unitLabel);
+      void this.auditLogService.createAuditLog({
+        action: 'SERIAL_SCAN_FAILURE',
+        entityType: 'PurchaseOrder',
+        entityId: this.editingPurchaseId,
+        metadata: {
+          serialNumber,
+          reason: 'duplicate_in_current_unit_type',
+          message: 'Serial number already scanned for this unit type',
+          productIndex,
+          unitLabel,
+          event: 'ui_validation_failure',
+        },
+      });
       return;
     }
 
@@ -3099,6 +3187,21 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           this.removeLocalSerial(unitEntry, entry.serialNumber);
           unitEntry.scanError = result?.message ?? 'Failed to save serial number';
           unitEntry.scanSuccess = '';
+          void this.auditLogService.createAuditLog({
+            action: 'SERIAL_SCAN_FAILURE',
+            entityType: 'PurchaseOrder',
+            entityId: entry.purchaseId,
+            metadata: {
+              serialNumber: entry.serialNumber,
+              reason: 'api_scan_failure',
+              message: result?.message ?? 'Failed to save serial number',
+              productIndex: entry.productIndex,
+              unitLabel: entry.unitLabel,
+              expectedProductId: entry.productId,
+              expectedCapacityId: entry.capacityId,
+              event: 'api_failure',
+            },
+          });
           return;
         }
 
@@ -3338,7 +3441,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
         unitEntry.scanError =
-          (error.response?.data as { message?: string } | undefined)?.message ??
+          ((error as any).response?.data as { message?: string } | undefined)?.message ??
           'Failed to delete serial number';
       } else {
         unitEntry.scanError = 'Failed to delete serial number';

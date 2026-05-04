@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { resolveBranchId } from 'src/common/utils/resolve-branch-id';
 import { CreateQuotationDto } from './dto/create-quotation.dto';
 import { ListQuotationQueryDto } from './dto/list-quotation-query.dto';
 import { PermanentDeleteQuotationDto } from './dto/permanent-delete-quotation.dto';
@@ -43,13 +44,13 @@ export class QuotationController {
     query: ListQuotationQueryDto,
     request: { user?: Record<string, unknown> },
   ): ListQuotationQueryDto {
-    const branchId = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
+    const branchId = resolveBranchId(request, query.branchId ?? undefined);
 
     return {
       ...query,
-      branchId: Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
+      branchId: branchId !== undefined && Number.isFinite(branchId) && branchId > 0
+        ? branchId
+        : undefined,
     };
   }
 

@@ -18,6 +18,7 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { UpdateSalesOrderDto } from './dto/update-sales-order.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { resolveBranchId } from 'src/common/utils/resolve-branch-id';
 import { ListSalesOrderQueryDto } from './dto/list-sales-order-query.dto';
 import { AddMaterialItemDto } from './dto/add-material-item.dto';
 import { CreateSalesOrderMigrationPreviewDto } from './dto/create-sales-order-migration-preview.dto';
@@ -54,13 +55,13 @@ export class SalesOrderController {
     query: ListSalesOrderQueryDto,
     request: { user?: Record<string, unknown> },
   ): ListSalesOrderQueryDto {
-    const branchId = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
+    const branchId = resolveBranchId(request, query.branchId ?? undefined);
 
     return {
       ...query,
-      branchId: Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
+      branchId: branchId !== undefined && Number.isFinite(branchId) && branchId > 0
+        ? branchId
+        : undefined,
     };
   }
 
