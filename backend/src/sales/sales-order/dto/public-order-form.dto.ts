@@ -7,6 +7,17 @@ export class PublicOrderFormProductItemDto {
   unitTypes?: string[];
 }
 
+export interface MiscItemPayload {
+  category: string;
+  itemName: string;
+  description?: string;
+  materialId?: number;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  isInclusion: boolean;
+}
+
 export class PublicOrderFormDto {
   salesType!: 'sales' | 'service' | 'concern' | 'sub-dealer';
   scheduleDate!: string;
@@ -16,4 +27,5 @@ export class PublicOrderFormDto {
   landmark?: string;
   paymentMethod!: string;
   productItems!: PublicOrderFormProductItemDto[];
+  miscItems?: MiscItemPayload[];
 }

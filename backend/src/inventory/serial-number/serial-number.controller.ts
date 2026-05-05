@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { SerialNumberService } from './serial-number.service';
+import { SerialEventLogService } from './serial-event-log.service';
 import { CreateSerialNumberDto } from './dto/create-serial-number.dto';
 import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { ScanSalesOrderDto } from './dto/scan-sales-order.dto';
@@ -27,7 +28,10 @@ import { resolveBranchId } from 'src/common/utils/resolve-branch-id';
 @Controller('serial-number')
 @UseGuards(JwtAuthGuard)
 export class SerialNumberController {
-  constructor(private readonly serialNumberService: SerialNumberService) {}
+  constructor(
+    private readonly serialNumberService: SerialNumberService,
+    private readonly serialEventLogService: SerialEventLogService,
+  ) {}
 
   private resolveAuditActor(
     request: { user?: Record<string, unknown>; ip?: string },
@@ -227,6 +231,28 @@ export class SerialNumberController {
       capacityIdInput: capacityId,
       branchId,
     });
+  }
+
+  @Get('search-history')
+  @UseGuards(JwtAuthGuard)
+  async searchSerialHistory(@Query('serialNumber') serialNumber: string) {
+    const sn = String(serialNumber ?? '').trim();
+    if (!sn) {
+      return { success: true, items: [] };
+    }
+    const items = await this.serialEventLogService.getHistoryBySerialNumber(sn);
+    return { success: true, items };
+  }
+
+  @Get(':id/history')
+  @UseGuards(JwtAuthGuard)
+  async getSerialHistory(@Param('id') id: string) {
+    const serialId = Number(id);
+    if (!Number.isFinite(serialId) || serialId <= 0) {
+      return { success: false, message: 'Invalid serial ID' };
+    }
+    const items = await this.serialEventLogService.getHistoryBySerialId(serialId);
+    return { success: true, items };
   }
 
   @Get(':id')

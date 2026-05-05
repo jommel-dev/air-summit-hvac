@@ -18,6 +18,7 @@ import { SalesOrderMaterialsComponent } from './pages/sales-order-materials/sale
 import { SettingsComponent } from './pages/settings/settings.component';
 import { AccountingComponent } from './pages/accounting/accounting.component';
 import { ProjectsComponent } from './pages/projects/projects.component';
+import { SerialHistoryComponent } from './pages/serial-history/serial-history.component';
 
 export const routes: Routes = [
   {
@@ -155,6 +156,16 @@ export const routes: Routes = [
           permission: 'canRead',
         },
         title: 'Settings',
+      },
+      {
+        path: 'serial-history',
+        component: SerialHistoryComponent,
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'inventory',
+          permission: 'canRead',
+        },
+        title: 'Serial Number History',
       },
     ]
   },

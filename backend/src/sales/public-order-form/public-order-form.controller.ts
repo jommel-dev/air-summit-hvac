@@ -1,4 +1,11 @@
-import { Controller, Get, Post, Body, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  BadRequestException,
+} from '@nestjs/common';
 import { SalesOrderService } from '../sales-order/sales-order.service';
 import { PublicOrderFormDto } from '../sales-order/dto/public-order-form.dto';
 import { DatabaseService } from 'src/database/database.service';
@@ -21,6 +28,7 @@ export class PublicOrderFormController {
       capacity: string;
       sellPrice: number;
       unitPrice: number;
+      srp: number;
     }>(
       `SELECT
          p.id AS "productId",
@@ -30,7 +38,8 @@ export class PublicOrderFormController {
          c.id AS "capacityId",
          COALESCE(to_jsonb(c)->>'capacity', '') AS capacity,
          COALESCE(NULLIF(to_jsonb(c)->>'sellPrice', '')::numeric, 0) AS "sellPrice",
-         COALESCE(NULLIF(to_jsonb(c)->>'unitPrice', '')::numeric, 0) AS "unitPrice"
+         COALESCE(NULLIF(to_jsonb(c)->>'unitPrice', '')::numeric, 0) AS "unitPrice",
+         COALESCE(NULLIF(to_jsonb(c)->>'srp', '')::numeric, 0) AS "srp"
        FROM tblproducts p
        JOIN tblcapacity c ON COALESCE(to_jsonb(c)->>'prodId', to_jsonb(c)->>'prod_id', to_jsonb(c)->>'productId', to_jsonb(c)->>'product_id') = p.id::text
        LEFT JOIN tblbrands b ON b.id::text = COALESCE(to_jsonb(p)->>'brandId', to_jsonb(p)->>'brand_id')
@@ -42,7 +51,7 @@ export class PublicOrderFormController {
       name: string;
       brandName: string;
       unitTypes: string[];
-      capacities: Array<{ id: number; capacity: string; sellPrice: number; unitPrice: number }>;
+      capacities: Array<{ id: number; capacity: string; sellPrice: number; unitPrice: number; srp: number }>;
     }>();
 
     for (const row of result.rows) {
@@ -74,10 +83,57 @@ export class PublicOrderFormController {
         capacity: row.capacity,
         sellPrice: Number(row.sellPrice),
         unitPrice: Number(row.unitPrice),
+        srp: Number(row.srp),
       });
     }
 
     return { success: true, items: [...productMap.values()] };
+  }
+
+  @Get('materials')
+  async getMaterials() {
+    const result = await this.databaseService.query<{
+      id: number;
+      code: string;
+      name: string;
+      unit: string;
+      unitPrice: number;
+      category: string;
+    }>(
+      `SELECT
+         id,
+         COALESCE(material_code, '') AS code,
+         COALESCE(material_name, '') AS name,
+         COALESCE(unit, 'PCS') AS unit,
+         COALESCE(unit_price, 0) AS "unitPrice",
+         COALESCE(category, 'general') AS category
+       FROM tblmaterials
+       WHERE deleted_at IS NULL
+       ORDER BY category ASC, material_name ASC`,
+    );
+
+    const grouped = new Map<string, Array<{ id: number; code: string; name: string; unit: string; unitPrice: number }>>();
+
+    for (const row of result.rows) {
+      const cat = row.category || 'general';
+      if (!grouped.has(cat)) {
+        grouped.set(cat, []);
+      }
+      grouped.get(cat)!.push({
+        id: Number(row.id),
+        code: row.code,
+        name: row.name,
+        unit: row.unit,
+        unitPrice: Number(row.unitPrice),
+      });
+    }
+
+    const items = [...grouped.entries()].map(([category, materials]) => ({
+      category,
+      materials,
+    }));
+
+    return { success: true, items };
   }
 
   @Get('customers/search')
@@ -158,6 +214,91 @@ export class PublicOrderFormController {
       concernDetails,
       status: 'pending',
     };
+
+    // Validate miscItems before proceeding
+    const miscItems = Array.isArray(dto.miscItems) ? dto.miscItems : [];
+    if (miscItems.length > 0) {
+      // Validate each misc item has required fields
+      const validCategories = ['excess', 'electrical', 'material', 'general'];
+      for (let i = 0; i < miscItems.length; i++) {
+        const item = miscItems[i];
+        if (!item.itemName || typeof item.itemName !== 'string' || !item.itemName.trim()) {
+          throw new BadRequestException(`Misc item at index ${i}: itemName is required`);
+        }
+        if (!item.category || !validCategories.includes(item.category)) {
+          throw new BadRequestException(
+            `Misc item at index ${i}: category must be one of: ${validCategories.join(', ')}`,
+          );
+        }
+        if (typeof item.quantity !== 'number' || item.quantity <= 0) {
+          throw new BadRequestException(`Misc item at index ${i}: quantity must be a positive number`);
+        }
+        if (!item.unit || typeof item.unit !== 'string') {
+          throw new BadRequestException(`Misc item at index ${i}: unit is required`);
+        }
+        if (typeof item.unitPrice !== 'number' || item.unitPrice < 0) {
+          throw new BadRequestException(`Misc item at index ${i}: unitPrice must be a non-negative number`);
+        }
+      }
+
+      // Validate materialIds exist in tblmaterial_items
+      const materialIds = miscItems
+        .map((item) => item.materialId)
+        .filter((id): id is number => id != null && typeof id === 'number');
+
+      if (materialIds.length > 0) {
+        const uniqueIds = [...new Set(materialIds)];
+        const materialCheck = await this.databaseService.query<{ id: number }>(
+          `SELECT id FROM tblmaterial_items WHERE id = ANY($1)`,
+          [uniqueIds],
+        );
+        const foundIds = new Set(materialCheck.rows.map((r) => Number(r.id)));
+        for (const id of uniqueIds) {
+          if (!foundIds.has(id)) {
+            throw new BadRequestException(
+              `Misc item references non-existent material_id: ${id}`,
+            );
+          }
+        }
+      }
+
+      // Use transaction to wrap sales order creation + misc items insertion
+      return this.databaseService.withTransaction(async (client) => {
+        // Create the sales order
+        const orderResult = await this.salesOrderService.create(payload as any);
+        if (!orderResult || !orderResult.success || !orderResult.data?.salesOrderId) {
+          throw new BadRequestException(
+            orderResult?.message || 'Failed to create sales order',
+          );
+        }
+
+        const salesOrderId = orderResult.data.salesOrderId;
+
+        // Insert misc items
+        for (const item of miscItems) {
+          const totalPrice = item.quantity * item.unitPrice;
+          await client.query(
+            `INSERT INTO tblso_miscellaneous_items
+              (sales_id, category, item_name, description, material_id, quantity, unit, unit_price, total_price, is_inclusion)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [
+              salesOrderId,
+              item.category,
+              item.itemName.trim(),
+              item.description?.trim() || null,
+              item.materialId ?? null,
+              item.quantity,
+              item.unit,
+              item.unitPrice,
+              totalPrice,
+              item.isInclusion ?? false,
+            ],
+          );
+        }
+
+        return orderResult;
+      });
+    }
 
     return this.salesOrderService.create(payload as any);
   }

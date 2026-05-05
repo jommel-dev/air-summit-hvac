@@ -15,6 +15,7 @@ interface ProductCapacity {
   capacity: string;
   sellPrice: number;
   unitPrice: number;
+  srp: number;
 }
 
 interface Product {
@@ -41,6 +42,23 @@ interface CustomerSuggestion {
   name: string;
   address: string;
   contactNumber: string;
+}
+
+interface MiscCartItem {
+  id?: number;
+  category: string;
+  itemName: string;
+  description?: string;
+  materialId?: number;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  isInclusion: boolean;
+}
+
+interface GroupedMaterials {
+  category: string;
+  materials: Array<{ id: number; code: string; name: string; unit: string; unitPrice: number }>;
 }
 
 const SALES_TYPES = [
@@ -113,6 +131,19 @@ export class OrderFormComponent implements OnInit {
   feedbackSubmitting = signal<boolean>(false);
   feedbackError = signal<string>('');
 
+  // Miscellaneous items
+  miscItems = signal<MiscCartItem[]>([]);
+  availableMaterials = signal<GroupedMaterials[]>([]);
+  activeMiscCategory = signal<string>('material');
+  showMiscSection = signal<boolean>(false);
+  customItemMode = signal<boolean>(false);
+
+  // Custom item form signals
+  customItemName = signal<string>('');
+  customItemQty = signal<number>(1);
+  customItemUnit = signal<string>('pcs');
+  customItemPrice = signal<number>(0);
+
   readonly stars = [1, 2, 3, 4, 5];
   readonly ratingLabels: Record<number, string> = { 1: 'Poor', 2: 'Fair', 3: 'Good', 4: 'Very Good', 5: 'Excellent' };
   readonly ratingEmojis: Record<number, string> = { 1: '😞', 2: '😐', 3: '🙂', 4: '😊', 5: '🤩' };
@@ -143,6 +174,10 @@ export class OrderFormComponent implements OnInit {
 
   cartTotal = computed(() => this.cart().reduce((sum, i) => sum + i.price * i.qty, 0));
 
+  miscTotal = computed(() => this.miscItems().reduce((sum, i) => sum + i.quantity * i.unitPrice, 0));
+  grandTotal = computed(() => this.cartTotal() + this.miscTotal());
+  filteredMaterials = computed(() => this.availableMaterials().find(g => g.category === this.activeMiscCategory())?.materials ?? []);
+
   allBrands = computed(() => {
     const seen = new Set<string>();
     return this.products().filter(p => {
@@ -171,6 +206,7 @@ export class OrderFormComponent implements OnInit {
   ngOnInit() {
     this.loadBusinessProfile();
     this.loadProducts();
+    this.loadMaterials();
   }
 
   toggleService(name: string) {
@@ -213,6 +249,52 @@ export class OrderFormComponent implements OnInit {
     }
   }
 
+  async loadMaterials() {
+    try {
+      const res = await axios.get(`${API_BASE}/public/order-form/materials`);
+      this.availableMaterials.set(res.data.items ?? []);
+    } catch {
+      // Silently fail — misc section still usable for custom items
+    }
+  }
+
+  toggleMiscSection() {
+    this.showMiscSection.set(!this.showMiscSection());
+  }
+
+  addMiscItem(material: { id: number; code: string; name: string; unit: string; unitPrice: number }) {
+    this.miscItems.update(items => [...items, {
+      materialId: material.id,
+      category: this.activeMiscCategory(),
+      itemName: material.name,
+      quantity: 1,
+      unit: material.unit,
+      unitPrice: material.unitPrice,
+      isInclusion: false,
+    }]);
+  }
+
+  addCustomMiscItem() {
+    const name = this.customItemName().trim();
+    if (!name) return;
+    this.miscItems.update(items => [...items, {
+      category: this.activeMiscCategory(),
+      itemName: name,
+      quantity: this.customItemQty(),
+      unit: this.customItemUnit(),
+      unitPrice: this.customItemPrice(),
+      isInclusion: false,
+    }]);
+    this.customItemName.set('');
+    this.customItemQty.set(1);
+    this.customItemUnit.set('pcs');
+    this.customItemPrice.set(0);
+  }
+
+  removeMiscItem(index: number) {
+    this.miscItems.update(items => items.filter((_, i) => i !== index));
+  }
+
   selectBrand(brand: string) {
     this.selectedBrandName.set(brand);
     this.brandSearch.set(brand);
@@ -230,6 +312,10 @@ export class OrderFormComponent implements OnInit {
   selectCapacity(cap: ProductCapacity) {
     this.selectedCapacity.set(cap);
     this.pendingQty.set(1);
+  }
+
+  getDisplayPrice(cap: ProductCapacity): number {
+    return cap.srp > 0 ? cap.srp : (cap.sellPrice || cap.unitPrice);
   }
 
   confirmAddToCart() {
@@ -390,6 +476,18 @@ export class OrderFormComponent implements OnInit {
           qty: i.qty, sellPrice: i.price, unitPrice: i.price,
           unitTypes: i.unitTypes,
         })) : [],
+        miscItems: this.isProductType() && this.miscItems().length > 0
+          ? this.miscItems().map(i => ({
+              category: i.category,
+              itemName: i.itemName,
+              quantity: i.quantity,
+              unit: i.unit,
+              unitPrice: i.unitPrice,
+              isInclusion: i.isInclusion,
+              materialId: i.materialId || undefined,
+              description: i.description || undefined,
+            }))
+          : undefined,
       };
 
       if (this.salesType() === 'service') {
@@ -434,6 +532,13 @@ export class OrderFormComponent implements OnInit {
     this.selectedProduct.set(null);
     this.selectedCapacity.set(null);
     this.pendingQty.set(1);
+    this.miscItems.set([]);
+    this.showMiscSection.set(false);
+    this.customItemMode.set(false);
+    this.customItemName.set('');
+    this.customItemQty.set(1);
+    this.customItemUnit.set('pcs');
+    this.customItemPrice.set(0);
     this.feedbackStep.set('idle');
     this.feedbackRating.set(0);
     this.feedbackHovered.set(0);
