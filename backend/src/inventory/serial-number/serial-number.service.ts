@@ -3,6 +3,7 @@ import { CreateSerialNumberDto } from './dto/create-serial-number.dto';
 import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { AuditLogService, AuditActorContext } from 'src/audit-log/audit-log.service';
+import { SerialEventLogService } from './serial-event-log.service';
 import { ScanSalesOrderDto } from './dto/scan-sales-order.dto';
 import {
   ScanSalesOrderBatchDto,
@@ -89,6 +90,7 @@ export class SerialNumberService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly auditLogService: AuditLogService,
+    private readonly serialEventLogService: SerialEventLogService,
   ) {}
 
   private toOptionalNumber(value: unknown): number | null {
@@ -1942,6 +1944,18 @@ export class SerialNumberService {
       return { success: false, message: 'Status column not found in tblserial_numbers' };
     }
 
+    // Query serials before update to capture previous status for event logging
+    const beforeResult = await this.databaseService.query<{ id: number; serialNumber: string; status: string | null }>(
+      `SELECT sn.id,
+              COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '') AS "serialNumber",
+              COALESCE(to_jsonb(sn)->>'status', null) AS status
+       FROM tblserial_numbers sn
+       WHERE LOWER(regexp_replace(BTRIM(COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '')), '\\s+', ' ', 'g')) = ANY(
+         SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($1::text[]) s
+       )`,
+      [normalized],
+    );
+
     const setClauses = [`"${serialStatusColumn}" = $1`];
     const params: unknown[] = [normalizedStatus];
 
@@ -1959,6 +1973,29 @@ export class SerialNumberService {
        )`,
       params,
     );
+
+    // Log events for each affected serial
+    if (beforeResult.rows.length > 0) {
+      for (const row of beforeResult.rows) {
+        let eventType: 'STATUS_CHANGED' | 'MARKED_DEFECTIVE' | 'RETURNED' = 'STATUS_CHANGED';
+        if (normalizedStatus === 'defective') {
+          eventType = 'MARKED_DEFECTIVE';
+        } else if (normalizedStatus === 'returned') {
+          eventType = 'RETURNED';
+        }
+
+        await this.serialEventLogService.logEvent({
+          serialId: row.id,
+          serialNumber: row.serialNumber,
+          eventType,
+          previousStatus: row.status,
+          newStatus: normalizedStatus,
+          performedBy: userId ?? null,
+          performedByUsername: null,
+          ipAddress: null,
+        });
+      }
+    }
 
     return {
       success: true,
@@ -2198,6 +2235,21 @@ export class SerialNumberService {
     if (updateResult.rowCount === 0) {
       return auditFailure('Unable to update serial number for sales order');
     }
+
+    await this.serialEventLogService.logEvent({
+      serialId: serial.id,
+      serialNumber: serial.serialNumber ?? serialNumber,
+      eventType: 'ASSIGNED_TO_SO',
+      previousStatus: serial.status,
+      newStatus: 'reserved',
+      previousSalesId: Number.isFinite(currentSalesId) && currentSalesId > 0 ? currentSalesId : null,
+      newSalesId: salesId,
+      previousBranchId: serial.branchId ? Number(serial.branchId) : null,
+      newBranchId: branchId,
+      performedBy: actor?.userId ?? null,
+      performedByUsername: actor?.username ?? null,
+      ipAddress: actor?.ipAddress ?? null,
+    });
 
     return auditSuccess({
       success: true,
@@ -2636,6 +2688,21 @@ export class SerialNumberService {
 
       const created = createdResult.rows[0];
 
+      await this.serialEventLogService.logEvent({
+        serialId: createdId,
+        serialNumber: serialNumber,
+        eventType: 'SCANNED_IN_PO',
+        previousStatus: null,
+        newStatus: 'scanned',
+        previousPurchaseId: null,
+        newPurchaseId: purchaseId,
+        previousBranchId: null,
+        newBranchId: branchId,
+        performedBy: actor?.userId ?? null,
+        performedByUsername: actor?.username ?? null,
+        ipAddress: actor?.ipAddress ?? null,
+      });
+
       return auditSuccess({
         success: true,
         message: 'Serial number created and scanned successfully',
@@ -2758,6 +2825,21 @@ export class SerialNumberService {
     if (updateResult.rowCount === 0) {
       return auditFailure('Unable to update serial number for purchase order');
     }
+
+    await this.serialEventLogService.logEvent({
+      serialId: serial.id,
+      serialNumber: serialNumber,
+      eventType: 'SCANNED_IN_PO',
+      previousStatus: serial.status,
+      newStatus: 'scanned',
+      previousPurchaseId: Number.isFinite(currentPurchaseId) && currentPurchaseId > 0 ? currentPurchaseId : null,
+      newPurchaseId: purchaseId,
+      previousBranchId: serial.branchId ? Number(serial.branchId) : null,
+      newBranchId: branchId,
+      performedBy: actor?.userId ?? null,
+      performedByUsername: actor?.username ?? null,
+      ipAddress: actor?.ipAddress ?? null,
+    });
 
     return auditSuccess({
       success: true,
@@ -2973,6 +3055,19 @@ export class SerialNumberService {
       };
     }
 
+    await this.serialEventLogService.logEvent({
+      serialId: existing.id,
+      serialNumber: serialNumber,
+      eventType: 'REMOVED_FROM_PO',
+      previousStatus: null,
+      newStatus: null,
+      previousPurchaseId: purchaseId,
+      newPurchaseId: null,
+      performedBy: null,
+      performedByUsername: null,
+      ipAddress: null,
+    });
+
     return {
       success: true,
       message: 'Serial number deleted successfully',
@@ -3093,6 +3188,19 @@ export class SerialNumberService {
         message: 'Unable to remove serial number from sales order',
       };
     }
+
+    await this.serialEventLogService.logEvent({
+      serialId: existing.id,
+      serialNumber: serialNumber,
+      eventType: 'REMOVED_FROM_SO',
+      previousStatus: existing.status,
+      newStatus: 'in-stock',
+      previousSalesId: salesId,
+      newSalesId: null,
+      performedBy: actor?.userId ?? null,
+      performedByUsername: actor?.username ?? null,
+      ipAddress: actor?.ipAddress ?? null,
+    });
 
     // Capture after state for audit logging
     const afterState = {
