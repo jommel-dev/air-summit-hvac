@@ -39,7 +39,7 @@ This document covers all changes implemented in Phase 2 of the HVAC Warehouse an
 
 **Analysis — Do we need a new table?**
 
-**YES — we need a new table: `tblorder_form_miscellaneous_items`**
+**YES — we need a new table: `tblso_miscellaneous_items`**
 
 **Reasoning:**
 - The existing `tblso_material_items` links materials to a sales order AFTER it's created, and uses `material_id` referencing `tblmaterial_items` (the ledger-based catalog)

@@ -315,7 +315,7 @@ export class OrderFormComponent implements OnInit {
   }
 
   getDisplayPrice(cap: ProductCapacity): number {
-    return cap.srp > 0 ? cap.srp : (cap.sellPrice || cap.unitPrice);
+    return cap.srp > 0 ? cap.srp : cap.sellPrice;
   }
 
   confirmAddToCart() {
@@ -332,7 +332,7 @@ export class OrderFormComponent implements OnInit {
       this.cart.update(items => [...items, {
         productId: product.id, capacityId: cap.id,
         productName: product.name, brandName: product.brandName,
-        capacity: cap.capacity, price: cap.sellPrice || cap.unitPrice, qty,
+        capacity: cap.capacity, price: this.getDisplayPrice(cap), qty,
         unitTypes: product.unitTypes?.length ? product.unitTypes : ['set'],
       }]);
     }
@@ -386,7 +386,7 @@ export class OrderFormComponent implements OnInit {
           productName: product.name,
           brandName: product.brandName,
           capacity: capacity.capacity,
-          price: capacity.sellPrice || capacity.unitPrice,
+          price: this.getDisplayPrice(capacity),
           qty: 1,
           unitTypes: product.unitTypes?.length ? product.unitTypes : ['set'],
         },
