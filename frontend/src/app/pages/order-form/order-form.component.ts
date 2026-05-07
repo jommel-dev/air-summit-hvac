@@ -56,11 +56,6 @@ interface MiscCartItem {
   isInclusion: boolean;
 }
 
-interface GroupedMaterials {
-  category: string;
-  materials: Array<{ id: number; code: string; name: string; unit: string; unitPrice: number }>;
-}
-
 const SALES_TYPES = [
   { value: 'sales', label: 'Order', icon: '🛒' },
   { value: 'service', label: 'Service', icon: '🔧' },
@@ -133,10 +128,8 @@ export class OrderFormComponent implements OnInit {
 
   // Miscellaneous items
   miscItems = signal<MiscCartItem[]>([]);
-  availableMaterials = signal<GroupedMaterials[]>([]);
-  activeMiscCategory = signal<string>('material');
   showMiscSection = signal<boolean>(false);
-  customItemMode = signal<boolean>(false);
+  customItemCategory = signal<string>('general');
 
   // Custom item form signals
   customItemName = signal<string>('');
@@ -176,7 +169,6 @@ export class OrderFormComponent implements OnInit {
 
   miscTotal = computed(() => this.miscItems().reduce((sum, i) => sum + i.quantity * i.unitPrice, 0));
   grandTotal = computed(() => this.cartTotal() + this.miscTotal());
-  filteredMaterials = computed(() => this.availableMaterials().find(g => g.category === this.activeMiscCategory())?.materials ?? []);
 
   allBrands = computed(() => {
     const seen = new Set<string>();
@@ -206,7 +198,6 @@ export class OrderFormComponent implements OnInit {
   ngOnInit() {
     this.loadBusinessProfile();
     this.loadProducts();
-    this.loadMaterials();
   }
 
   toggleService(name: string) {
@@ -249,36 +240,15 @@ export class OrderFormComponent implements OnInit {
     }
   }
 
-  async loadMaterials() {
-    try {
-      const res = await axios.get(`${API_BASE}/public/order-form/materials`);
-      this.availableMaterials.set(res.data.items ?? []);
-    } catch {
-      // Silently fail — misc section still usable for custom items
-    }
-  }
-
   toggleMiscSection() {
     this.showMiscSection.set(!this.showMiscSection());
-  }
-
-  addMiscItem(material: { id: number; code: string; name: string; unit: string; unitPrice: number }) {
-    this.miscItems.update(items => [...items, {
-      materialId: material.id,
-      category: this.activeMiscCategory(),
-      itemName: material.name,
-      quantity: 1,
-      unit: material.unit,
-      unitPrice: material.unitPrice,
-      isInclusion: false,
-    }]);
   }
 
   addCustomMiscItem() {
     const name = this.customItemName().trim();
     if (!name) return;
     this.miscItems.update(items => [...items, {
-      category: this.activeMiscCategory(),
+      category: this.customItemCategory(),
       itemName: name,
       quantity: this.customItemQty(),
       unit: this.customItemUnit(),
@@ -286,6 +256,7 @@ export class OrderFormComponent implements OnInit {
       isInclusion: false,
     }]);
     this.customItemName.set('');
+    this.customItemCategory.set('general');
     this.customItemQty.set(1);
     this.customItemUnit.set('pcs');
     this.customItemPrice.set(0);
@@ -534,7 +505,7 @@ export class OrderFormComponent implements OnInit {
     this.pendingQty.set(1);
     this.miscItems.set([]);
     this.showMiscSection.set(false);
-    this.customItemMode.set(false);
+    this.customItemCategory.set('general');
     this.customItemName.set('');
     this.customItemQty.set(1);
     this.customItemUnit.set('pcs');
