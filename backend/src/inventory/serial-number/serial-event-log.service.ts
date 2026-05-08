@@ -8,6 +8,7 @@ export type SerialEventType =
   | 'ASSIGNED_TO_SO'
   | 'REMOVED_FROM_SO'
   | 'TRANSFERRED'
+  | 'ASSIGNED_ORDER'
   | 'DELIVERED'
   | 'RETURNED'
   | 'MARKED_DEFECTIVE'

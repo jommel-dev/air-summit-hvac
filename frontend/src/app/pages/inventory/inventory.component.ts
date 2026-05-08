@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import {
   EntityEditFieldConfig,
@@ -274,7 +275,12 @@ export class InventoryComponent implements OnInit {
   constructor(
     private readonly salesOrderService: SalesOrderService,
     private readonly rbacService: RbacService,
+    private readonly router: Router,
   ) {}
+
+  goToSerialSearch(): void {
+    this.router.navigate(['/users/serial-global-search']);
+  }
 
   // Material creation modal state
   isMaterialModalOpen = false;

@@ -167,6 +167,16 @@ export const routes: Routes = [
         },
         title: 'Serial Number History',
       },
+      {
+        path: 'serial-global-search',
+        loadComponent: () => import('./pages/inventory/serial-global-search/serial-global-search.component').then(m => m.SerialGlobalSearchComponent),
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'inventory',
+          permission: 'canRead',
+        },
+        title: 'Serial Global Search',
+      },
     ]
   },
   // public feedback (no auth required)

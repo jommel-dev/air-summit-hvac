@@ -265,6 +265,7 @@ CREATE TABLE IF NOT EXISTS public.tblserial_numbers (
   "branchId" BIGINT NULL REFERENCES public.tblbranches(id) ON UPDATE CASCADE ON DELETE SET NULL,
   "vendorId" UUID NULL REFERENCES public.tblvendors(id) ON UPDATE CASCADE ON DELETE SET NULL,
   "purchaseId" INTEGER NULL REFERENCES public.tblpurchase_orders(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  "previousPurchaseId" INTEGER NULL,
   "salesId" BIGINT NULL REFERENCES public.tblsales_order(id) ON UPDATE CASCADE ON DELETE SET NULL,
   "productId" BIGINT NULL REFERENCES public.tblproducts(id) ON UPDATE CASCADE ON DELETE SET NULL,
   "capacityId" BIGINT NULL REFERENCES public.tblcapacity(id) ON UPDATE CASCADE ON DELETE SET NULL,
@@ -288,8 +289,16 @@ ALTER TABLE public.tblserial_numbers
   ADD CONSTRAINT tblserial_numbers_previousSalesId_fkey
   FOREIGN KEY ("previousSalesId") REFERENCES public.tblsales_order(id) ON UPDATE CASCADE ON DELETE SET NULL;
 
+ALTER TABLE public.tblserial_numbers
+  ADD CONSTRAINT tblserial_numbers_previousPurchaseId_fkey
+  FOREIGN KEY ("previousPurchaseId")
+  REFERENCES public.tblpurchase_orders(id)
+  ON UPDATE CASCADE
+  ON DELETE SET NULL;
+
 CREATE INDEX IF NOT EXISTS idx_tblserial_numbers_isDefective ON public.tblserial_numbers("isDefective") WHERE "isDefective" = true;
 CREATE INDEX IF NOT EXISTS idx_tblserial_numbers_isReturned ON public.tblserial_numbers("isReturned") WHERE "isReturned" = true;
+CREATE INDEX IF NOT EXISTS idx_tblserial_numbers_previousPurchaseId ON public.tblserial_numbers("previousPurchaseId") WHERE "previousPurchaseId" IS NOT NULL;
 
 -- ============================================================
 -- SECTION 8: PAYMENTS
