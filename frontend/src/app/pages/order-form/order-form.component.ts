@@ -447,7 +447,7 @@ export class OrderFormComponent implements OnInit {
           qty: i.qty, sellPrice: i.price, unitPrice: i.price,
           unitTypes: i.unitTypes,
         })) : [],
-        miscItems: this.isProductType() && this.miscItems().length > 0
+        miscItems: (this.isProductType() || this.salesType() === 'service') && this.miscItems().length > 0
           ? this.miscItems().map(i => ({
               category: i.category,
               itemName: i.itemName,
