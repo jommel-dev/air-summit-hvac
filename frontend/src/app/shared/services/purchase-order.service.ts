@@ -135,6 +135,16 @@ interface ScanPurchaseSerialBatchResponse {
   }>;
 }
 
+export interface CheckSerialsResponse {
+  results: Array<{
+    serialNumber: string;
+    exists: boolean;
+    currentPurchaseId: number | null;
+    currentPoNumber: string | null;
+    isSamePoAssignment: boolean;
+  }>;
+}
+
 export interface PurchaseListMeta {
   page: number;
   limit: number;
@@ -465,9 +475,19 @@ export class PurchaseOrderService {
       expectedCapacityId?: number;
       unitType?: string;
     }>;
+    trackPreviousPurchase?: boolean;
   }): Promise<ScanPurchaseSerialBatchResponse> {
     const response = await apiClient.post<ScanPurchaseSerialBatchResponse>(
       '/serial-number/scan-purchase-order/batch',
+      payload,
+    );
+
+    return response.data;
+  }
+
+  async checkSerials(payload: { serialNumbers: string[]; purchaseId: number }): Promise<CheckSerialsResponse> {
+    const response = await apiClient.post<CheckSerialsResponse>(
+      '/serial-number/check-serials',
       payload,
     );
 

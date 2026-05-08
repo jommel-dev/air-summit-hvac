@@ -1,3 +1,5 @@
+import { IsOptional, IsBoolean } from 'class-validator';
+
 export class ScanPurchaseOrderBatchItemDto {
   serialNumber!: string;
   purchaseId!: number;
@@ -9,4 +11,8 @@ export class ScanPurchaseOrderBatchItemDto {
 
 export class ScanPurchaseOrderBatchDto {
   items!: ScanPurchaseOrderBatchItemDto[];
+
+  @IsOptional()
+  @IsBoolean()
+  trackPreviousPurchase?: boolean;
 }

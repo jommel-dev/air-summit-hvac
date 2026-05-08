@@ -40,6 +40,31 @@ type ManualSerialDialogState = {
   unitLabel: string;
 };
 
+type CsvImportStep = 'upload' | 'summary' | 'importing';
+
+interface CsvImportRow {
+  serialNumber: string;
+  unitType: string;
+  status: 'valid' | 'invalid' | 'duplicate' | 'exists-current-po' | 'reassign';
+  reason?: string;
+  currentPoNumber?: string;
+  currentPurchaseId?: number;
+}
+
+interface CsvImportState {
+  step: CsvImportStep;
+  file: File | null;
+  rows: CsvImportRow[];
+  totalCount: number;
+  validCount: number;
+  invalidCount: number;
+  duplicateCount: number;
+  existsCurrentPoCount: number;
+  reassignCount: number;
+  parseError: string | null;
+  importError: string | null;
+}
+
 interface PurchaseProductFormItem {
   productId: string;
   capacityId: string;
@@ -137,8 +162,21 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   createError = '';
   createSuccess = '';
   isExportingSerials = false;
-  isImportingSerials = false;
   poGuardDialogMode: PurchaseOrderGuardDialogMode | null = null;
+  csvImportDialogMode: boolean = false;
+  csvImportState: CsvImportState = {
+    step: 'upload',
+    file: null,
+    rows: [],
+    totalCount: 0,
+    validCount: 0,
+    invalidCount: 0,
+    duplicateCount: 0,
+    existsCurrentPoCount: 0,
+    reassignCount: 0,
+    parseError: null,
+    importError: null,
+  };
   poIdleCountdownSeconds = 0;
   pendingSerialRemoval: PendingSerialRemoval | null = null;
   manualSerialDialogState: ManualSerialDialogState | null = null;
@@ -313,14 +351,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   get isFormDrawerBusy(): boolean {
-    return this.isCreating || this.isImportingSerials;
+    return this.isCreating;
   }
 
   get formDrawerBusyMessage(): string {
-    if (this.isImportingSerials) {
-      return 'Uploading serial numbers from CSV...';
-    }
-
     if (this.isCreating) {
       return this.drawerMode === 'create'
         ? 'Creating purchase order...'
@@ -1865,27 +1899,14 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.downloadBlob(new Blob([csvLines.join('\r\n')], { type: 'text/csv;charset=utf-8;' }), fileName);
   }
 
-  openSerialCsvImportPicker(): void {
-    if (!this.canImportPurchaseCsv()) {
-      this.createError = 'You do not have permission to import CSV serial numbers.';
-      return;
-    }
-
-    const input = document.getElementById('purchaseSerialCsvInput') as HTMLInputElement | null;
-    if (!input) {
-      this.createError = 'CSV upload input is unavailable.';
-      return;
-    }
-
-    input.click();
+  downloadCsvTemplate(): void {
+    const bom = '\uFEFF';
+    const header = 'serialNumber,unitType\n';
+    const blob = new Blob([bom + header], { type: 'text/csv;charset=utf-8;' });
+    this.downloadBlob(blob, 'serial_import_template.csv');
   }
 
-  async onSerialCsvSelected(event: Event): Promise<void> {
-    if (!this.canImportPurchaseCsv()) {
-      this.createError = 'You do not have permission to import CSV serial numbers.';
-      return;
-    }
-
+  onCsvFileSelected(event: Event): void {
     const input = event.target as HTMLInputElement | null;
     const file = input?.files?.[0] ?? null;
 
@@ -1893,14 +1914,364 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
-    try {
-      await this.importSerialsFromCsv(file);
-    } finally {
+    // Reset previous error
+    this.csvImportState.parseError = null;
+
+    // Validate file size (reject > 10MB)
+    const maxSizeBytes = 10 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      this.csvImportState.parseError = 'File too large. Maximum file size is 10MB.';
+      this.csvImportState.file = null;
       if (input) {
         input.value = '';
       }
+      return;
+    }
+
+    this.csvImportState.file = file;
+
+    // Reset the input so the same file can be re-selected if needed
+    if (input) {
+      input.value = '';
+    }
+
+    // Automatically trigger parsing after file selection
+    this.parseCsvForImport();
+  }
+
+  async parseCsvForImport(): Promise<void> {
+    const file = this.csvImportState.file;
+    if (!file) {
+      this.csvImportState.parseError = 'No file selected.';
+      return;
+    }
+
+    // Reset state before parsing
+    this.csvImportState.parseError = null;
+    this.csvImportState.rows = [];
+    this.csvImportState.totalCount = 0;
+    this.csvImportState.validCount = 0;
+    this.csvImportState.invalidCount = 0;
+    this.csvImportState.duplicateCount = 0;
+    this.csvImportState.existsCurrentPoCount = 0;
+    this.csvImportState.reassignCount = 0;
+
+    try {
+      const csvContent = await file.text();
+
+      // Strip BOM and split into non-empty lines
+      const lines = String(csvContent ?? '')
+        .replace(/^\uFEFF/, '')
+        .split(/\r?\n/)
+        .filter((line) => line.trim().length > 0);
+
+      if (lines.length === 0) {
+        this.csvImportState.parseError = 'CSV file is empty.';
+        return;
+      }
+
+      // Validate required headers
+      const header = this.parseCsvLine(lines[0]).map((value) => value.trim().toLowerCase());
+      const serialIndex = header.findIndex((value) => value === 'serialnumber' || value === 'serial_number');
+      const unitTypeIndex = header.findIndex((value) => value === 'unittype' || value === 'unit_type');
+
+      if (serialIndex === -1) {
+        this.csvImportState.parseError = 'Missing required header: serialNumber';
+        return;
+      }
+
+      if (unitTypeIndex === -1) {
+        this.csvImportState.parseError = 'Missing required header: unitType';
+        return;
+      }
+
+      // Validate at least one data row exists
+      if (lines.length < 2) {
+        this.csvImportState.parseError = 'CSV file contains no data rows.';
+        return;
+      }
+
+      // Parse data rows, normalize, and build CsvImportRow entries
+      const rows: CsvImportRow[] = lines.slice(1).map((line) => {
+        const columns = this.parseCsvLine(line);
+        const rawSerial = String(columns[serialIndex] ?? '').trim();
+        const rawUnitType = String(columns[unitTypeIndex] ?? '').trim();
+
+        const serialNumber = this.normalizeSerial(rawSerial);
+        const unitType = this.normalizeUnitTypeLabel(rawUnitType);
+
+        return {
+          serialNumber,
+          unitType,
+          status: 'valid' as const,
+        };
+      });
+
+      // Classify rows: invalid, duplicate, or valid
+      const seenSerials = new Set<string>();
+
+      for (const row of rows) {
+        // Check for invalid rows (missing required fields)
+        if (!row.serialNumber) {
+          row.status = 'invalid';
+          row.reason = 'Missing serial number';
+          continue;
+        }
+        if (!row.unitType) {
+          row.status = 'invalid';
+          row.reason = 'Missing unit type';
+          continue;
+        }
+
+        // Check for duplicates among non-invalid rows
+        const normalizedKey = row.serialNumber.toLowerCase();
+        if (seenSerials.has(normalizedKey)) {
+          row.status = 'duplicate';
+          row.reason = 'Duplicate serial number';
+          continue;
+        }
+
+        seenSerials.add(normalizedKey);
+        row.status = 'valid';
+      }
+
+      // Compute initial summary counts
+      const totalCount = rows.length;
+      const invalidCount = rows.filter((r) => r.status === 'invalid').length;
+      const duplicateCount = rows.filter((r) => r.status === 'duplicate').length;
+
+      this.csvImportState.rows = rows;
+      this.csvImportState.totalCount = totalCount;
+      this.csvImportState.invalidCount = invalidCount;
+      this.csvImportState.duplicateCount = duplicateCount;
+
+      // Collect valid rows for ownership check
+      const validRows = rows.filter((r) => r.status === 'valid');
+
+      if (validRows.length > 0 && this.editingPurchaseId) {
+        try {
+          const checkResponse = await this.purchaseOrderService.checkSerials({
+            serialNumbers: validRows.map((r) => r.serialNumber),
+            purchaseId: this.editingPurchaseId,
+          });
+
+          // Map check-serials response back to rows
+          const resultMap = new Map(
+            checkResponse.results.map((r) => [r.serialNumber.toLowerCase(), r]),
+          );
+
+          for (const row of validRows) {
+            const result = resultMap.get(row.serialNumber.toLowerCase());
+            if (!result) {
+              // No result from backend — keep as valid
+              continue;
+            }
+
+            if (result.exists) {
+              row.status = 'exists-current-po';
+              row.reason = result.isSamePoAssignment
+                ? 'Already assigned to this PO'
+                : `Already assigned to ${result.currentPoNumber ?? 'another PO'}`;
+              row.currentPoNumber = result.currentPoNumber ?? undefined;
+              row.currentPurchaseId = result.currentPurchaseId ?? undefined;
+            }
+            // If exists === false, keep status as 'valid' (will be imported)
+          }
+        } catch (networkError: unknown) {
+          const errMsg = networkError instanceof Error ? networkError.message : 'Network error checking serial ownership.';
+          this.csvImportState.parseError = `Failed to verify serial ownership: ${errMsg}. Please try again.`;
+          return;
+        }
+      }
+
+      // Recompute counts after ownership classification
+      const finalValidCount = rows.filter((r) => r.status === 'valid').length;
+      const existsCurrentPoCount = rows.filter((r) => r.status === 'exists-current-po').length;
+      const reassignCount = rows.filter((r) => r.status === 'reassign').length;
+
+      this.csvImportState.validCount = finalValidCount;
+      this.csvImportState.existsCurrentPoCount = existsCurrentPoCount;
+      this.csvImportState.reassignCount = reassignCount;
+
+      // Transition to summary step
+      this.csvImportState.step = 'summary';
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to parse CSV file.';
+      this.csvImportState.parseError = message;
     }
   }
+
+  async confirmCsvImport(): Promise<void> {
+    if (this.csvImportState.validCount === 0) {
+      return;
+    }
+
+    this.csvImportState.step = 'importing';
+    this.csvImportState.importError = null;
+
+    // Collect rows that are importable (only valid — non-existing serials)
+    const importableRows = this.csvImportState.rows.filter(
+      (row) => row.status === 'valid',
+    );
+
+    if (importableRows.length === 0) {
+      this.csvImportState.importError = 'No importable rows found.';
+      this.csvImportState.step = 'summary';
+      return;
+    }
+
+    // Build a lookup from normalized unit type label -> { productId, capacityId }
+    const unitTypeProductMap = new Map<string, { productId: number; capacityId: number }>();
+    for (const item of this.createForm.productItems) {
+      const productId = Number(item.productId) || 0;
+      const capacityId = Number(item.capacityId) || 0;
+      if (!productId) continue;
+      for (const unitType of item.unitTypes) {
+        const normalizedLabel = this.normalizeUnitTypeLabel(unitType.label);
+        if (normalizedLabel && !unitTypeProductMap.has(normalizedLabel)) {
+          unitTypeProductMap.set(normalizedLabel, { productId, capacityId });
+        }
+      }
+    }
+
+    try {
+      const response = await this.purchaseOrderService.scanPurchaseSerialBatch({
+        items: importableRows.map((row) => {
+          const normalizedUnitType = this.normalizeUnitTypeLabel(row.unitType);
+          const productInfo = unitTypeProductMap.get(normalizedUnitType);
+          return {
+            serialNumber: row.serialNumber,
+            purchaseId: this.editingPurchaseId as number,
+            expectedProductId: productInfo?.productId,
+            expectedCapacityId: productInfo?.capacityId,
+            unitType: row.unitType,
+          };
+        }),
+      });
+
+      const results = Array.isArray(response.items) ? response.items : [];
+      let successCount = 0;
+      let failureCount = 0;
+      const failedSerials: Array<{ serialNumber: string; reason: string }> = [];
+
+      results.forEach((result, index) => {
+        if (result?.success) {
+          successCount += 1;
+        } else {
+          failureCount += 1;
+          failedSerials.push({
+            serialNumber: importableRows[index]?.serialNumber ?? 'Unknown',
+            reason: result?.message ?? 'Failed to import serial number',
+          });
+        }
+      });
+
+      if (failureCount === 0) {
+        // Full success — close modal, show success message, refresh serial list
+        this.csvImportDialogMode = false;
+        this.createSuccess = `${successCount} serial number${successCount > 1 ? 's' : ''} imported successfully.`;
+        this.resetCsvImportState();
+
+        // Refresh the PO detail to update the serial list
+        if (this.editingPurchaseId) {
+          const detail = await this.purchaseOrderService.getPurchaseById(this.editingPurchaseId, {
+            includeInstalled: this.activeTab === 'master-data',
+            preferPoLinkedSerials: this.activeTab === 'master-data',
+          });
+          if (detail) {
+            this.applySerialDataFromDetail(detail);
+          }
+        }
+      } else {
+        // Partial or full failure — show error in modal, stay on importing step with error
+        const errorMsg = failureCount === importableRows.length
+          ? `All ${failureCount} serial number${failureCount > 1 ? 's' : ''} failed to import.`
+          : `${successCount} imported successfully, ${failureCount} failed.`;
+        this.csvImportState.importError = errorMsg;
+        this.csvImportState.step = 'summary';
+      }
+    } catch (error: unknown) {
+      let errorMessage = 'Failed to import CSV serial numbers.';
+      if (axios.isAxiosError(error)) {
+        errorMessage =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to import CSV serial numbers.';
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      this.csvImportState.importError = errorMessage;
+      this.csvImportState.step = 'summary';
+    }
+  }
+
+  private resetCsvImportState(): void {
+    this.csvImportState = {
+      step: 'upload',
+      file: null,
+      rows: [],
+      totalCount: 0,
+      validCount: 0,
+      invalidCount: 0,
+      duplicateCount: 0,
+      existsCurrentPoCount: 0,
+      reassignCount: 0,
+      parseError: null,
+      importError: null,
+    };
+  }
+
+  private applySerialDataFromDetail(detail: PurchaseOrderDetailItem): void {
+    // Re-apply serial-related data from the refreshed PO detail
+    this.serialStatusByNumber =
+      detail.serialStatuses && typeof detail.serialStatuses === 'object'
+        ? Object.fromEntries(
+            Object.entries(detail.serialStatuses).map(([serialNumber, status]) => [
+              this.normalizeSerial(serialNumber).toLowerCase(),
+              String(status ?? '').trim().toLowerCase() || 'in_stock',
+            ]),
+          )
+        : {};
+
+    this.poLinkedSerialNumbersByUnitType =
+      detail.poLinkedSerialNumbers && typeof detail.poLinkedSerialNumbers === 'object'
+        ? this.normalizeSerialNumbersByUnitType(detail.poLinkedSerialNumbers)
+        : {};
+
+    this.unresolvedLinkedSerialNumbersByUnitType =
+      detail.unresolvedLinkedSerialNumbers && typeof detail.unresolvedLinkedSerialNumbers === 'object'
+        ? this.normalizeSerialNumbersByUnitType(detail.unresolvedLinkedSerialNumbers)
+        : {};
+
+    // Re-apply product items serial data
+    if (detail.productItems.length > 0) {
+      detail.productItems.forEach((product, index) => {
+        const formItem = this.createForm.productItems[index];
+        if (!formItem) {
+          return;
+        }
+
+        const serialNumbers = this.normalizeSerialNumbersByUnitType(product.serialNumbers);
+        for (const unitEntry of formItem.unitTypes) {
+          const label = this.normalizeUnitTypeLabel(unitEntry.label);
+          const serials = Array.isArray(serialNumbers[label]) ? serialNumbers[label] : [];
+          unitEntry.serials = serials;
+          unitEntry.serialInput = serials.join('\n');
+        }
+      });
+    }
+  }
+
+  openSerialCsvImportPicker(): void {
+    if (!this.canImportPurchaseCsv()) {
+      this.createError = 'You do not have permission to import CSV serial numbers.';
+      return;
+    }
+
+    this.resetCsvImportState();
+    this.csvImportDialogMode = true;
+  }
+
+
 
   canCreateOrUpdatePurchase(): boolean {
     return this.rbacService.canAccess('purchase_order', 'canUpdate') ||
@@ -2286,131 +2657,6 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private escapeCsvValue(value: unknown): string {
     const normalized = String(value ?? '').replace(/"/g, '""');
     return `"${normalized}"`;
-  }
-
-  private async importSerialsFromCsv(file: File): Promise<void> {
-    if (!this.canImportPurchaseCsv()) {
-      this.createError = 'You do not have permission to import CSV serial numbers.';
-      return;
-    }
-
-    if (this.drawerMode !== 'edit' || !this.editingPurchaseId) {
-      this.createError = 'CSV serial import is only available when editing a purchase order.';
-      return;
-    }
-
-    const activeItem = this.getActiveProductItem();
-    if (!activeItem) {
-      this.createError = 'Select a product before importing serial numbers.';
-      return;
-    }
-
-    const productId = Number(activeItem.productId);
-    const capacityId = Number(activeItem.capacityId);
-    if (!Number.isFinite(productId) || !Number.isFinite(capacityId)) {
-      this.createError = 'Select product and capacity before importing serial numbers.';
-      return;
-    }
-
-    if (this.hasPendingSerialScanWork()) {
-      const flushed = await this.flushAllQueuedSerialScans();
-      if (!flushed) {
-        this.createError = 'Pending serial scans must finish saving before CSV import.';
-        return;
-      }
-    }
-
-    this.isImportingSerials = true;
-    this.createError = '';
-    this.createSuccess = '';
-
-    try {
-      const csvContent = await file.text();
-      const rows = this.parseSerialCsvRows(csvContent);
-      if (rows.length === 0) {
-        this.createError = 'CSV file has no serial rows to import.';
-        return;
-      }
-
-      const normalizedRows = rows.map((row) => ({
-        serialNumber: this.normalizeSerial(row.serialNumber),
-        unitType: this.normalizeUnitTypeLabel(row.unitType),
-      }));
-
-      const validRows = normalizedRows.filter((row) => row.serialNumber && row.unitType);
-      if (validRows.length === 0) {
-        this.createError = 'CSV file must contain serialNumber and unitType values.';
-        return;
-      }
-
-      const uniqueRows: Array<{ serialNumber: string; unitType: string }> = [];
-      const seen = new Set<string>();
-      for (const row of validRows) {
-        const key = `${row.unitType}::${row.serialNumber.toLowerCase()}`;
-        if (seen.has(key)) {
-          continue;
-        }
-
-        seen.add(key);
-        uniqueRows.push(row);
-      }
-
-      const response = await this.purchaseOrderService.scanPurchaseSerialBatch({
-        items: uniqueRows.map((row) => ({
-          serialNumber: row.serialNumber,
-          purchaseId: this.editingPurchaseId as number,
-          expectedProductId: productId,
-          expectedCapacityId: capacityId,
-          unitType: row.unitType,
-        })),
-      });
-
-      const results = Array.isArray(response.items) ? response.items : [];
-      let successCount = 0;
-      let failureCount = 0;
-
-      uniqueRows.forEach((row, index) => {
-        const result = results[index];
-        const unitEntry = this.ensureUnitEntryForProduct(this.activeProductTabIndex, row.unitType);
-        if (!unitEntry) {
-          failureCount += 1;
-          return;
-        }
-
-        if (!result?.success) {
-          failureCount += 1;
-          unitEntry.scanError = result?.message ?? 'Failed to import serial number';
-          unitEntry.scanSuccess = '';
-          return;
-        }
-
-        const savedSerial = this.normalizeSerial(result.item?.serialNumber ?? row.serialNumber);
-        this.appendLocalSerial(unitEntry, savedSerial);
-        unitEntry.scanError = '';
-        unitEntry.scanSuccess = result.message ?? 'Serial number imported successfully';
-        successCount += 1;
-      });
-
-      if (successCount > 0) {
-        this.createSuccess = `${successCount} serial number${successCount > 1 ? 's' : ''} imported successfully.`;
-      }
-
-      if (failureCount > 0) {
-        this.openErrorModal('Import Failed', `${failureCount} serial number${failureCount > 1 ? 's' : ''} failed to import.`);
-      }
-    } catch (error: unknown) {
-      let errorMessage = 'Failed to import CSV serial numbers.';
-      if (axios.isAxiosError(error)) {
-        errorMessage =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Failed to import CSV serial numbers.';
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
-      }
-      this.openErrorModal('Import Error', errorMessage);
-    } finally {
-      this.isImportingSerials = false;
-    }
   }
 
   private parseSerialCsvRows(csvContent: string): Array<{ serialNumber: string; unitType: string }> {

@@ -21,9 +21,13 @@ import { ScanPurchaseOrderBatchDto } from './dto/scan-purchase-order-batch.dto';
 import { RemovePurchaseOrderSerialDto } from './dto/remove-purchase-order-serial.dto';
 import { RemoveSalesOrderSerialDto } from './dto/remove-sales-order-serial.dto';
 import { AdjustPurchaseUnitTypesDto } from './dto/adjust-purchase-unit-types.dto';
+import { CheckSerialsDto } from './dto/check-serials.dto';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { AuditActorContext } from 'src/audit-log/audit-log.service';
 import { resolveBranchId } from 'src/common/utils/resolve-branch-id';
+import { GlobalSearchResponse, BulkTransferResponse, BulkAssignOrderResponse } from './interfaces/global-search.interfaces';
+import { BulkTransferDto } from './dto/bulk-transfer.dto';
+import { BulkAssignOrderDto } from './dto/bulk-assign-order.dto';
 
 @Controller('serial-number')
 @UseGuards(JwtAuthGuard)
@@ -171,6 +175,11 @@ export class SerialNumberController {
     return this.serialNumberService.adjustPurchaseUnitTypes(dto);
   }
 
+  @Post('check-serials')
+  checkSerials(@Body() dto: CheckSerialsDto) {
+    return this.serialNumberService.checkSerials(dto);
+  }
+
   @Post()
   create(@Body() createSerialNumberDto: CreateSerialNumberDto) {
     return this.serialNumberService.create(createSerialNumberDto);
@@ -230,6 +239,55 @@ export class SerialNumberController {
       productIdInput: productId,
       capacityIdInput: capacityId,
       branchId,
+    });
+  }
+
+  @Get('global-search')
+  async globalSearch(
+    @Query('search') search: string,
+    @Query('page') page: string,
+    @Query('pageSize') pageSize: string,
+  ): Promise<GlobalSearchResponse> {
+    const pageNum = parseInt(page, 10) || 1;
+    const pageSizeNum = parseInt(pageSize, 10) || 20;
+    return this.serialNumberService.globalSearch({
+      search: search ?? '',
+      page: pageNum,
+      pageSize: pageSizeNum,
+    });
+  }
+
+  @Post('bulk-transfer')
+  async bulkTransfer(
+    @Body() body: BulkTransferDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ): Promise<BulkTransferResponse> {
+    const actor = this.resolveAuditActor(request);
+    return this.serialNumberService.bulkTransfer({
+      serialIds: body.serialIds,
+      targetProductId: body.targetProductId,
+      targetCapacityId: body.targetCapacityId,
+      reason: body.reason,
+      performedBy: actor.userId ?? null,
+      performedByUsername: actor.username ?? null,
+      ipAddress: actor.ipAddress ?? null,
+    });
+  }
+
+  @Post('bulk-assign-order')
+  async bulkAssignOrder(
+    @Body() body: BulkAssignOrderDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ): Promise<BulkAssignOrderResponse> {
+    const actor = this.resolveAuditActor(request);
+    return this.serialNumberService.bulkAssignOrder({
+      serialIds: body.serialIds,
+      purchaseId: body.purchaseId,
+      salesId: body.salesId,
+      reason: body.reason,
+      performedBy: actor.userId ?? null,
+      performedByUsername: actor.username ?? null,
+      ipAddress: actor.ipAddress ?? null,
     });
   }
 

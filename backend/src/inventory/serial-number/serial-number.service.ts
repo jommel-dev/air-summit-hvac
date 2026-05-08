@@ -1,4 +1,4 @@
-﻿import { Injectable } from '@nestjs/common';
+﻿import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { CreateSerialNumberDto } from './dto/create-serial-number.dto';
 import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { DatabaseService } from 'src/database/database.service';
@@ -16,6 +16,13 @@ import {
 import { RemovePurchaseOrderSerialDto } from './dto/remove-purchase-order-serial.dto';
 import { RemoveSalesOrderSerialDto } from './dto/remove-sales-order-serial.dto';
 import { AdjustPurchaseUnitTypesDto } from './dto/adjust-purchase-unit-types.dto';
+import { CheckSerialsDto } from './dto/check-serials.dto';
+import {
+  GlobalSearchResult,
+  GlobalSearchResponse,
+  BulkTransferResponse,
+  BulkAssignOrderResponse,
+} from './interfaces/global-search.interfaces';
 
 type SerialScanRow = {
   id: number;
@@ -2357,7 +2364,7 @@ export class SerialNumberService {
     };
   }
 
-  async scanPurchaseOrder(dto: ScanPurchaseOrderDto, actor?: AuditActorContext, branchIdInput?: number) {
+  async scanPurchaseOrder(dto: ScanPurchaseOrderDto, actor?: AuditActorContext, branchIdInput?: number, trackPreviousPurchase?: boolean) {
     const serialNumber = this.normalizeSerialNumber(dto.serialNumber);
     const purchaseId = Number(dto.purchaseId);
     const requestBranchId =
@@ -2494,6 +2501,10 @@ export class SerialNumberService {
       'created_by',
       'createdBy',
       'createdby',
+    ]);
+    const serialPreviousPurchaseIdColumn = this.pickColumn(serialColumns, [
+      'previousPurchaseId',
+      'previous_purchase_id',
     ]);
 
     if (!serialNumberColumn) {
@@ -2650,7 +2661,7 @@ export class SerialNumberService {
       }
 
       if (!createdId) {
-        return this.scanPurchaseOrder(dto, actor, branchId ?? undefined);
+        return this.scanPurchaseOrder(dto, actor, branchId ?? undefined, trackPreviousPurchase);
       }
 
       const createdResult = await this.databaseService.query<
@@ -2768,12 +2779,14 @@ export class SerialNumberService {
       currentPurchaseId > 0 &&
       currentPurchaseId !== purchaseId
     ) {
-      const purchaseReference = await this.getPurchaseOrderReference(currentPurchaseId);
-      return auditFailure(
-        purchaseReference
-          ? `Serial number is already linked to ${purchaseReference}`
-          : `Serial number is already linked to purchase order #${currentPurchaseId}`,
-      );
+      if (!trackPreviousPurchase) {
+        const purchaseReference = await this.getPurchaseOrderReference(currentPurchaseId);
+        return auditFailure(
+          purchaseReference
+            ? `Serial number is already linked to ${purchaseReference}`
+            : `Serial number is already linked to purchase order #${currentPurchaseId}`,
+        );
+      }
     }
 
     if (['sold', 'released', 'out', 'outbound'].includes(normalizedStatus)) {
@@ -2814,6 +2827,16 @@ export class SerialNumberService {
     }
     if (serialCreatedByColumn) {
       updateRecord[serialCreatedByColumn] = userId ?? null;
+    }
+
+    if (
+      trackPreviousPurchase &&
+      serialPreviousPurchaseIdColumn &&
+      Number.isFinite(currentPurchaseId) &&
+      currentPurchaseId > 0 &&
+      currentPurchaseId !== purchaseId
+    ) {
+      updateRecord[serialPreviousPurchaseIdColumn] = currentPurchaseId;
     }
 
     const updateResult = await this.runUpdateById(
@@ -2886,7 +2909,7 @@ export class SerialNumberService {
       };
 
       try {
-        const result = await this.scanPurchaseOrder(payload, actor, branchIdInput);
+        const result = await this.scanPurchaseOrder(payload, actor, branchIdInput, dto.trackPreviousPurchase);
         results.push({
           serialNumber: this.normalizeSerialNumber(entry.serialNumber),
           success: Boolean(result.success),
@@ -3335,9 +3358,420 @@ export class SerialNumberService {
     };
   }
 
+  async globalSearch(params: {
+    search: string;
+    page: number;
+    pageSize: number;
+  }): Promise<GlobalSearchResponse> {
+    const { search, page, pageSize } = params;
+    const offset = (page - 1) * pageSize;
+    const searchPattern = `%${search}%`;
+
+    const countResult = await this.databaseService.query<{ total: string }>(
+      `SELECT COUNT(*) AS total
+       FROM tblserial_numbers sn
+       WHERE sn."serialNumber" ILIKE $1`,
+      [searchPattern],
+    );
+
+    const total = parseInt(countResult.rows[0]?.total ?? '0', 10);
+
+    const itemsResult = await this.databaseService.query<GlobalSearchResult>(
+      `SELECT
+         sn.id,
+         sn."serialNumber",
+         sn.status,
+         sn."unitType",
+         b."brandName",
+         p."productName",
+         c.capacity,
+         br."branchName",
+         po.po_number AS "poNumber",
+         so.so_number AS "soNumber",
+         cust.name AS "customerName",
+         COALESCE(sn."isDefective", false) AS "isDefective",
+         COALESCE(sn."isReturned", false) AS "isReturned",
+         sn.created_at AS "createdAt"
+       FROM tblserial_numbers sn
+       LEFT JOIN tblproducts p ON p.id = sn."productId"
+       LEFT JOIN tblbrands b ON b.id = p."brandId"
+       LEFT JOIN tblcapacity c ON c.id = sn."capacityId"
+       LEFT JOIN tblbranches br ON br.id = sn."branchId"
+       LEFT JOIN tblpurchase_orders po ON po.id = sn."purchaseId"
+       LEFT JOIN tblsales_order so ON so.id = sn."salesId"
+       LEFT JOIN tblcustomer cust ON cust.id = sn."customerId"
+       WHERE sn."serialNumber" ILIKE $1
+       ORDER BY sn.created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [searchPattern, pageSize, offset],
+    );
+
+    return {
+      success: true,
+      items: itemsResult.rows,
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async bulkTransfer(params: {
+    serialIds: number[];
+    targetProductId: number;
+    targetCapacityId: number;
+    reason?: string;
+    performedBy: number | null;
+    performedByUsername: string | null;
+    ipAddress: string | null;
+  }): Promise<BulkTransferResponse> {
+    const {
+      serialIds,
+      targetProductId,
+      targetCapacityId,
+      reason,
+      performedBy,
+      performedByUsername,
+      ipAddress,
+    } = params;
+
+    // Validate serialIds is non-empty
+    if (!serialIds || serialIds.length === 0) {
+      throw new HttpException(
+        { success: false, message: 'serialIds must not be empty' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Validate target product exists
+    const productResult = await this.databaseService.query<{ id: number }>(
+      `SELECT id FROM tblproducts WHERE id = $1`,
+      [targetProductId],
+    );
+
+    if (productResult.rowCount === 0) {
+      throw new HttpException(
+        { success: false, message: 'Target product does not exist' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Validate target capacity exists and belongs to the target product
+    const capacityResult = await this.databaseService.query<{ id: number }>(
+      `SELECT id FROM tblcapacity WHERE id = $1 AND "prodId" = $2`,
+      [targetCapacityId, targetProductId],
+    );
+
+    if (capacityResult.rowCount === 0) {
+      throw new HttpException(
+        { success: false, message: 'Target capacity does not exist or does not belong to the selected product' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const transferReason = reason || 'Bulk transfer - serial misplacement correction';
+
+    // Execute transfer within a transaction for atomicity
+    return await this.databaseService.withTransaction(async (client) => {
+      // Get current state of all serials before update
+      const currentStateResult = await client.query<{
+        id: number;
+        serialNumber: string;
+        productId: number | null;
+        capacityId: number | null;
+      }>(
+        `SELECT id, "serialNumber", "productId", "capacityId"
+         FROM tblserial_numbers
+         WHERE id = ANY($1::bigint[])`,
+        [serialIds],
+      );
+
+      const currentSerials = currentStateResult.rows;
+
+      // Update all serials' productId and capacityId
+      await client.query(
+        `UPDATE tblserial_numbers
+         SET "productId" = $1, "capacityId" = $2
+         WHERE id = ANY($3::bigint[])`,
+        [targetProductId, targetCapacityId, serialIds],
+      );
+
+      // Log TRANSFERRED event for each serial
+      for (const serial of currentSerials) {
+        await this.serialEventLogService.logEvent(
+          {
+            serialId: serial.id,
+            serialNumber: serial.serialNumber,
+            eventType: 'TRANSFERRED',
+            performedBy,
+            performedByUsername,
+            ipAddress,
+            reason: transferReason,
+            metadata: {
+              previousProductId: serial.productId,
+              previousCapacityId: serial.capacityId,
+              newProductId: targetProductId,
+              newCapacityId: targetCapacityId,
+            },
+          },
+          client,
+        );
+      }
+
+      return {
+        success: true,
+        message: `Successfully transferred ${currentSerials.length} serial number(s) to the target product and capacity.`,
+        transferredCount: currentSerials.length,
+      };
+    });
+  }
+
+  async bulkAssignOrder(params: {
+    serialIds: number[];
+    purchaseId?: number | null;
+    salesId?: number | null;
+    reason?: string;
+    performedBy: number | null;
+    performedByUsername: string | null;
+    ipAddress: string | null;
+  }): Promise<BulkAssignOrderResponse> {
+    const {
+      serialIds,
+      purchaseId,
+      salesId,
+      reason,
+      performedBy,
+      performedByUsername,
+      ipAddress,
+    } = params;
+
+    // Validate serialIds is non-empty
+    if (!serialIds || serialIds.length === 0) {
+      throw new HttpException(
+        { success: false, message: 'serialIds must not be empty' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // At least one of purchaseId or salesId must be provided
+    if (!purchaseId && !salesId) {
+      throw new HttpException(
+        { success: false, message: 'At least one of purchaseId or salesId must be provided' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Validate purchase order exists if provided
+    if (purchaseId) {
+      const poResult = await this.databaseService.query<{ id: number }>(
+        `SELECT id FROM tblpurchase_orders WHERE id = $1`,
+        [purchaseId],
+      );
+      if (poResult.rowCount === 0) {
+        throw new HttpException(
+          { success: false, message: 'Target purchase order does not exist' },
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    // Validate sales order exists if provided
+    if (salesId) {
+      const soResult = await this.databaseService.query<{ id: number }>(
+        `SELECT id FROM tblsales_order WHERE id = $1`,
+        [salesId],
+      );
+      if (soResult.rowCount === 0) {
+        throw new HttpException(
+          { success: false, message: 'Target sales order does not exist' },
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    }
+
+    const assignReason = reason || 'Bulk assign to PO/SO - serial reassignment';
+
+    return await this.databaseService.withTransaction(async (client) => {
+      // Get current state of all serials before update
+      const currentStateResult = await client.query<{
+        id: number;
+        serialNumber: string;
+        purchaseId: number | null;
+        salesId: number | null;
+      }>(
+        `SELECT id, "serialNumber", "purchaseId", "salesId"
+         FROM tblserial_numbers
+         WHERE id = ANY($1::bigint[])`,
+        [serialIds],
+      );
+
+      const currentSerials = currentStateResult.rows;
+
+      // Build dynamic SET clause
+      const setClauses: string[] = [];
+      const updateParams: (number | null)[] = [];
+      let paramIndex = 1;
+
+      if (purchaseId !== undefined && purchaseId !== null) {
+        setClauses.push(`"purchaseId" = $${paramIndex}`);
+        updateParams.push(purchaseId);
+        paramIndex++;
+      }
+
+      if (salesId !== undefined && salesId !== null) {
+        setClauses.push(`"salesId" = $${paramIndex}`);
+        updateParams.push(salesId);
+        paramIndex++;
+      }
+
+      // Update all serials
+      await client.query(
+        `UPDATE tblserial_numbers
+         SET ${setClauses.join(', ')}
+         WHERE id = ANY($${paramIndex}::bigint[])`,
+        [...updateParams, serialIds],
+      );
+
+      // Log ASSIGNED_ORDER event for each serial
+      for (const serial of currentSerials) {
+        await this.serialEventLogService.logEvent(
+          {
+            serialId: serial.id,
+            serialNumber: serial.serialNumber,
+            eventType: 'ASSIGNED_ORDER',
+            performedBy,
+            performedByUsername,
+            ipAddress,
+            reason: assignReason,
+            metadata: {
+              previousPurchaseId: serial.purchaseId,
+              previousSalesId: serial.salesId,
+              newPurchaseId: purchaseId ?? null,
+              newSalesId: salesId ?? null,
+            },
+          },
+          client,
+        );
+      }
+
+      return {
+        success: true,
+        message: `Successfully assigned ${currentSerials.length} serial number(s) to the specified order(s).`,
+        assignedCount: currentSerials.length,
+      };
+    });
+  }
+
   create(createSerialNumberDto: CreateSerialNumberDto) {
     void createSerialNumberDto;
     return 'This action adds a new serialNumber';
+  }
+
+  async checkSerials(dto: CheckSerialsDto) {
+    const { serialNumbers, purchaseId } = dto;
+
+    if (!Array.isArray(serialNumbers) || serialNumbers.length === 0) {
+      throw new HttpException(
+        'At least one serial number is required',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    if (serialNumbers.length > 5000) {
+      throw new HttpException(
+        'Maximum 5000 serial numbers per check',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    // Normalize input serial numbers (lowercase, trim) for matching
+    const normalizedSerials = serialNumbers.map((sn) =>
+      String(sn ?? '').trim().toLowerCase(),
+    );
+
+    // Resolve column names dynamically
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+    const serialPurchaseIdColumn = this.pickColumn(serialColumns, [
+      'purchaseId',
+      'purchase_id',
+      'po_id',
+      'purchaseOrderId',
+      'purchase_order_id',
+    ]);
+
+    if (!serialNumberColumn || !serialPurchaseIdColumn) {
+      throw new HttpException(
+        'Unable to resolve serial number table columns',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    // Resolve purchase orders table columns
+    const poColumns = await this.getTableColumns('tblpurchase_orders');
+    const poNumberColumn = this.pickColumn(poColumns, ['poNumber', 'po_number', 'po_no', 'poNo']);
+
+    // Query existing serials with their current purchase ownership state
+    const result = await this.databaseService.query<{
+      serialNumber: string;
+      purchaseId: string | null;
+      currentPoNumber: string | null;
+    }>(
+      `SELECT
+         sn."${serialNumberColumn}" AS "serialNumber",
+         sn."${serialPurchaseIdColumn}" AS "purchaseId",
+         ${poNumberColumn ? `po."${poNumberColumn}"` : 'NULL'} AS "currentPoNumber"
+       FROM tblserial_numbers sn
+       LEFT JOIN tblpurchase_orders po ON po.id = sn."${serialPurchaseIdColumn}"
+       WHERE LOWER(BTRIM(sn."${serialNumberColumn}")) = ANY($1::text[])`,
+      [normalizedSerials],
+    );
+
+    // Build a lookup map from normalized serial -> DB row
+    const existingMap = new Map<
+      string,
+      { serialNumber: string; purchaseId: number | null; currentPoNumber: string | null }
+    >();
+
+    for (const row of result.rows) {
+      const normalizedKey = String(row.serialNumber ?? '').trim().toLowerCase();
+      existingMap.set(normalizedKey, {
+        serialNumber: row.serialNumber,
+        purchaseId: row.purchaseId !== null && row.purchaseId !== undefined
+          ? Number(row.purchaseId)
+          : null,
+        currentPoNumber: row.currentPoNumber ?? null,
+      });
+    }
+
+    // Map each input serial to a result
+    const results = serialNumbers.map((inputSerial) => {
+      const normalized = String(inputSerial ?? '').trim().toLowerCase();
+      const existing = existingMap.get(normalized);
+
+      if (!existing) {
+        return {
+          serialNumber: inputSerial,
+          exists: false,
+          currentPurchaseId: null,
+          currentPoNumber: null,
+          isSamePoAssignment: false,
+        };
+      }
+
+      const currentPurchaseId = existing.purchaseId;
+      const isSamePoAssignment =
+        currentPurchaseId !== null && currentPurchaseId === purchaseId;
+
+      return {
+        serialNumber: inputSerial,
+        exists: true,
+        currentPurchaseId,
+        currentPoNumber: existing.currentPoNumber,
+        isSamePoAssignment,
+      };
+    });
+
+    return { results };
   }
 
   findAll() {

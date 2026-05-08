@@ -1,0 +1,485 @@
+<div class="p-6">
+  <h1 class="text-2xl font-semibold text-gray-900 dark:text-white mb-6">Serial Number Global Search</h1>
+
+  <!-- Search Section -->
+  <div class="mb-6">
+    <div class="flex gap-3">
+      <input
+        type="text"
+        [ngModel]="searchQuery()"
+        (ngModelChange)="searchQuery.set($event)"
+        (keyup.enter)="onSearch()"
+        placeholder="Search serial numbers (min 2 characters)..."
+        class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+      />
+      <button
+        (click)="onSearch()"
+        [disabled]="isLoading()"
+        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {{ isLoading() ? 'Searching...' : 'Search' }}
+      </button>
+    </div>
+    @if (searchValidationError()) {
+      <p class="mt-2 text-sm text-red-600">{{ searchValidationError() }}</p>
+    }
+  </div>
+
+  <!-- Selection Actions -->
+  @if (selectedCount() > 0) {
+    <div class="mb-4 flex items-center gap-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+      <span class="text-sm text-blue-700 dark:text-blue-300 font-medium">
+        {{ selectedCount() }} serial number(s) selected
+      </span>
+      <button
+        (click)="openTransferDialog()"
+        class="px-4 py-1.5 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700"
+      >
+        Transfer
+      </button>
+      <button
+        (click)="openAssignOrderDialog()"
+        class="px-4 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700"
+      >
+        Assign to PO/SO
+      </button>
+    </div>
+  }
+
+  <!-- Results Table -->
+  @if (results().length > 0) {
+    <div class="overflow-x-auto border border-gray-200 dark:border-gray-700 rounded-lg">
+      <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-800">
+          <tr>
+            <th class="px-3 py-3">
+              <input
+                type="checkbox"
+                [checked]="isAllSelected()"
+                (change)="onSelectAll()"
+                class="rounded border-gray-300"
+              />
+            </th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Serial Number</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Status</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Brand</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Product</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Capacity</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Branch</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">PO#</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">SO#</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Customer</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Defective</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Returned</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Date</th>
+            <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+          @for (serial of results(); track serial.id) {
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-800">
+              <td class="px-3 py-2">
+                <input
+                  type="checkbox"
+                  [checked]="isSelected(serial.id)"
+                  (change)="onSelectSerial(serial.id)"
+                  class="rounded border-gray-300"
+                />
+              </td>
+              <td class="px-3 py-2 text-sm font-medium text-gray-900 dark:text-white">{{ serial.serialNumber }}</td>
+              <td class="px-3 py-2">
+                <span [class]="'px-2 py-0.5 text-xs font-medium rounded-full ' + getStatusBadgeClass(serial.status)">
+                  {{ serial.status ?? '-' }}
+                </span>
+              </td>
+              <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ serial.brandName ?? '-' }}</td>
+              <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ serial.productName ?? '-' }}</td>
+              <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ serial.capacity ?? '-' }}</td>
+              <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ serial.branchName ?? '-' }}</td>
+              <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ serial.poNumber ?? '-' }}</td>
+              <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ serial.soNumber ?? '-' }}</td>
+              <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ serial.customerName ?? '-' }}</td>
+              <td class="px-3 py-2 text-sm">
+                @if (serial.isDefective) {
+                  <span class="text-red-600 font-medium">Yes</span>
+                } @else {
+                  <span class="text-gray-400">No</span>
+                }
+              </td>
+              <td class="px-3 py-2 text-sm">
+                @if (serial.isReturned) {
+                  <span class="text-orange-600 font-medium">Yes</span>
+                } @else {
+                  <span class="text-gray-400">No</span>
+                }
+              </td>
+              <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300">{{ formatDate(serial.createdAt) }}</td>
+              <td class="px-3 py-2">
+                <button
+                  (click)="onViewDetail(serial)"
+                  class="text-blue-600 hover:text-blue-800 text-sm font-medium"
+                >
+                  View
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="mt-4 flex items-center justify-between">
+      <span class="text-sm text-gray-700 dark:text-gray-300">
+        Showing {{ (currentPage() - 1) * pageSize() + 1 }} to {{ currentPage() * pageSize() > totalResults() ? totalResults() : currentPage() * pageSize() }} of {{ totalResults() }} results
+      </span>
+      <div class="flex gap-2">
+        <button
+          (click)="onPageChange(currentPage() - 1)"
+          [disabled]="currentPage() <= 1"
+          class="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:hover:bg-gray-700 dark:text-gray-300"
+        >
+          Previous
+        </button>
+        <span class="px-3 py-1 text-sm text-gray-700 dark:text-gray-300">
+          Page {{ currentPage() }} of {{ totalPages() }}
+        </span>
+        <button
+          (click)="onPageChange(currentPage() + 1)"
+          [disabled]="currentPage() >= totalPages()"
+          class="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed dark:border-gray-600 dark:hover:bg-gray-700 dark:text-gray-300"
+        >
+          Next
+        </button>
+      </div>
+    </div>
+  } @else if (!isLoading() && searchQuery().trim().length >= 2 && totalResults() === 0) {
+    <div class="text-center py-12 text-gray-500 dark:text-gray-400">
+      <p class="text-lg">No results found</p>
+      <p class="text-sm mt-1">No serial numbers match your search query.</p>
+    </div>
+  }
+
+  <!-- Detail Panel -->
+  @if (detailSerial()) {
+    <div class="fixed inset-0 bg-black/50 z-40" (click)="closeDetail()"></div>
+    <div class="fixed right-0 top-0 h-full w-full max-w-lg bg-white dark:bg-gray-900 shadow-xl z-50 overflow-y-auto p-6">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Serial Number Detail</h2>
+        <button (click)="closeDetail()" class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
+          ✕
+        </button>
+      </div>
+
+      <div class="space-y-3 mb-6">
+        <div class="grid grid-cols-2 gap-2 text-sm">
+          <span class="text-gray-500 dark:text-gray-400">Serial Number:</span>
+          <span class="font-medium text-gray-900 dark:text-white">{{ detailSerial()!.serialNumber }}</span>
+
+          <span class="text-gray-500 dark:text-gray-400">Status:</span>
+          <span>
+            <span [class]="'px-2 py-0.5 text-xs font-medium rounded-full ' + getStatusBadgeClass(detailSerial()!.status)">
+              {{ detailSerial()!.status ?? '-' }}
+            </span>
+          </span>
+
+          <span class="text-gray-500 dark:text-gray-400">Unit Type:</span>
+          <span class="text-gray-900 dark:text-white">{{ detailSerial()!.unitType ?? '-' }}</span>
+
+          <span class="text-gray-500 dark:text-gray-400">Brand:</span>
+          <span class="text-gray-900 dark:text-white">{{ detailSerial()!.brandName ?? '-' }}</span>
+
+          <span class="text-gray-500 dark:text-gray-400">Product:</span>
+          <span class="text-gray-900 dark:text-white">{{ detailSerial()!.productName ?? '-' }}</span>
+
+          <span class="text-gray-500 dark:text-gray-400">Capacity:</span>
+          <span class="text-gray-900 dark:text-white">{{ detailSerial()!.capacity ?? '-' }}</span>
+
+          <span class="text-gray-500 dark:text-gray-400">Branch:</span>
+          <span class="text-gray-900 dark:text-white">{{ detailSerial()!.branchName ?? '-' }}</span>
+
+          <span class="text-gray-500 dark:text-gray-400">PO Number:</span>
+          <span class="text-gray-900 dark:text-white">{{ detailSerial()!.poNumber ?? '-' }}</span>
+
+          <span class="text-gray-500 dark:text-gray-400">SO Number:</span>
+          <span class="text-gray-900 dark:text-white">{{ detailSerial()!.soNumber ?? '-' }}</span>
+
+          <span class="text-gray-500 dark:text-gray-400">Customer:</span>
+          <span class="text-gray-900 dark:text-white">{{ detailSerial()!.customerName ?? '-' }}</span>
+
+          <span class="text-gray-500 dark:text-gray-400">Defective:</span>
+          <span [class]="detailSerial()!.isDefective ? 'text-red-600 font-medium' : 'text-gray-900 dark:text-white'">
+            {{ detailSerial()!.isDefective ? 'Yes' : 'No' }}
+          </span>
+
+          <span class="text-gray-500 dark:text-gray-400">Returned:</span>
+          <span [class]="detailSerial()!.isReturned ? 'text-orange-600 font-medium' : 'text-gray-900 dark:text-white'">
+            {{ detailSerial()!.isReturned ? 'Yes' : 'No' }}
+          </span>
+
+          <span class="text-gray-500 dark:text-gray-400">Created:</span>
+          <span class="text-gray-900 dark:text-white">{{ formatTimestamp(detailSerial()!.createdAt) }}</span>
+        </div>
+      </div>
+
+      <!-- Event History -->
+      <h3 class="text-md font-semibold text-gray-900 dark:text-white mb-3">Event History</h3>
+      @if (eventHistory().length > 0) {
+        <div class="space-y-3">
+          @for (event of eventHistory(); track event.id) {
+            <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-sm font-medium text-gray-900 dark:text-white">{{ formatEventType(event.eventType) }}</span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ formatTimestamp(event.createdAt) }}</span>
+              </div>
+              <div class="text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
+                @if (event.previousStatus || event.newStatus) {
+                  <p>Status: {{ event.previousStatus ?? '-' }} → {{ event.newStatus ?? '-' }}</p>
+                }
+                @if (event.previousPurchaseId || event.newPurchaseId) {
+                  <p>PO: {{ event.previousPurchaseId ?? '-' }} → {{ event.newPurchaseId ?? '-' }}</p>
+                }
+                @if (event.previousSalesId || event.newSalesId) {
+                  <p>SO: {{ event.previousSalesId ?? '-' }} → {{ event.newSalesId ?? '-' }}</p>
+                }
+                @if (event.previousBranchId || event.newBranchId) {
+                  <p>Branch: {{ event.previousBranchId ?? '-' }} → {{ event.newBranchId ?? '-' }}</p>
+                }
+                @if (event.performedByUsername) {
+                  <p>By: {{ event.performedByUsername }}</p>
+                }
+                @if (event.reason) {
+                  <p>Reason: {{ event.reason }}</p>
+                }
+              </div>
+            </div>
+          }
+        </div>
+      } @else {
+        <p class="text-sm text-gray-500 dark:text-gray-400">No event history available.</p>
+      }
+    </div>
+  }
+
+  <!-- Transfer Dialog -->
+  @if (isTransferDialogOpen()) {
+    <div class="fixed inset-0 bg-black/50 z-40" (click)="closeTransferDialog()"></div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6" (click)="$event.stopPropagation()">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+          Bulk Transfer Serial Numbers
+        </h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Transferring {{ selectedCount() }} serial number(s) to a new product and capacity.
+        </p>
+
+        <div class="space-y-4">
+          <!-- Brand Select -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Brand</label>
+            <select
+              [ngModel]="selectedBrandId()"
+              (ngModelChange)="onBrandChange($event)"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            >
+              <option [ngValue]="null">Select a brand...</option>
+              @for (brand of brands(); track brand.id) {
+                <option [ngValue]="brand.id">{{ brand.name }}</option>
+              }
+            </select>
+          </div>
+
+          <!-- Product Select -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Product</label>
+            <select
+              [ngModel]="selectedProductId()"
+              (ngModelChange)="onProductChange($event)"
+              [disabled]="!selectedBrandId()"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg disabled:opacity-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            >
+              <option [ngValue]="null">Select a product...</option>
+              @for (product of filteredProducts(); track product.id) {
+                <option [ngValue]="product.id">{{ product.name }}</option>
+              }
+            </select>
+          </div>
+
+          <!-- Capacity Select -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Target Capacity</label>
+            <select
+              [ngModel]="selectedCapacityId()"
+              (ngModelChange)="onCapacityChange($event)"
+              [disabled]="!selectedProductId()"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg disabled:opacity-50 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            >
+              <option [ngValue]="null">Select a capacity...</option>
+              @for (cap of filteredCapacities(); track cap.id) {
+                <option [ngValue]="cap.id">{{ cap.name }}</option>
+              }
+            </select>
+          </div>
+
+          <!-- Reason -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Reason (optional)</label>
+            <textarea
+              [ngModel]="transferReason()"
+              (ngModelChange)="transferReason.set($event)"
+              rows="3"
+              placeholder="Bulk transfer - serial misplacement correction"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            ></textarea>
+          </div>
+        </div>
+
+        <!-- Confirmation Summary -->
+        @if (selectedBrandId() && selectedProductId() && selectedCapacityId()) {
+          <div class="mt-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-sm">
+            <p class="font-medium text-blue-800 dark:text-blue-300 mb-1">Transfer Summary:</p>
+            <p class="text-blue-700 dark:text-blue-400">
+              {{ selectedCount() }} serial(s) →
+              {{ brands().find(b => b.id === selectedBrandId())?.name }} /
+              {{ filteredProducts().find(p => p.id === selectedProductId())?.name }} /
+              {{ filteredCapacities().find(c => c.id === selectedCapacityId())?.name }}
+            </p>
+          </div>
+        }
+
+        <!-- Dialog Actions -->
+        <div class="mt-6 flex justify-end gap-3">
+          <button
+            (click)="closeTransferDialog()"
+            class="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            (click)="onConfirmTransfer()"
+            [disabled]="!selectedProductId() || !selectedCapacityId() || isLoading()"
+            class="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {{ isLoading() ? 'Transferring...' : 'Confirm Transfer' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- Assign to PO/SO Dialog -->
+  @if (isAssignOrderDialogOpen()) {
+    <div class="fixed inset-0 bg-black/50 z-40" (click)="closeAssignOrderDialog()"></div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-xl w-full max-w-md p-6" (click)="$event.stopPropagation()">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+          Assign to PO/SO
+        </h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          Assigning {{ selectedCount() }} serial number(s) to a purchase or sales order.
+        </p>
+
+        <div class="space-y-4">
+          <!-- Order Type Selection -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Order Type</label>
+            <div class="flex gap-3">
+              <button
+                (click)="onAssignOrderTypeChange('po')"
+                [class]="'flex-1 px-4 py-2 text-sm rounded-lg border ' + (assignOrderType() === 'po' ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-700 dark:text-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700')"
+              >
+                Purchase Order
+              </button>
+              <button
+                (click)="onAssignOrderTypeChange('so')"
+                [class]="'flex-1 px-4 py-2 text-sm rounded-lg border ' + (assignOrderType() === 'so' ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-700 dark:text-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700')"
+              >
+                Sales Order
+              </button>
+            </div>
+          </div>
+
+          <!-- Order Search -->
+          @if (assignOrderType()) {
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                Search {{ assignOrderType() === 'po' ? 'Purchase Order' : 'Sales Order' }}
+              </label>
+              <div class="flex gap-2">
+                <input
+                  type="text"
+                  [ngModel]="assignOrderSearch()"
+                  (ngModelChange)="assignOrderSearch.set($event)"
+                  (keyup.enter)="onSearchOrders()"
+                  [placeholder]="'Search by ' + (assignOrderType() === 'po' ? 'PO number...' : 'SO number...')"
+                  class="flex-1 px-3 py-2 border border-gray-300 rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                />
+                <button
+                  (click)="onSearchOrders()"
+                  [disabled]="isSearchingOrders()"
+                  class="px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {{ isSearchingOrders() ? '...' : 'Search' }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Order Results -->
+            @if (assignOrderResults().length > 0) {
+              <div class="max-h-48 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg">
+                @for (order of assignOrderResults(); track order.id) {
+                  <button
+                    (click)="onSelectOrder(order.id)"
+                    [class]="'w-full text-left px-3 py-2 text-sm border-b border-gray-100 dark:border-gray-700 last:border-b-0 hover:bg-gray-50 dark:hover:bg-gray-700 ' + (selectedOrderId() === order.id ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-medium' : 'text-gray-700 dark:text-gray-300')"
+                  >
+                    {{ order.label }}
+                  </button>
+                }
+              </div>
+            }
+          }
+
+          <!-- Reason -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Reason (optional)</label>
+            <textarea
+              [ngModel]="assignReason()"
+              (ngModelChange)="assignReason.set($event)"
+              rows="2"
+              placeholder="Bulk assign to PO/SO - serial reassignment"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+            ></textarea>
+          </div>
+        </div>
+
+        <!-- Confirmation Summary -->
+        @if (selectedOrderId()) {
+          <div class="mt-4 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg text-sm">
+            <p class="font-medium text-green-800 dark:text-green-300 mb-1">Assignment Summary:</p>
+            <p class="text-green-700 dark:text-green-400">
+              {{ selectedCount() }} serial(s) → {{ assignOrderType() === 'po' ? 'PO' : 'SO' }}:
+              {{ assignOrderResults().find(o => o.id === selectedOrderId())?.number }}
+            </p>
+          </div>
+        }
+
+        <!-- Dialog Actions -->
+        <div class="mt-6 flex justify-end gap-3">
+          <button
+            (click)="closeAssignOrderDialog()"
+            class="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            (click)="onConfirmAssignOrder()"
+            [disabled]="!selectedOrderId() || isLoading()"
+            class="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {{ isLoading() ? 'Assigning...' : 'Confirm Assignment' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+</div>
