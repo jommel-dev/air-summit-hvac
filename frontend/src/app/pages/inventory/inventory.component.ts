@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, HostListener, OnInit } from '@angular/core';
+import { Component, HostListener, OnInit, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
@@ -14,6 +14,7 @@ import {
 } from '../../shared/services/sales-order.service';
 import { RbacService } from '../../shared/services/rbac.service';
 import { apiClient } from '../../shared/services/api-client';
+import { SerialInstallDialogComponent } from './serial-install-dialog/serial-install-dialog.component';
 import axios from 'axios';
 
 interface BrandFolder {
@@ -100,7 +101,7 @@ interface LandCostingReportGroup {
 
 @Component({
   selector: 'app-inventory',
-  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, EntityEditModalComponent],
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, EntityEditModalComponent, SerialInstallDialogComponent],
   templateUrl: './inventory.component.html',
 })
 export class InventoryComponent implements OnInit {
@@ -272,6 +273,9 @@ export class InventoryComponent implements OnInit {
     '1.0 HP': this.createEmptyCapacityDraft(),
   };
 
+  // Serial install dialog reference
+  @ViewChild(SerialInstallDialogComponent) serialInstallDialog?: SerialInstallDialogComponent;
+
   constructor(
     private readonly salesOrderService: SalesOrderService,
     private readonly rbacService: RbacService,
@@ -280,6 +284,10 @@ export class InventoryComponent implements OnInit {
 
   goToSerialSearch(): void {
     this.router.navigate(['/users/serial-global-search']);
+  }
+
+  openBulkInstallDialog(): void {
+    this.serialInstallDialog?.open();
   }
 
   // Material creation modal state
