@@ -20,6 +20,7 @@ import { ModalComponent } from '../../shared/components/ui/modal/modal.component
 import axios from 'axios';
 
 type PurchaseTab = 'deliveries' | 'approvals' | 'master-data';
+type PurchaseOrderType = 'regular' | 'replacement';
 type PurchaseOrderGuardDialogMode =
   | 'idle-warning'
   | 'session-timeout'
@@ -119,6 +120,8 @@ interface QueuedPurchaseSerialScan {
 })
 export class PurchaseOrderComponent implements OnInit, OnDestroy {
   activeTab: PurchaseTab = 'deliveries';
+  poType: PurchaseOrderType = 'regular';
+  readonly replacementUnitTypeOptions: string[] = ['indoor', 'outdoor', 'window', 'panel'];
   isFormDrawerOpen = false;
   drawerMode: 'create' | 'edit' | 'view' = 'create';
   editingPurchaseId: number | null = null;
@@ -2351,11 +2354,48 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.totalPages = Math.max(1, meta.totalPages || 1);
   }
 
+  onPoTypeChange(): void {
+    for (let i = 0; i < this.createForm.productItems.length; i++) {
+      const item = this.createForm.productItems[i];
+      if (this.poType === 'replacement') {
+        // For replacement, start empty — user selects unit types manually
+        item.unitTypes = [];
+      } else if (item.productId) {
+        const productUnitTypeLabels = this.getProductUnitTypeLabels(item.productId);
+        item.unitTypes = productUnitTypeLabels.length > 0
+          ? productUnitTypeLabels.map((label) => this.createUnitTypeEntry(label, 0, []))
+          : [this.createUnitTypeEntry('set', 0, [])];
+      }
+      this.ensureSelectedUnitType(i);
+    }
+  }
+
+  toggleReplacementUnitType(productIndex: number, unitLabel: string): void {
+    const item = this.createForm.productItems[productIndex];
+    if (!item) return;
+
+    const existingIndex = item.unitTypes.findIndex((ut) => ut.label === unitLabel);
+    if (existingIndex >= 0) {
+      // Remove if already selected
+      item.unitTypes = item.unitTypes.filter((_, i) => i !== existingIndex);
+    } else {
+      // Add new unit type
+      item.unitTypes = [...item.unitTypes, this.createUnitTypeEntry(unitLabel, 0, [])];
+    }
+    this.ensureSelectedUnitType(productIndex);
+  }
+
+  isReplacementUnitTypeSelected(productIndex: number, unitLabel: string): boolean {
+    const item = this.createForm.productItems[productIndex];
+    return item?.unitTypes.some((ut) => ut.label === unitLabel) ?? false;
+  }
+
   private resetCreateForm(): void {
     this.drawerMode = 'create';
     this.editingPurchaseId = null;
     this.editingPoNumber = '';
     this.editingPurchaseStatus = '';
+    this.poType = 'regular';
     this.vendorMode = 'existing';
     this.createForm = {
       vendorId: '',
@@ -2780,10 +2820,17 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   onProductChanged(index: number): void {
     const nextItems = [...this.createForm.productItems];
     const currentItem = nextItems[index];
-    const productUnitTypeLabels = this.getProductUnitTypeLabels(currentItem?.productId ?? '');
-    const nextUnitTypes = productUnitTypeLabels.length > 0
-      ? productUnitTypeLabels.map((label) => this.createUnitTypeEntry(label, 0, []))
-      : [this.createUnitTypeEntry('set', 0, [])];
+
+    let nextUnitTypes;
+    if (this.poType === 'replacement') {
+      // Keep existing selected replacement unit types (don't reset on product change)
+      nextUnitTypes = currentItem.unitTypes;
+    } else {
+      const productUnitTypeLabels = this.getProductUnitTypeLabels(currentItem?.productId ?? '');
+      nextUnitTypes = productUnitTypeLabels.length > 0
+        ? productUnitTypeLabels.map((label) => this.createUnitTypeEntry(label, 0, []))
+        : [this.createUnitTypeEntry('set', 0, [])];
+    }
 
     nextItems[index] = {
       ...nextItems[index],
@@ -3748,6 +3795,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           : {}),
       })),
       totalAmount: Number(this.createForm.totalAmount) || 0,
+      ...(this.poType === 'replacement' ? { isReplacement: true } : {}),
     };
   }
 
@@ -3891,6 +3939,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private applyDetailToForm(detail: PurchaseOrderDetailItem, fallbackItem: PurchaseOrderItem): void {
     this.vendorMode = detail.vendorId ? 'existing' : 'new';
 
+    // Restore poType from saved detail
+    this.poType = detail.isReplacement === true ? 'replacement' : 'regular';
+
     const paymentDetails = detail.paymentDetails.length > 0
       ? detail.paymentDetails.map((payment) => ({
           method: this.toPaymentMethod(payment.method),
@@ -3965,7 +4016,24 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     const productUnitTypeLabels = this.getProductUnitTypeLabels(String(product.productId ?? ''));
 
     let normalizedUnitTypes: PurchaseUnitTypeFormItem[] = [];
-    if (unitTypesFromPayload.length > 0) {
+
+    // For replacement POs, only use what was saved — never merge with product catalog
+    if (this.poType === 'replacement') {
+      if (unitTypesFromPayload.length > 0) {
+        for (const entry of unitTypesFromPayload) {
+          const label = this.normalizeUnitTypeLabel(entry.label);
+          const serials = Array.isArray(serialNumbers[label]) ? serialNumbers[label] : [];
+          normalizedUnitTypes.push(this.createUnitTypeEntry(label, Number(entry.value) || 0, serials));
+        }
+      }
+      // Also include any serial-only unit types not in unitTypesQty
+      for (const [label, serials] of Object.entries(serialNumbers)) {
+        if (normalizedUnitTypes.some((ut) => ut.label === label) || serials.length === 0) {
+          continue;
+        }
+        normalizedUnitTypes.push(this.createUnitTypeEntry(label, serials.length, serials));
+      }
+    } else if (unitTypesFromPayload.length > 0) {
       const mergedByLabel = new Map<string, PurchaseUnitTypeFormItem>();
 
       for (const entry of unitTypesFromPayload) {
@@ -4004,6 +4072,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       normalizedUnitTypes.every((entry) => this.isLegacySplitUnitType(entry.label));
 
     if (
+      this.poType !== 'replacement' &&
       productUnitTypeLabels.length > 0 &&
       !hasAnySerials &&
       (normalizedUnitTypes.length === 0 || hasOnlyLegacySplitLabels)
