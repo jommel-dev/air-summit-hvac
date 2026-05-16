@@ -1601,7 +1601,8 @@ export class PurchaseService {
             ? await client.query(
                 `UPDATE tblserial_numbers
                  SET "${serialStatusColumn}" = $1
-                 WHERE "${serialPurchaseIdColumn}"::text = $2`,
+                 WHERE "${serialPurchaseIdColumn}"::text = $2
+                   AND LOWER(COALESCE("${serialStatusColumn}"::text, '')) <> 'installed'`,
                 ['in-stock', String(id)],
               )
             : await client.query(
@@ -1613,7 +1614,8 @@ export class PurchaseService {
                    to_jsonb(sn)->>'po_id',
                    to_jsonb(sn)->>'purchaseOrderId',
                    to_jsonb(sn)->>'purchase_order_id'
-                 ) = $2`,
+                 ) = $2
+                   AND LOWER(COALESCE("${serialStatusColumn}"::text, '')) <> 'installed'`,
                 ['in-stock', String(id)],
               );
 
@@ -2139,7 +2141,7 @@ export class PurchaseService {
       const serialStatuses: Record<string, string> = {};
       const poLinkedSerialNumbers: Record<string, string[]> = {};
       const unresolvedSerialsByUnitType: Record<string, string[]> = {};
-      const includeInstalled = options?.includeInstalled === true;
+      const includeInstalled = true; // Always show all serials regardless of tab
       const preferPoLinkedSerials = options?.preferPoLinkedSerials === true;
       for (const serialRow of serialResult.rows) {
         const productId = String(serialRow.productId ?? '').trim();
