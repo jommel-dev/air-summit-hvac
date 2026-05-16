@@ -55,6 +55,7 @@ type PurchaseDetailRow = {
   vendorContactNumber: string | null;
   totalAmount: string | null;
   status: string | null;
+  isReplacement: boolean | null;
   createdAt: string | null;
 };
 
@@ -1082,6 +1083,7 @@ export class PurchaseService {
         const statusColumn = this.pickColumn(purchaseColumns, ['status']);
         const createdByColumn = this.pickColumn(purchaseColumns, ['created_by', 'createdBy', 'createdby']);
         const branchIdColumn = this.pickColumn(purchaseColumns, ['branch_id', 'branchId']);
+        const isReplacementColumn = this.pickColumn(purchaseColumns, ['is_replacement', 'isReplacement']);
 
         if (!poNumberColumn || !purchaseVendorIdColumn || !totalAmountColumn || !statusColumn) {
           throw new Error('tblpurchase_orders columns are not aligned with expected fields');
@@ -1103,6 +1105,10 @@ export class PurchaseService {
 
         if (branchIdColumn && Number.isFinite(branchId) && Number(branchId) > 0) {
           purchaseRecord[branchIdColumn] = Number(branchId);
+        }
+
+        if (isReplacementColumn && createPurchaseDto.isReplacement === true) {
+          purchaseRecord[isReplacementColumn] = true;
         }
 
         const purchaseInsertResult = await this.runInsert(
@@ -1908,6 +1914,11 @@ export class PurchaseService {
            ) AS "vendorContactNumber",
            po.total_amount::text AS "totalAmount",
            COALESCE(po.status, 'pending') AS status,
+           COALESCE(
+             (to_jsonb(po)->>'is_replacement')::boolean,
+             (to_jsonb(po)->>'isReplacement')::boolean,
+             false
+           ) AS "isReplacement",
            po.created_at::text AS "createdAt"
          FROM tblpurchase_orders po
          LEFT JOIN tblvendors v
@@ -2365,6 +2376,7 @@ export class PurchaseService {
         item: {
           id: purchase.id,
           poNumber: purchase.poNumber,
+          isReplacement: purchase.isReplacement === true,
           vendorId: purchase.vendorId,
           vendorName: purchase.vendorName,
           vendorAddress: purchase.vendorAddress,

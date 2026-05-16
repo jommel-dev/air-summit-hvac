@@ -138,6 +138,37 @@
         }
         @if (!isTransferPOViewOnly) {
           <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+            <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">PO Type</h4>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                (click)="poType = 'regular'; onPoTypeChange()"
+                [disabled]="isMasterDataDrawerMode() || drawerMode === 'edit'"
+                class="rounded-lg border px-4 py-2 text-sm font-medium transition"
+                [ngClass]="poType === 'regular'
+                  ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
+                  : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+              >
+                Regular PO
+              </button>
+              <button
+                type="button"
+                (click)="poType = 'replacement'; onPoTypeChange()"
+                [disabled]="isMasterDataDrawerMode() || drawerMode === 'edit'"
+                class="rounded-lg border px-4 py-2 text-sm font-medium transition"
+                [ngClass]="poType === 'replacement'
+                  ? 'border-warning-500 bg-warning-50 text-warning-700 dark:border-warning-400 dark:bg-warning-500/10 dark:text-warning-300'
+                  : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+              >
+                Replacement Unit
+              </button>
+            </div>
+            @if (poType === 'replacement') {
+              <p class="mt-2 text-xs text-warning-600 dark:text-warning-400">Replacement PO: Unit types are not dependent on product configuration. You can freely assign serial numbers.</p>
+            }
+          </section>
+
+          <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
             <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Dealer</h4>
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
             <div>
@@ -389,31 +420,55 @@
 
                 <div class="md:col-span-2 rounded-lg border border-gray-200 p-3 dark:border-gray-700">
                   <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Types</p>
-                  <div class="mb-3 flex flex-wrap gap-2">
-                    @for (unitType of activeItem.unitTypes; track unitType.label) {
-                      <button
-                        type="button"
-                        (click)="selectUnitType(activeProductTabIndex, unitType.label)"
-                        class="rounded-lg border px-3 py-1 text-xs font-medium"
-                        [ngClass]="getSelectedUnitTypeLabel(activeProductTabIndex) === unitType.label
-                          ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
-                          : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
-                      >
-                        {{ unitType.label }} (Scanned: {{ getDisplayUnitTypeSerials(unitType).length }})
-                      </button>
-                    }
-                  </div>
 
-                  <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    @for (unitType of activeItem.unitTypes; track unitType.label) {
-                      <div>
-                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
-                          {{ unitType.label }} Qty
-                        </label>
-                        <input type="number" [(ngModel)]="unitType.value" [readonly]="isMasterDataDrawerMode() || isTransferPOViewOnly" [name]="'unitTypeQty_' + activeProductTabIndex + '_' + unitType.label" (ngModelChange)="onUnitTypeQtyChange(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
-                      </div>
-                    }
-                  </div>
+                  @if (poType === 'replacement') {
+                    <p class="mb-2 text-xs text-gray-500 dark:text-gray-400">Select which unit type(s) this replacement covers:</p>
+                    <div class="mb-3 flex flex-wrap gap-2">
+                      @for (option of replacementUnitTypeOptions; track option) {
+                        <button
+                          type="button"
+                          (click)="toggleReplacementUnitType(activeProductTabIndex, option)"
+                          [disabled]="isMasterDataDrawerMode()"
+                          class="rounded-lg border px-3 py-1.5 text-xs font-medium transition"
+                          [ngClass]="isReplacementUnitTypeSelected(activeProductTabIndex, option)
+                            ? 'border-warning-500 bg-warning-50 text-warning-700 dark:border-warning-400 dark:bg-warning-500/10 dark:text-warning-300'
+                            : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                        >
+                          {{ option }}
+                        </button>
+                      }
+                    </div>
+                  }
+
+                  @if (activeItem.unitTypes.length > 0) {
+                    <div class="mb-3 flex flex-wrap gap-2">
+                      @for (unitType of activeItem.unitTypes; track unitType.label) {
+                        <button
+                          type="button"
+                          (click)="selectUnitType(activeProductTabIndex, unitType.label)"
+                          class="rounded-lg border px-3 py-1 text-xs font-medium"
+                          [ngClass]="getSelectedUnitTypeLabel(activeProductTabIndex) === unitType.label
+                            ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
+                            : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                        >
+                          {{ unitType.label }} (Scanned: {{ getDisplayUnitTypeSerials(unitType).length }})
+                        </button>
+                      }
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      @for (unitType of activeItem.unitTypes; track unitType.label) {
+                        <div>
+                          <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+                            {{ unitType.label }} Qty
+                          </label>
+                          <input type="number" [(ngModel)]="unitType.value" [readonly]="isMasterDataDrawerMode() || isTransferPOViewOnly" [name]="'unitTypeQty_' + activeProductTabIndex + '_' + unitType.label" (ngModelChange)="onUnitTypeQtyChange(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                        </div>
+                      }
+                    </div>
+                  } @else if (poType === 'replacement') {
+                    <p class="text-xs text-gray-400 dark:text-gray-500">Select at least one unit type above.</p>
+                  }
                 </div>
 
                 @if (drawerMode === 'edit' || isTransferPOViewOnly) {

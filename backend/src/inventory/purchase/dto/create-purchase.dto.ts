@@ -43,6 +43,7 @@ export class CreatePurchaseProductItemDto {
 
 export class CreatePurchaseDto {
 	poNumber?: string;
+	isReplacement?: boolean;
 	vendorId?: string;
 	vendor?: CreatePurchaseVendorDto;
 	paymentDetails?:

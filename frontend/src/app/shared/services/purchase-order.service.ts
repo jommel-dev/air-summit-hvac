@@ -67,6 +67,7 @@ export interface PurchaseOrderDetailProductItem {
 export interface PurchaseOrderDetailItem {
   id: number;
   poNumber: string | null;
+  isReplacement?: boolean;
   vendorId: string | null;
   vendorName: string | null;
   vendorAddress: string | null;
@@ -178,6 +179,7 @@ export interface PurchaseOrderListResult {
 
 export interface CreatePurchaseRequestPayload {
   poNumber?: string;
+  isReplacement?: boolean;
   vendorId?: string;
   vendor?: {
     name: string;
