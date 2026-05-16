@@ -96,6 +96,20 @@ export class SerialNumberController {
     return this.serialNumberService.bulkUpdateStatus(body.serialNumbers, body.status, normalizedUserId);
   }
 
+  @Post('bulk-install-with-validation')
+  bulkInstallWithValidation(
+    @Body() body: { serialNumbers: string[] },
+    @Req() request: { user?: { sub?: unknown; roleName?: unknown } },
+  ) {
+    const role = String(request.user?.roleName ?? '').trim().toLowerCase();
+    if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
+      return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
+    }
+    const userId = Number(request.user?.sub);
+    const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
+    return this.serialNumberService.validateAndBulkInstall(body.serialNumbers, normalizedUserId);
+  }
+
   @Post('scan-sales-order')
   scanSalesOrder(
     @Body() dto: ScanSalesOrderDto,

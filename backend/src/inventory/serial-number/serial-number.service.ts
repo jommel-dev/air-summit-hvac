@@ -2011,6 +2011,117 @@ export class SerialNumberService {
     };
   }
 
+  async validateAndBulkInstall(serialNumbers: string[], userId?: number) {
+    const normalizedInputs = (serialNumbers ?? [])
+      .map((s) => this.normalizeSerialNumber(s))
+      .filter((s) => s.length > 0);
+
+    if (normalizedInputs.length === 0) {
+      return {
+        success: false,
+        message: 'No serial numbers provided',
+        existing: [],
+        nonExisting: [],
+        updated: 0,
+      };
+    }
+
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+    const serialCreatedByColumn = this.pickColumn(serialColumns, ['created_by', 'createdBy', 'createdby']);
+
+    if (!serialStatusColumn) {
+      return {
+        success: false,
+        message: 'Status column not found in tblserial_numbers',
+        existing: [],
+        nonExisting: [],
+        updated: 0,
+      };
+    }
+
+    // Query to find which serials exist in the database
+    const existingResult = await this.databaseService.query<{ id: number; serialNumber: string; status: string | null }>(
+      `SELECT sn.id,
+              COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '') AS "serialNumber",
+              COALESCE(to_jsonb(sn)->>'status', null) AS status
+       FROM tblserial_numbers sn
+       WHERE LOWER(regexp_replace(BTRIM(COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '')), '\\s+', ' ', 'g')) = ANY(
+         SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($1::text[]) s
+       )`,
+      [normalizedInputs],
+    );
+
+    // Separate existing and non-existing serial numbers
+    const existingSerials = new Set(
+      existingResult.rows.map((row) => 
+        String(row.serialNumber ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+      ),
+    );
+
+    const normalizedWithOriginal = normalizedInputs.map((n) => ({
+      normalized: n.toLowerCase().replace(/\s+/g, ' '),
+      original: n,
+    }));
+
+    const existing: string[] = [];
+    const nonExisting: string[] = [];
+
+    normalizedWithOriginal.forEach(({ normalized, original }) => {
+      if (existingSerials.has(normalized)) {
+        existing.push(original);
+      } else {
+        nonExisting.push(original);
+      }
+    });
+
+    // Update only existing serials to 'installed' status
+    let updateResult = { rowCount: 0 };
+    if (existing.length > 0) {
+      const setClauses = [`"${serialStatusColumn}" = $1`];
+      const params: unknown[] = ['installed'];
+
+      if (serialCreatedByColumn && userId !== undefined) {
+        params.push(userId);
+        setClauses.push(`"${serialCreatedByColumn}" = $${params.length}`);
+      }
+
+      params.push(existing);
+      updateResult = await this.databaseService.query(
+        `UPDATE tblserial_numbers sn
+         SET ${setClauses.join(', ')}
+         WHERE LOWER(regexp_replace(BTRIM(COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '')), '\\s+', ' ', 'g')) = ANY(
+           SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($${params.length}::text[]) s
+         )`,
+        params,
+      );
+
+      // Log events for each affected serial
+      if (existingResult.rows.length > 0) {
+        for (const row of existingResult.rows) {
+          await this.serialEventLogService.logEvent({
+            serialId: row.id,
+            serialNumber: row.serialNumber,
+            eventType: 'STATUS_CHANGED',
+            previousStatus: row.status,
+            newStatus: 'installed',
+            performedBy: userId ?? null,
+            performedByUsername: null,
+            ipAddress: null,
+          });
+        }
+      }
+    }
+
+    return {
+      success: true,
+      message: `Validated ${normalizedInputs.length} serial(s). Found ${existing.length} existing, ${nonExisting.length} not found. Updated ${updateResult.rowCount ?? 0} to installed.`,
+      existing,
+      nonExisting,
+      updated: updateResult.rowCount ?? 0,
+    };
+  }
+
   async scanSalesOrder(dto: ScanSalesOrderDto, actor?: AuditActorContext) {
     const serialNumber = this.normalizeSerialNumber(dto.serialNumber);
     const salesId = Number(dto.salesId);
