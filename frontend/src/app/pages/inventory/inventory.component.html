@@ -1186,6 +1186,14 @@
               <p class="text-2xl font-bold text-warning-600 dark:text-warning-400">{{ csvPreviewResult.summary.otherStatus }}</p>
               <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Other Status</p>
             </div>
+            @if (csvPreviewResult.notInCsv.length > 0) {
+              <div class="cursor-pointer rounded-lg border-2 p-3 text-center transition"
+                [ngClass]="csvModalTab === 'not-in-csv' ? 'border-orange-400 bg-orange-50 dark:bg-orange-900/20' : 'border-gray-200 dark:border-gray-700'"
+                (click)="csvModalTab = 'not-in-csv'">
+                <p class="text-2xl font-bold text-orange-600 dark:text-orange-400">{{ csvPreviewResult.summary.notInCsv }}</p>
+                <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Not in CSV</p>
+              </div>
+            }
           </div>
           <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Total in CSV: {{ csvPreviewResult!.summary.total }} serials</p>
           <div class="mt-2 flex flex-wrap gap-3 text-xs">
@@ -1324,6 +1332,28 @@
                   <p class="text-xs font-medium text-warning-800 dark:text-warning-300">{{ s.serialNumber }}</p>
                   <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
                   <p class="text-[11px] text-gray-500">CSV: {{ s.csvStatus }} | DB: {{ s.dbStatus }}</p>
+                </div>
+              }
+            </div>
+          }
+          @if (csvModalTab === 'not-in-csv') {
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">These serials are in the DB (in_stock) but NOT in your uploaded CSV. Mark as:</p>
+              <button type="button" (click)="markNotInCsvAsInstalled()"
+                [disabled]="isCsvUpdatingNotInCsv || csvPreviewResult.notInCsv.length === 0"
+                class="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-orange-700 disabled:opacity-50">
+                {{ isCsvUpdatingNotInCsv ? 'Updating...' : 'Mark All as Installed' }}
+              </button>
+            </div>
+            @if (csvPreviewResult.notInCsv.length === 0) {
+              <p class="text-sm text-gray-400">None</p>
+            }
+            <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+              @for (s of csvPreviewResult.notInCsv; track s.serialNumber) {
+                <div class="rounded border border-orange-200 bg-orange-50 px-3 py-1.5 dark:border-orange-800 dark:bg-orange-900/20">
+                  <p class="text-xs font-medium text-orange-800 dark:text-orange-300">{{ s.serialNumber }}</p>
+                  <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
+                  <p class="text-[11px] text-gray-500">DB Status: {{ s.dbStatus }}</p>
                 </div>
               }
             </div>
