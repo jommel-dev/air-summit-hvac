@@ -983,11 +983,12 @@ export class SalesOrderService {
     success: boolean;
     message?: string;
     summary?: {
-      total: number; toInstall: number; alreadyInstalled: number; notFound: number; otherStatus: number; notInCsv?: number;
+      total: number; toInstall: number; alreadyInstalled: number; installedInDb?: number; notFound: number; otherStatus: number; notInCsv?: number;
       totalSets: number; unitTypeCounts: Record<string, number>; remainingStocks: number;
     };
     toInstall?: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
     alreadyInstalled?: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }>;
+    installedInDb?: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
     notFound?: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }>;
     otherStatus?: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
     notInCsv?: Array<{ serialNumber: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;

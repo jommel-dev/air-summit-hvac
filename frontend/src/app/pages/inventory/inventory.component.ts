@@ -185,14 +185,15 @@ export class InventoryComponent implements OnInit {
   isCsvModalOpen = false;
   isCsvParsing = false;
   isCsvConfirming = false;
-  csvModalTab: 'will-install' | 'already-installed' | 'not-found' | 'other' | 'not-in-csv' = 'will-install';
+  csvModalTab: 'will-install' | 'already-installed' | 'installed-in-db' | 'not-found' | 'other' | 'not-in-csv' = 'will-install';
   csvPreviewResult: {
     summary: {
-      total: number; toInstall: number; alreadyInstalled: number; notFound: number; otherStatus: number; notInCsv?: number;
+      total: number; toInstall: number; alreadyInstalled: number; installedInDb?: number; notFound: number; otherStatus: number; notInCsv?: number;
       totalSets: number; unitTypeCounts: Record<string, number>; remainingStocks: number;
     };
     toInstall: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
     alreadyInstalled: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }>;
+    installedInDb: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
     notFound: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }>;
     otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
     notInCsv: Array<{ serialNumber: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
@@ -2595,6 +2596,7 @@ export class InventoryComponent implements OnInit {
         summary: result.summary!,
         toInstall: result.toInstall ?? [],
         alreadyInstalled: result.alreadyInstalled ?? [],
+        installedInDb: result.installedInDb ?? [],
         notFound: result.notFound ?? [],
         otherStatus: result.otherStatus ?? [],
         notInCsv: result.notInCsv ?? [],

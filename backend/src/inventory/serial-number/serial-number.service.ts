@@ -1871,6 +1871,7 @@ export class SerialNumberService {
 
     const toInstall: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }> = [];
     const alreadyInstalled: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }> = [];
+    const installedInDb: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }> = [];
     const notFound: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }> = [];
     const otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }> = [];
 
@@ -1888,23 +1889,32 @@ export class SerialNumberService {
       const ut = found.unitType || row.csvUnitType.toUpperCase() || 'UNKNOWN';
       unitTypeCounts[ut] = (unitTypeCounts[ut] ?? 0) + 1;
 
-      if (found.dbStatus === 'installed') {
+      if (found.dbStatus === 'installed' && row.csvStatus === 'installed') {
+        // Both CSV and DB say installed — confirmed installed
         alreadyInstalled.push({ serialNumber: found.serialNumber, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
         continue;
       }
 
+      if (found.dbStatus === 'installed' && row.csvStatus !== 'installed') {
+        // CSV says in-stock but DB says installed — conflict: DB has it as installed already
+        installedInDb.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, csvUnitType: row.csvUnitType, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
+        continue;
+      }
+
       if (row.csvStatus === 'installed') {
+        // CSV says installed but DB is not installed — should be marked as installed
         toInstall.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, csvUnitType: row.csvUnitType, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
         continue;
       }
 
+      // Both CSV and DB are non-installed (e.g., both in-stock) — no action needed
       otherStatus.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, dbStatus: found.dbStatus, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
     }
 
     // Total sets = total found serials / unit types per set (approximate: count distinct unitType labels)
     const unitTypeLabels = Object.keys(unitTypeCounts);
     const unitTypeCount = unitTypeLabels.length || 1;
-    const totalFoundSerials = toInstall.length + alreadyInstalled.length + otherStatus.length;
+    const totalFoundSerials = toInstall.length + alreadyInstalled.length + installedInDb.length + otherStatus.length;
     const totalSets = unitTypeCount > 1 ? Math.floor(totalFoundSerials / unitTypeCount) : totalFoundSerials;
 
     // Remaining stocks = serials that are NOT installed (in-stock, reserved, etc.)
@@ -1922,7 +1932,7 @@ export class SerialNumberService {
       const capacityIdCol = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
 
       if (snCol && statusCol && productIdCol && capacityIdCol) {
-        // Get all in_stock serials for this product/capacity
+        // Get all in_stock serials for this product/capacity (installed ones are already handled)
         const dbSerialsResult = await this.databaseService.query<{
           serialNumber: string;
           status: string | null;
@@ -1941,7 +1951,7 @@ export class SerialNumberService {
            LEFT JOIN tblcapacity c ON c.id = sn."${capacityIdCol}"
            WHERE sn."${productIdCol}" = $1
              AND sn."${capacityIdCol}" = $2
-             AND LOWER(COALESCE(sn."${statusCol}", '')) = 'in_stock'`,
+             AND LOWER(COALESCE(sn."${statusCol}", '')) NOT IN ('installed')`,
           [productId, capacityId],
         );
 
@@ -1969,6 +1979,7 @@ export class SerialNumberService {
         total: unique.length,
         toInstall: toInstall.length,
         alreadyInstalled: alreadyInstalled.length,
+        installedInDb: installedInDb.length,
         notFound: notFound.length,
         otherStatus: otherStatus.length,
         notInCsv: notInCsv.length,
@@ -1978,6 +1989,7 @@ export class SerialNumberService {
       },
       toInstall,
       alreadyInstalled,
+      installedInDb,
       notFound,
       otherStatus,
       notInCsv,

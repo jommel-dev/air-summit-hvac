@@ -1161,7 +1161,7 @@
           </div>
         } @else {
           <!-- Summary cards -->
-          <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <div class="cursor-pointer rounded-lg border-2 p-3 text-center transition"
               [ngClass]="csvModalTab === 'will-install' ? 'border-success-400 bg-success-50 dark:bg-success-900/20' : 'border-gray-200 dark:border-gray-700'"
               (click)="csvModalTab = 'will-install'">
@@ -1172,7 +1172,13 @@
               [ngClass]="csvModalTab === 'already-installed' ? 'border-brand-400 bg-brand-50 dark:bg-brand-900/20' : 'border-gray-200 dark:border-gray-700'"
               (click)="csvModalTab = 'already-installed'">
               <p class="text-2xl font-bold text-brand-600 dark:text-brand-400">{{ csvPreviewResult.summary.alreadyInstalled }}</p>
-              <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Already Installed</p>
+              <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Confirmed Installed</p>
+            </div>
+            <div class="cursor-pointer rounded-lg border-2 p-3 text-center transition"
+              [ngClass]="csvModalTab === 'installed-in-db' ? 'border-purple-400 bg-purple-50 dark:bg-purple-900/20' : 'border-gray-200 dark:border-gray-700'"
+              (click)="csvModalTab = 'installed-in-db'">
+              <p class="text-2xl font-bold text-purple-600 dark:text-purple-400">{{ csvPreviewResult.summary.installedInDb ?? 0 }}</p>
+              <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Installed in DB</p>
             </div>
             <div class="cursor-pointer rounded-lg border-2 p-3 text-center transition"
               [ngClass]="csvModalTab === 'not-found' ? 'border-error-400 bg-error-50 dark:bg-error-900/20' : 'border-gray-200 dark:border-gray-700'"
@@ -1269,6 +1275,23 @@
                 <div class="rounded border border-brand-200 bg-brand-50 px-3 py-1.5 dark:border-brand-800 dark:bg-brand-900/20">
                   <p class="text-xs font-medium text-brand-800 dark:text-brand-300">{{ s.serialNumber }}</p>
                   <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
+                </div>
+              }
+            </div>
+          }
+          @if (csvModalTab === 'installed-in-db') {
+            <div class="mb-3">
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">These serials are marked as <strong>in-stock</strong> in your CSV but are already <strong>installed</strong> in the database. No action needed — DB is correct.</p>
+            </div>
+            @if (csvPreviewResult.installedInDb.length === 0) {
+              <p class="text-sm text-gray-400">None</p>
+            }
+            <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+              @for (s of csvPreviewResult.installedInDb; track s.serialNumber) {
+                <div class="rounded border border-purple-200 bg-purple-50 px-3 py-1.5 dark:border-purple-800 dark:bg-purple-900/20">
+                  <p class="text-xs font-medium text-purple-800 dark:text-purple-300">{{ s.serialNumber }}</p>
+                  <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
+                  <p class="text-[11px] text-gray-500">CSV: {{ s.csvStatus }} | DB: installed</p>
                 </div>
               }
             </div>
