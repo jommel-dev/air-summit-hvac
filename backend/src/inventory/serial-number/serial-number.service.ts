@@ -1814,7 +1814,7 @@ export class SerialNumberService {
     };
   }
 
-  async csvPreview(rows: Array<{ serialNumber: string; unitType?: string; status: string }>) {
+  async csvPreview(rows: Array<{ serialNumber: string; unitType?: string; status: string }>, productId?: number, capacityId?: number) {
     const normalized = (rows ?? [])
       .map((r) => ({
         serialNumber: this.normalizeSerialNumber(r.serialNumber),
@@ -1871,6 +1871,7 @@ export class SerialNumberService {
 
     const toInstall: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }> = [];
     const alreadyInstalled: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }> = [];
+    const installedInDb: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }> = [];
     const notFound: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }> = [];
     const otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }> = [];
 
@@ -1888,27 +1889,89 @@ export class SerialNumberService {
       const ut = found.unitType || row.csvUnitType.toUpperCase() || 'UNKNOWN';
       unitTypeCounts[ut] = (unitTypeCounts[ut] ?? 0) + 1;
 
-      if (found.dbStatus === 'installed') {
+      if (found.dbStatus === 'installed' && row.csvStatus === 'installed') {
+        // Both CSV and DB say installed — confirmed installed
         alreadyInstalled.push({ serialNumber: found.serialNumber, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
         continue;
       }
 
+      if (found.dbStatus === 'installed' && row.csvStatus !== 'installed') {
+        // CSV says in-stock but DB says installed — conflict: DB has it as installed already
+        installedInDb.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, csvUnitType: row.csvUnitType, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
+        continue;
+      }
+
       if (row.csvStatus === 'installed') {
+        // CSV says installed but DB is not installed — should be marked as installed
         toInstall.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, csvUnitType: row.csvUnitType, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
         continue;
       }
 
+      // Both CSV and DB are non-installed (e.g., both in-stock) — no action needed
       otherStatus.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, dbStatus: found.dbStatus, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
     }
 
     // Total sets = total found serials / unit types per set (approximate: count distinct unitType labels)
     const unitTypeLabels = Object.keys(unitTypeCounts);
     const unitTypeCount = unitTypeLabels.length || 1;
-    const totalFoundSerials = toInstall.length + alreadyInstalled.length + otherStatus.length;
+    const totalFoundSerials = toInstall.length + alreadyInstalled.length + installedInDb.length + otherStatus.length;
     const totalSets = unitTypeCount > 1 ? Math.floor(totalFoundSerials / unitTypeCount) : totalFoundSerials;
 
     // Remaining stocks = serials that are NOT installed (in-stock, reserved, etc.)
     const remainingStocks = otherStatus.length + toInstall.length;
+
+    // Find serials in DB for this product/capacity that are NOT in the uploaded CSV
+    let notInCsv: Array<{ serialNumber: string; dbStatus: string; unitType: string; productName: string; capacityName: string }> = [];
+
+    if (productId && capacityId) {
+      const serialColumns = await this.getTableColumns('tblserial_numbers');
+      const snCol = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+      const statusCol = this.pickColumn(serialColumns, ['status']);
+      const unitTypeCol = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+      const productIdCol = this.pickColumn(serialColumns, ['productId', 'product_id']);
+      const capacityIdCol = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
+
+      if (snCol && statusCol && productIdCol && capacityIdCol) {
+        // Get all in_stock serials for this product/capacity (installed ones are already handled)
+        const dbSerialsResult = await this.databaseService.query<{
+          serialNumber: string;
+          status: string | null;
+          unitType: string | null;
+          productName: string | null;
+          capacityName: string | null;
+        }>(
+          `SELECT
+             sn."${snCol}" AS "serialNumber",
+             sn."${statusCol}" AS status,
+             ${unitTypeCol ? `sn."${unitTypeCol}"` : `''`} AS "unitType",
+             COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', '') AS "productName",
+             COALESCE(to_jsonb(c)->>'capacity', '') AS "capacityName"
+           FROM tblserial_numbers sn
+           LEFT JOIN tblproducts p ON p.id = sn."${productIdCol}"
+           LEFT JOIN tblcapacity c ON c.id = sn."${capacityIdCol}"
+           WHERE sn."${productIdCol}" = $1
+             AND sn."${capacityIdCol}" = $2
+             AND LOWER(COALESCE(sn."${statusCol}", '')) NOT IN ('installed')`,
+          [productId, capacityId],
+        );
+
+        // Filter out serials that ARE in the CSV
+        const csvSerialSet = new Set(unique.map((r) => r.serialNumber.toLowerCase()));
+
+        for (const row of dbSerialsResult.rows) {
+          const normalizedDbSerial = String(row.serialNumber ?? '').trim().toLowerCase();
+          if (normalizedDbSerial && !csvSerialSet.has(normalizedDbSerial)) {
+            notInCsv.push({
+              serialNumber: String(row.serialNumber ?? '').trim(),
+              dbStatus: String(row.status ?? '').trim().toLowerCase(),
+              unitType: String(row.unitType ?? '').trim().toUpperCase(),
+              productName: String(row.productName ?? '').trim(),
+              capacityName: String(row.capacityName ?? '').trim(),
+            });
+          }
+        }
+      }
+    }
 
     return {
       success: true,
@@ -1916,16 +1979,20 @@ export class SerialNumberService {
         total: unique.length,
         toInstall: toInstall.length,
         alreadyInstalled: alreadyInstalled.length,
+        installedInDb: installedInDb.length,
         notFound: notFound.length,
         otherStatus: otherStatus.length,
+        notInCsv: notInCsv.length,
         totalSets,
         unitTypeCounts,
         remainingStocks,
       },
       toInstall,
       alreadyInstalled,
+      installedInDb,
       notFound,
       otherStatus,
+      notInCsv,
     };
   }
   async bulkUpdateStatus(serialNumbers: string[], status: string, userId?: number) {

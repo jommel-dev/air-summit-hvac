@@ -72,14 +72,14 @@ export class SerialNumberController {
 
   @Post('csv-preview')
   csvPreview(
-    @Body() body: { rows: Array<{ serialNumber: string; unitType?: string; status: string }> },
+    @Body() body: { rows: Array<{ serialNumber: string; unitType?: string; status: string }>; productId?: number; capacityId?: number },
     @Req() request: { user?: Record<string, unknown> },
   ) {
     const role = String(request.user?.roleName ?? '').trim().toLowerCase();
     if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
       return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
     }
-    return this.serialNumberService.csvPreview(body.rows);
+    return this.serialNumberService.csvPreview(body.rows, body.productId, body.capacityId);
   }
 
   @Post('bulk-update-status')

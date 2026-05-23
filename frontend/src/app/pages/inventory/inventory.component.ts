@@ -185,16 +185,18 @@ export class InventoryComponent implements OnInit {
   isCsvModalOpen = false;
   isCsvParsing = false;
   isCsvConfirming = false;
-  csvModalTab: 'will-install' | 'already-installed' | 'not-found' | 'other' = 'will-install';
+  csvModalTab: 'will-install' | 'already-installed' | 'installed-in-db' | 'not-found' | 'other' | 'not-in-csv' = 'will-install';
   csvPreviewResult: {
     summary: {
-      total: number; toInstall: number; alreadyInstalled: number; notFound: number; otherStatus: number;
+      total: number; toInstall: number; alreadyInstalled: number; installedInDb?: number; notFound: number; otherStatus: number; notInCsv?: number;
       totalSets: number; unitTypeCounts: Record<string, number>; remainingStocks: number;
     };
     toInstall: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
     alreadyInstalled: Array<{ serialNumber: string; unitType: string; productName: string; capacityName: string }>;
+    installedInDb: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
     notFound: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }>;
     otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
+    notInCsv: Array<{ serialNumber: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
   } | null = null;
   csvConfirmMessage = '';
   csvConfirmError = '';
@@ -206,6 +208,7 @@ export class InventoryComponent implements OnInit {
   csvNotFoundInsert = false;  // whether to insert not-found serials
   isCsvRevertingInstalled = false;
   isCsvInsertingNotFound = false;
+  isCsvUpdatingNotInCsv = false;
 
   // Cached stock counts for capacities to display in the folder tree
   isLoadingCapacityCounts = false;
@@ -2584,7 +2587,7 @@ export class InventoryComponent implements OnInit {
         this.csvConfirmError = 'No serial numbers found in the file.';
         return;
       }
-      const result = await this.salesOrderService.previewCsvSerials(rows);
+      const result = await this.salesOrderService.previewCsvSerials(rows, this.selectedProductId ?? undefined, this.selectedCapacityId ?? undefined);
       if (!result.success) {
         this.csvConfirmError = result.message ?? 'Failed to preview serials';
         return;
@@ -2593,8 +2596,10 @@ export class InventoryComponent implements OnInit {
         summary: result.summary!,
         toInstall: result.toInstall ?? [],
         alreadyInstalled: result.alreadyInstalled ?? [],
+        installedInDb: result.installedInDb ?? [],
         notFound: result.notFound ?? [],
         otherStatus: result.otherStatus ?? [],
+        notInCsv: result.notInCsv ?? [],
       };
       this.csvModalTab = 'will-install';
     } catch {
@@ -2684,6 +2689,27 @@ export class InventoryComponent implements OnInit {
       if (this.selectedProductId && this.selectedCapacityId) await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
     } catch { this.csvConfirmError = 'Failed to insert serial numbers.'; }
     finally { this.isCsvInsertingNotFound = false; }
+  }
+
+  async markNotInCsvAsInstalled(): Promise<void> {
+    if (!this.csvPreviewResult || this.isCsvUpdatingNotInCsv) return;
+    const serials = this.csvPreviewResult.notInCsv.map((s) => s.serialNumber);
+    if (serials.length === 0) { this.csvConfirmError = 'No serials to update.'; return; }
+    this.isCsvUpdatingNotInCsv = true;
+    this.csvConfirmMessage = '';
+    this.csvConfirmError = '';
+    try {
+      const result = await this.salesOrderService.bulkUpdateSerialStatus(serials, 'installed');
+      if (!result.success) { this.csvConfirmError = result.message ?? 'Failed to update serials'; return; }
+      this.csvConfirmMessage = result.message ?? `Updated ${result.updated} serial(s) to installed`;
+      this.csvPreviewResult = {
+        ...this.csvPreviewResult,
+        summary: { ...this.csvPreviewResult.summary, notInCsv: 0 },
+        notInCsv: [],
+      };
+      if (this.selectedProductId && this.selectedCapacityId) await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
+    } catch { this.csvConfirmError = 'Failed to update serial numbers.'; }
+    finally { this.isCsvUpdatingNotInCsv = false; }
   }
 
   downloadCsvSummary(): void {
