@@ -1200,6 +1200,14 @@
                 <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Not in CSV</p>
               </div>
             }
+            @if (csvPreviewResult.wrongCapacity.length > 0) {
+              <div class="cursor-pointer rounded-lg border-2 p-3 text-center transition"
+                [ngClass]="csvModalTab === 'wrong-capacity' ? 'border-rose-400 bg-rose-50 dark:bg-rose-900/20' : 'border-gray-200 dark:border-gray-700'"
+                (click)="csvModalTab = 'wrong-capacity'">
+                <p class="text-2xl font-bold text-rose-600 dark:text-rose-400">{{ csvPreviewResult.summary.wrongCapacity }}</p>
+                <p class="mt-1 text-xs text-gray-600 dark:text-gray-300">Wrong Capacity</p>
+              </div>
+            }
           </div>
           <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Total in CSV: {{ csvPreviewResult!.summary.total }} serials</p>
           <div class="mt-2 flex flex-wrap gap-3 text-xs">
@@ -1280,8 +1288,16 @@
             </div>
           }
           @if (csvModalTab === 'installed-in-db') {
-            <div class="mb-3">
-              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">These serials are marked as <strong>in-stock</strong> in your CSV but are already <strong>installed</strong> in the database. No action needed — DB is correct.</p>
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">CSV says <strong>in-stock</strong> but DB says <strong>installed</strong>. Revert to:</p>
+              <select [(ngModel)]="csvInstalledInDbTargetStatus" class="rounded border border-gray-300 px-2 py-1 text-xs dark:border-gray-600 dark:bg-gray-800">
+                <option value="in-stock">in-stock</option>
+                <option value="reserved">reserved</option>
+              </select>
+              <button type="button" (click)="revertInstalledInDbToStock()" [disabled]="isCsvRevertingInstalledInDb || csvPreviewResult!.installedInDb.length === 0"
+                class="rounded-lg border border-purple-300 bg-purple-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-600 disabled:opacity-60">
+                {{ isCsvRevertingInstalledInDb ? 'Updating...' : 'Revert ' + csvPreviewResult!.installedInDb.length + ' Serials' }}
+              </button>
             </div>
             @if (csvPreviewResult.installedInDb.length === 0) {
               <p class="text-sm text-gray-400">None</p>
@@ -1354,6 +1370,28 @@
                 <div class="rounded border border-warning-200 bg-warning-50 px-3 py-1.5 dark:border-warning-800 dark:bg-warning-900/20">
                   <p class="text-xs font-medium text-warning-800 dark:text-warning-300">{{ s.serialNumber }}</p>
                   <p class="text-[11px] text-gray-500">{{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
+                  <p class="text-[11px] text-gray-500">CSV: {{ s.csvStatus }} | DB: {{ s.dbStatus }}</p>
+                </div>
+              }
+            </div>
+          }
+          @if (csvModalTab === 'wrong-capacity') {
+            <div class="mb-3 flex flex-wrap items-center gap-3">
+              <p class="text-xs font-medium text-gray-500 dark:text-gray-400">These serials exist in the DB but are assigned to a <strong>different capacity</strong>. Reassign to current capacity:</p>
+              <button type="button" (click)="reassignWrongCapacity()"
+                [disabled]="isCsvReassigningCapacity || csvPreviewResult!.wrongCapacity.length === 0"
+                class="rounded-lg border border-rose-300 bg-rose-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-600 disabled:opacity-60">
+                {{ isCsvReassigningCapacity ? 'Reassigning...' : 'Reassign ' + csvPreviewResult!.wrongCapacity.length + ' Serials' }}
+              </button>
+            </div>
+            @if (csvPreviewResult.wrongCapacity.length === 0) {
+              <p class="text-sm text-gray-400">None</p>
+            }
+            <div class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+              @for (s of csvPreviewResult.wrongCapacity; track s.serialNumber) {
+                <div class="rounded border border-rose-200 bg-rose-50 px-3 py-1.5 dark:border-rose-800 dark:bg-rose-900/20">
+                  <p class="text-xs font-medium text-rose-800 dark:text-rose-300">{{ s.serialNumber }}</p>
+                  <p class="text-[11px] text-gray-500">Currently: {{ s.productName }} {{ s.capacityName }}<span class="ml-1 font-medium uppercase">{{ s.unitType }}</span></p>
                   <p class="text-[11px] text-gray-500">CSV: {{ s.csvStatus }} | DB: {{ s.dbStatus }}</p>
                 </div>
               }

@@ -1815,6 +1815,9 @@ export class SerialNumberService {
   }
 
   async csvPreview(rows: Array<{ serialNumber: string; unitType?: string; status: string }>, productId?: number, capacityId?: number) {
+    const targetProductId = productId ? Number(productId) : null;
+    const targetCapacityId = capacityId ? Number(capacityId) : null;
+
     const normalized = (rows ?? [])
       .map((r) => ({
         serialNumber: this.normalizeSerialNumber(r.serialNumber),
@@ -1843,13 +1846,17 @@ export class SerialNumberService {
       unitType: string | null;
       productName: string | null;
       capacityName: string | null;
+      productId: string | null;
+      capacityId: string | null;
     }>(
       `SELECT
          COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '') AS "serialNumber",
          COALESCE(to_jsonb(sn)->>'status', '') AS status,
          COALESCE(to_jsonb(sn)->>'unitType', to_jsonb(sn)->>'unit_type', '') AS "unitType",
          COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', '') AS "productName",
-         COALESCE(to_jsonb(c)->>'capacity', '') AS "capacityName"
+         COALESCE(to_jsonb(c)->>'capacity', '') AS "capacityName",
+         COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', '') AS "productId",
+         COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', '') AS "capacityId"
        FROM tblserial_numbers sn
        LEFT JOIN tblproducts p ON p.id::text = COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id')
        LEFT JOIN tblcapacity c ON c.id::text = COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id')
@@ -1858,7 +1865,7 @@ export class SerialNumberService {
       [serialList],
     );
 
-    const foundMap = new Map<string, { serialNumber: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>();
+    const foundMap = new Map<string, { serialNumber: string; dbStatus: string; unitType: string; productName: string; capacityName: string; productId: number | null; capacityId: number | null }>();
     for (const row of result.rows) {
       foundMap.set(row.serialNumber.toLowerCase().trim(), {
         serialNumber: row.serialNumber,
@@ -1866,6 +1873,8 @@ export class SerialNumberService {
         unitType: String(row.unitType ?? '').trim().toUpperCase(),
         productName: String(row.productName ?? '').trim(),
         capacityName: String(row.capacityName ?? '').trim(),
+        productId: row.productId ? Number(row.productId) : null,
+        capacityId: row.capacityId ? Number(row.capacityId) : null,
       });
     }
 
@@ -1874,6 +1883,7 @@ export class SerialNumberService {
     const installedInDb: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }> = [];
     const notFound: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }> = [];
     const otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }> = [];
+    const wrongCapacity: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string; dbProductId: number | null; dbCapacityId: number | null }> = [];
 
     // Unit type counts across all found serials
     const unitTypeCounts: Record<string, number> = {};
@@ -1907,14 +1917,24 @@ export class SerialNumberService {
         continue;
       }
 
-      // Both CSV and DB are non-installed (e.g., both in-stock) — no action needed
-      otherStatus.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, dbStatus: found.dbStatus, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
+      // Both CSV and DB are non-installed (e.g., both in-stock) — check if capacity matches
+      const dbProductId = found.productId ? Number(found.productId) : null;
+      const dbCapacityId = found.capacityId ? Number(found.capacityId) : null;
+
+      const dbCapacityMatches = !targetProductId || !targetCapacityId || !dbProductId || !dbCapacityId ||
+        (dbProductId === targetProductId && dbCapacityId === targetCapacityId);
+
+      if (!dbCapacityMatches) {
+        wrongCapacity.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, dbStatus: found.dbStatus, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName, dbProductId: found.productId, dbCapacityId: found.capacityId });
+      } else {
+        otherStatus.push({ serialNumber: found.serialNumber, csvStatus: row.csvStatus, dbStatus: found.dbStatus, unitType: found.unitType, productName: found.productName, capacityName: found.capacityName });
+      }
     }
 
     // Total sets = total found serials / unit types per set (approximate: count distinct unitType labels)
     const unitTypeLabels = Object.keys(unitTypeCounts);
     const unitTypeCount = unitTypeLabels.length || 1;
-    const totalFoundSerials = toInstall.length + alreadyInstalled.length + installedInDb.length + otherStatus.length;
+    const totalFoundSerials = toInstall.length + alreadyInstalled.length + installedInDb.length + otherStatus.length + wrongCapacity.length;
     const totalSets = unitTypeCount > 1 ? Math.floor(totalFoundSerials / unitTypeCount) : totalFoundSerials;
 
     // Remaining stocks = serials that are NOT installed (in-stock, reserved, etc.)
@@ -1923,7 +1943,7 @@ export class SerialNumberService {
     // Find serials in DB for this product/capacity that are NOT in the uploaded CSV
     let notInCsv: Array<{ serialNumber: string; dbStatus: string; unitType: string; productName: string; capacityName: string }> = [];
 
-    if (productId && capacityId) {
+    if (targetProductId && targetCapacityId) {
       const serialColumns = await this.getTableColumns('tblserial_numbers');
       const snCol = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
       const statusCol = this.pickColumn(serialColumns, ['status']);
@@ -1952,7 +1972,7 @@ export class SerialNumberService {
            WHERE sn."${productIdCol}" = $1
              AND sn."${capacityIdCol}" = $2
              AND LOWER(COALESCE(sn."${statusCol}", '')) NOT IN ('installed')`,
-          [productId, capacityId],
+          [targetProductId, targetCapacityId],
         );
 
         // Filter out serials that ARE in the CSV
@@ -1982,6 +2002,7 @@ export class SerialNumberService {
         installedInDb: installedInDb.length,
         notFound: notFound.length,
         otherStatus: otherStatus.length,
+        wrongCapacity: wrongCapacity.length,
         notInCsv: notInCsv.length,
         totalSets,
         unitTypeCounts,
@@ -1992,6 +2013,7 @@ export class SerialNumberService {
       installedInDb,
       notFound,
       otherStatus,
+      wrongCapacity,
       notInCsv,
     };
   }
@@ -2076,6 +2098,42 @@ export class SerialNumberService {
       message: `Updated ${result.rowCount ?? 0} serial number(s) to '${normalizedStatus}'`,
       updated: result.rowCount ?? 0,
     };
+  }
+
+  async bulkReassignCapacity(serialNumbers: string[], productId: number, capacityId: number) {
+    if (!productId || !capacityId) {
+      return { success: false, message: 'productId and capacityId are required' };
+    }
+
+    const normalized = (serialNumbers ?? [])
+      .map((s) => this.normalizeSerialNumber(s))
+      .filter((s) => s.length > 0);
+
+    if (normalized.length === 0) {
+      return { success: false, message: 'No serial numbers provided' };
+    }
+
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+    const productIdColumn = this.pickColumn(serialColumns, ['productId', 'product_id']);
+    const capacityIdColumn = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
+
+    if (!serialNumberColumn || !productIdColumn || !capacityIdColumn) {
+      return { success: false, message: 'Required columns not found in tblserial_numbers' };
+    }
+
+    const result = await this.databaseService.query<{ count: string }>(
+      `UPDATE tblserial_numbers
+       SET "${productIdColumn}" = $1, "${capacityIdColumn}" = $2
+       WHERE LOWER(regexp_replace(BTRIM(COALESCE("${serialNumberColumn}", '')), '\\s+', ' ', 'g')) = ANY(
+         SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($3::text[]) s
+       )
+       RETURNING id`,
+      [productId, capacityId, normalized],
+    );
+
+    const updated = result.rowCount ?? 0;
+    return { success: true, message: `Reassigned ${updated} serial(s) to the selected capacity`, updated };
   }
 
   async validateAndBulkInstall(serialNumbers: string[], userId?: number) {

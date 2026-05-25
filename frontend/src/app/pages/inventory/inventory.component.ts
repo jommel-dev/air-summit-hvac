@@ -185,10 +185,10 @@ export class InventoryComponent implements OnInit {
   isCsvModalOpen = false;
   isCsvParsing = false;
   isCsvConfirming = false;
-  csvModalTab: 'will-install' | 'already-installed' | 'installed-in-db' | 'not-found' | 'other' | 'not-in-csv' = 'will-install';
+  csvModalTab: 'will-install' | 'already-installed' | 'installed-in-db' | 'not-found' | 'other' | 'wrong-capacity' | 'not-in-csv' = 'will-install';
   csvPreviewResult: {
     summary: {
-      total: number; toInstall: number; alreadyInstalled: number; installedInDb?: number; notFound: number; otherStatus: number; notInCsv?: number;
+      total: number; toInstall: number; alreadyInstalled: number; installedInDb?: number; notFound: number; otherStatus: number; wrongCapacity?: number; notInCsv?: number;
       totalSets: number; unitTypeCounts: Record<string, number>; remainingStocks: number;
     };
     toInstall: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
@@ -196,6 +196,7 @@ export class InventoryComponent implements OnInit {
     installedInDb: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
     notFound: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }>;
     otherStatus: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
+    wrongCapacity: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string; dbProductId: number | null; dbCapacityId: number | null }>;
     notInCsv: Array<{ serialNumber: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
   } | null = null;
   csvConfirmMessage = '';
@@ -209,6 +210,9 @@ export class InventoryComponent implements OnInit {
   isCsvRevertingInstalled = false;
   isCsvInsertingNotFound = false;
   isCsvUpdatingNotInCsv = false;
+  csvInstalledInDbTargetStatus = 'in-stock';
+  isCsvRevertingInstalledInDb = false;
+  isCsvReassigningCapacity = false;
 
   // Cached stock counts for capacities to display in the folder tree
   isLoadingCapacityCounts = false;
@@ -2599,6 +2603,7 @@ export class InventoryComponent implements OnInit {
         installedInDb: result.installedInDb ?? [],
         notFound: result.notFound ?? [],
         otherStatus: result.otherStatus ?? [],
+        wrongCapacity: result.wrongCapacity ?? [],
         notInCsv: result.notInCsv ?? [],
       };
       this.csvModalTab = 'will-install';
@@ -2710,6 +2715,53 @@ export class InventoryComponent implements OnInit {
       if (this.selectedProductId && this.selectedCapacityId) await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
     } catch { this.csvConfirmError = 'Failed to update serial numbers.'; }
     finally { this.isCsvUpdatingNotInCsv = false; }
+  }
+
+  async revertInstalledInDbToStock(): Promise<void> {
+    if (!this.csvPreviewResult || this.isCsvRevertingInstalledInDb) return;
+    const serials = this.csvPreviewResult.installedInDb.map((s) => s.serialNumber);
+    if (serials.length === 0) { this.csvConfirmError = 'No serials to revert.'; return; }
+    this.isCsvRevertingInstalledInDb = true;
+    this.csvConfirmMessage = '';
+    this.csvConfirmError = '';
+    try {
+      const result = await this.salesOrderService.bulkUpdateSerialStatus(serials, this.csvInstalledInDbTargetStatus);
+      if (!result.success) { this.csvConfirmError = result.message ?? 'Failed to update serials'; return; }
+      this.csvConfirmMessage = result.message ?? `Reverted ${result.updated} serial(s) to ${this.csvInstalledInDbTargetStatus}`;
+      this.csvPreviewResult = {
+        ...this.csvPreviewResult,
+        summary: { ...this.csvPreviewResult.summary, installedInDb: 0 },
+        installedInDb: [],
+      };
+      if (this.selectedProductId && this.selectedCapacityId) await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
+    } catch { this.csvConfirmError = 'Failed to revert serial numbers.'; }
+    finally { this.isCsvRevertingInstalledInDb = false; }
+  }
+
+  async reassignWrongCapacity(): Promise<void> {
+    if (!this.csvPreviewResult || this.isCsvReassigningCapacity) return;
+    if (!this.selectedProductId || !this.selectedCapacityId) {
+      this.csvConfirmError = 'Select a product and capacity first.';
+      return;
+    }
+    const serials = this.csvPreviewResult.wrongCapacity.map((s) => s.serialNumber);
+    if (serials.length === 0) { this.csvConfirmError = 'No serials to reassign.'; return; }
+    this.isCsvReassigningCapacity = true;
+    this.csvConfirmMessage = '';
+    this.csvConfirmError = '';
+    try {
+      const result = await this.salesOrderService.bulkReassignCapacity(serials, this.selectedProductId, this.selectedCapacityId);
+      if (!result.success) { this.csvConfirmError = result.message ?? 'Failed to reassign serials'; return; }
+      this.csvConfirmMessage = result.message ?? `Reassigned ${result.updated} serial(s) to current capacity`;
+      this.csvPreviewResult = {
+        ...this.csvPreviewResult,
+        summary: { ...this.csvPreviewResult.summary, wrongCapacity: 0, otherStatus: this.csvPreviewResult.summary.otherStatus + serials.length },
+        otherStatus: [...this.csvPreviewResult.otherStatus, ...this.csvPreviewResult.wrongCapacity.map((s) => ({ serialNumber: s.serialNumber, csvStatus: s.csvStatus, dbStatus: s.dbStatus, unitType: s.unitType, productName: s.productName, capacityName: s.capacityName }))],
+        wrongCapacity: [],
+      };
+      if (this.selectedProductId && this.selectedCapacityId) await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);
+    } catch { this.csvConfirmError = 'Failed to reassign serial numbers.'; }
+    finally { this.isCsvReassigningCapacity = false; }
   }
 
   downloadCsvSummary(): void {
