@@ -983,7 +983,7 @@ export class SalesOrderService {
     success: boolean;
     message?: string;
     summary?: {
-      total: number; toInstall: number; alreadyInstalled: number; installedInDb?: number; notFound: number; otherStatus: number; notInCsv?: number;
+      total: number; toInstall: number; alreadyInstalled: number; installedInDb?: number; notFound: number; otherStatus: number; wrongCapacity?: number; notInCsv?: number;
       totalSets: number; unitTypeCounts: Record<string, number>; remainingStocks: number;
     };
     toInstall?: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
@@ -991,9 +991,18 @@ export class SalesOrderService {
     installedInDb?: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string; unitType: string; productName: string; capacityName: string }>;
     notFound?: Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }>;
     otherStatus?: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
+    wrongCapacity?: Array<{ serialNumber: string; csvStatus: string; dbStatus: string; unitType: string; productName: string; capacityName: string; dbProductId: number | null; dbCapacityId: number | null }>;
     notInCsv?: Array<{ serialNumber: string; dbStatus: string; unitType: string; productName: string; capacityName: string }>;
   }> {
     const response = await apiClient.post('/serial-number/csv-preview', { rows, productId, capacityId });
+    return response.data;
+  }
+
+  async bulkReassignCapacity(serialNumbers: string[], productId: number, capacityId: number): Promise<{ success: boolean; message?: string; updated?: number }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; updated?: number }>(
+      '/serial-number/bulk-reassign-capacity',
+      { serialNumbers, productId, capacityId },
+    );
     return response.data;
   }
 }

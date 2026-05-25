@@ -96,6 +96,18 @@ export class SerialNumberController {
     return this.serialNumberService.bulkUpdateStatus(body.serialNumbers, body.status, normalizedUserId);
   }
 
+  @Post('bulk-reassign-capacity')
+  bulkReassignCapacity(
+    @Body() body: { serialNumbers: string[]; productId: number; capacityId: number },
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const role = String(request.user?.roleName ?? '').trim().toLowerCase();
+    if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
+      return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
+    }
+    return this.serialNumberService.bulkReassignCapacity(body.serialNumbers, body.productId, body.capacityId);
+  }
+
   @Post('bulk-install-with-validation')
   bulkInstallWithValidation(
     @Body() body: { serialNumbers: string[] },
