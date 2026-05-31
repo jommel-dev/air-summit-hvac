@@ -1847,7 +1847,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   private checkAndAutoExportIfComplete(): void {
     if (this.hasAutoExportedForCurrentPo) return;
-    if (this.queuedSerialScans.length > 0 || this.isFlushingQueuedSerials) return;
+    if (this.queuedSerialScans.length > 0) return;
 
     // Check if all unit types across all products have their expected qty met
     for (const item of this.createForm.productItems) {
@@ -3551,9 +3551,6 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       this.serialFlushFailureCount = 0;
       this.isSerialAutoRetryPaused = false;
 
-      // Check if all sets are complete — auto-export Excel if so
-      this.checkAndAutoExportIfComplete();
-
       return true;
     } catch (error: unknown) {
       this.serialFlushFailureCount += 1;
@@ -3584,6 +3581,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
       if (this.queuedSerialScans.length > 0 && !this.isSerialAutoRetryPaused) {
         this.scheduleQueuedSerialFlush();
+      } else if (this.queuedSerialScans.length === 0) {
+        // All queued scans are flushed — check if scanning is complete
+        this.checkAndAutoExportIfComplete();
       }
     }
   }
