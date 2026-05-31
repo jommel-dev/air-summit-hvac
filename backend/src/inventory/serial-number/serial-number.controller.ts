@@ -22,6 +22,7 @@ import { RemovePurchaseOrderSerialDto } from './dto/remove-purchase-order-serial
 import { RemoveSalesOrderSerialDto } from './dto/remove-sales-order-serial.dto';
 import { AdjustPurchaseUnitTypesDto } from './dto/adjust-purchase-unit-types.dto';
 import { CheckSerialsDto } from './dto/check-serials.dto';
+import { ScanFileLoggerService } from './scan-file-logger.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { AuditActorContext } from 'src/audit-log/audit-log.service';
 import { resolveBranchId } from 'src/common/utils/resolve-branch-id';
@@ -35,6 +36,7 @@ export class SerialNumberController {
   constructor(
     private readonly serialNumberService: SerialNumberService,
     private readonly serialEventLogService: SerialEventLogService,
+    private readonly scanFileLogger: ScanFileLoggerService,
   ) {}
 
   private resolveAuditActor(
@@ -365,5 +367,30 @@ export class SerialNumberController {
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.serialNumberService.remove(+id);
+  }
+
+  // --- Admin: Scan Log Viewer ---
+
+  @Get('scan-logs')
+  listScanLogs(@Req() request: { user?: Record<string, unknown> }) {
+    const role = String(request.user?.roleName ?? '').trim().toLowerCase();
+    if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
+      return { success: false, message: 'Access denied.' };
+    }
+    return { success: true, files: this.scanFileLogger.listLogFiles() };
+  }
+
+  @Get('scan-logs/:date')
+  getScanLog(@Param('date') date: string, @Req() request: { user?: Record<string, unknown> }) {
+    const role = String(request.user?.roleName ?? '').trim().toLowerCase();
+    if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
+      return { success: false, message: 'Access denied.' };
+    }
+    // Validate date format
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return { success: false, message: 'Invalid date format. Use YYYY-MM-DD.' };
+    }
+    const entries = this.scanFileLogger.readLogFile(date);
+    return { success: true, date, totalEntries: entries.length, entries };
   }
 }

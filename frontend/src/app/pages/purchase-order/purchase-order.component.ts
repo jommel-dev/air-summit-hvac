@@ -244,8 +244,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private vendorDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly serialScanDebounceMs = 120;
-  private readonly serialBatchSize = 20;
-  private readonly serialBatchIdleMs = 1000;
+  private readonly serialBatchSize = 50;
+  private readonly serialBatchIdleMs = 1500;
   private readonly serialBatchIntervalMs = 5000;
   private readonly poIdleWarningMs = 12 * 60 * 1000;
   private readonly poSessionTimeoutMs = 15 * 60 * 1000;
@@ -254,6 +254,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   isFlushingQueuedSerials = false;
   private activeSerialFlushCount = 0;
   private serialFlushFailureCount = 0;
+  rejectedScanCount = 0;
+  rejectedScanReasons: Array<{ serialNumber: string; reason: string }> = [];
   private isSerialAutoRetryPaused = false;
   private readonly serialFlushMaxAutoRetryFailures = 2;
   private queuedSerialScans: QueuedPurchaseSerialScan[] = [];
@@ -1357,6 +1359,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
     this.resetCreateForm();
     this.editingPurchaseId = item.id;
+    this.hasAutoExportedForCurrentPo = false;
+    this.rejectedScanCount = 0;
+    this.rejectedScanReasons = [];
     this.isFormDrawerOpen = true;
     this.createError = '';
     this.createSuccess = '';
@@ -1836,6 +1841,28 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   hasAnyScannedSerials(): boolean {
     return this.buildScannedSerialExportRows().length > 0;
+  }
+
+  private hasAutoExportedForCurrentPo = false;
+
+  private checkAndAutoExportIfComplete(): void {
+    if (this.hasAutoExportedForCurrentPo) return;
+    if (this.queuedSerialScans.length > 0 || this.isFlushingQueuedSerials) return;
+
+    // Check if all unit types across all products have their expected qty met
+    for (const item of this.createForm.productItems) {
+      for (const unitType of item.unitTypes) {
+        const expectedQty = Math.max(0, Number(unitType.value) || 0);
+        if (expectedQty <= 0) continue; // No expected qty set — skip
+        const scannedCount = unitType.serials?.length ?? 0;
+        if (scannedCount < expectedQty) return; // Not complete yet
+      }
+    }
+
+    // All sets are complete — auto-export
+    this.hasAutoExportedForCurrentPo = true;
+    this.createSuccess = 'All serial numbers scanned! Exporting Excel...';
+    void this.exportScannedSerialsAsExcel();
   }
 
   async exportScannedSerialsAsExcel(): Promise<void> {
@@ -3216,6 +3243,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     const allowedQty = Number(unitEntry.value) || 0;
     if (allowedQty > 0 && unitEntry.serials.length >= allowedQty) {
       const errorMessage = `Limit reached. ${unitLabel} allows only ${allowedQty} serial number${allowedQty > 1 ? 's' : ''}`;
+      this.rejectedScanCount++;
+      this.rejectedScanReasons.push({ serialNumber, reason: `Qty limit (${allowedQty}) reached for ${unitLabel}` });
       this.setTransientScanError(
         productIndex,
         unitLabel,
@@ -3254,6 +3283,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
     if (existsInOtherUnitType) {
       unitEntry.scanError = 'Serial number already exists in another unit type for this product';
+      this.rejectedScanCount++;
+      this.rejectedScanReasons.push({ serialNumber, reason: 'Duplicate in other unit type' });
       void this.auditLogService.createAuditLog({
         action: 'SERIAL_SCAN_FAILURE',
         entityType: 'PurchaseOrder',
@@ -3276,6 +3307,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     if (existingInCurrentUnit) {
       unitEntry.scanError = 'Serial number already scanned for this unit type';
       unitEntry.scanInput = '';
+      this.rejectedScanCount++;
+      this.rejectedScanReasons.push({ serialNumber, reason: 'Duplicate in same unit type' });
       this.focusSerialScanInput(productIndex, unitLabel);
       void this.auditLogService.createAuditLog({
         action: 'SERIAL_SCAN_FAILURE',
@@ -3480,6 +3513,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           this.removeLocalSerial(unitEntry, entry.serialNumber);
           unitEntry.scanError = result?.message ?? 'Failed to save serial number';
           unitEntry.scanSuccess = '';
+          this.rejectedScanCount++;
+          this.rejectedScanReasons.push({ serialNumber: entry.serialNumber, reason: result?.message ?? 'API rejection' });
           void this.auditLogService.createAuditLog({
             action: 'SERIAL_SCAN_FAILURE',
             entityType: 'PurchaseOrder',
@@ -3516,6 +3551,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       this.serialFlushFailureCount = 0;
       this.isSerialAutoRetryPaused = false;
 
+      // Check if all sets are complete — auto-export Excel if so
+      this.checkAndAutoExportIfComplete();
+
       return true;
     } catch (error: unknown) {
       this.serialFlushFailureCount += 1;
@@ -3523,7 +3561,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
       if (this.serialFlushFailureCount >= this.serialFlushMaxAutoRetryFailures) {
         this.isSerialAutoRetryPaused = true;
-        this.createError = 'Failed to save scanned serial numbers. Automatic retry paused.';
+        this.createError = 'Failed to save scanned serial numbers. Automatic retry paused. Scans saved locally.';
+        // Save to localStorage as offline backup
+        this.saveScansToLocalStorage(batch);
       } else {
         this.createError = 'Failed to save scanned serial numbers. Retrying automatically.';
       }
@@ -3649,6 +3689,79 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   private hasPendingSerialScanWork(): boolean {
     return this.queuedSerialScans.length > 0 || this.isFlushingQueuedSerials;
+  }
+
+  // --- Offline scan queue (localStorage backup) ---
+
+  private readonly offlineStorageKey = 'po_offline_serial_scans';
+
+  private saveScansToLocalStorage(scans: QueuedPurchaseSerialScan[]): void {
+    try {
+      const existing = this.getOfflineScans();
+      const merged = [...existing, ...scans.map((s) => ({
+        serialNumber: s.serialNumber,
+        purchaseId: s.purchaseId,
+        productId: s.productId,
+        capacityId: s.capacityId,
+        unitLabel: s.unitLabel,
+        productIndex: s.productIndex,
+        savedAt: new Date().toISOString(),
+      }))];
+      localStorage.setItem(this.offlineStorageKey, JSON.stringify(merged));
+    } catch {
+      // localStorage might be full or unavailable
+    }
+  }
+
+  private getOfflineScans(): Array<{
+    serialNumber: string; purchaseId: number; productId: number; capacityId: number;
+    unitLabel: string; productIndex: number; savedAt: string;
+  }> {
+    try {
+      const raw = localStorage.getItem(this.offlineStorageKey);
+      if (!raw) return [];
+      return JSON.parse(raw) ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  private clearOfflineScans(): void {
+    try {
+      localStorage.removeItem(this.offlineStorageKey);
+    } catch {
+      // Silent
+    }
+  }
+
+  get offlineScanCount(): number {
+    return this.getOfflineScans().length;
+  }
+
+  async retryOfflineScans(): Promise<void> {
+    const offlineScans = this.getOfflineScans();
+    if (offlineScans.length === 0) return;
+
+    this.createError = '';
+    this.createSuccess = '';
+    this.serialFlushFailureCount = 0;
+    this.isSerialAutoRetryPaused = false;
+
+    // Re-queue them as normal scans
+    const rescanned: QueuedPurchaseSerialScan[] = offlineScans.map((s) => ({
+      serialNumber: s.serialNumber,
+      purchaseId: s.purchaseId,
+      productId: s.productId,
+      capacityId: s.capacityId,
+      unitLabel: s.unitLabel,
+      productIndex: s.productIndex,
+    }));
+
+    this.queuedSerialScans = [...rescanned, ...this.queuedSerialScans];
+    this.clearOfflineScans();
+    this.createSuccess = `Retrying ${rescanned.length} offline scan(s)...`;
+
+    void this.flushQueuedSerialScans();
   }
 
   private focusSerialScanInput(productIndex: number, unitLabel: string): void {

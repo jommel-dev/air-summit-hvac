@@ -1106,6 +1106,97 @@
   </div>
 </div>
 
+<!-- Scan Logs Tab -->
+<div *ngIf="activeTab === 'scan-logs'" class="space-y-4">
+  <div class="rounded-xl border border-orange-200 bg-orange-50 p-4 dark:border-orange-900 dark:bg-orange-950/20">
+    <h3 class="text-sm font-semibold text-orange-900 dark:text-orange-100">Serial Scan Logs</h3>
+    <p class="mt-2 text-sm text-orange-800 dark:text-orange-200">
+      File-based backup logs of all PO and SO serial scans. Logs are retained for 3 days and auto-deleted.
+    </p>
+  </div>
+
+  <div *ngIf="scanLogError" class="rounded-lg border border-error-200 bg-error-50 px-4 py-3 text-sm text-error-700 dark:border-error-800 dark:bg-error-900/20 dark:text-error-300">
+    {{ scanLogError }}
+  </div>
+
+  <!-- File list view -->
+  <div *ngIf="!selectedScanLogDate">
+    <div *ngIf="isLoadingScanLogs" class="text-sm text-gray-500">Loading scan log files...</div>
+    <div *ngIf="!isLoadingScanLogs && scanLogFiles.length === 0" class="text-sm text-gray-400">No scan log files found.</div>
+    <div *ngIf="!isLoadingScanLogs && scanLogFiles.length > 0" class="space-y-2">
+      <div *ngFor="let file of scanLogFiles"
+        class="flex cursor-pointer items-center justify-between rounded-lg border border-gray-200 px-4 py-3 transition hover:border-orange-300 hover:bg-orange-50 dark:border-gray-700 dark:hover:border-orange-700 dark:hover:bg-orange-900/10"
+        (click)="loadScanLogEntries(file.date)">
+        <div>
+          <p class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ file.date }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ file.sizeKb }} KB</p>
+        </div>
+        <span class="text-xs text-orange-600 dark:text-orange-400">View →</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Entries view -->
+  <div *ngIf="selectedScanLogDate">
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-100">Scan Log: {{ selectedScanLogDate }}</h4>
+        <p class="text-xs text-gray-500">{{ filteredScanLogEntries.length }} entries</p>
+      </div>
+      <div class="flex gap-2">
+        <input type="text" placeholder="Search serial, type, order..."
+          [(ngModel)]="scanLogSearch"
+          class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100" />
+        <button type="button" (click)="closeScanLogEntries()"
+          class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300">
+          ← Back
+        </button>
+      </div>
+    </div>
+
+    <div *ngIf="isLoadingScanLogEntries" class="text-sm text-gray-500">Loading entries...</div>
+
+    <div *ngIf="!isLoadingScanLogEntries && filteredScanLogEntries.length > 0" class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+      <table class="w-full text-left text-sm">
+        <thead class="bg-gray-50 dark:bg-gray-800">
+          <tr>
+            <th class="px-3 py-2 text-xs font-medium text-gray-500">Time</th>
+            <th class="px-3 py-2 text-xs font-medium text-gray-500">Type</th>
+            <th class="px-3 py-2 text-xs font-medium text-gray-500">Serial Number</th>
+            <th class="px-3 py-2 text-xs font-medium text-gray-500">Unit Type</th>
+            <th class="px-3 py-2 text-xs font-medium text-gray-500">Order ID</th>
+            <th class="px-3 py-2 text-xs font-medium text-gray-500">Status</th>
+            <th class="px-3 py-2 text-xs font-medium text-gray-500">Message</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+          <tr *ngFor="let entry of filteredScanLogEntries" class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+            <td class="whitespace-nowrap px-3 py-2 text-xs text-gray-600 dark:text-gray-300">{{ entry.timestamp | date:'HH:mm:ss' }}</td>
+            <td class="px-3 py-2">
+              <span class="rounded-full px-2 py-0.5 text-xs font-medium"
+                [ngClass]="entry.type === 'purchase' ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300' : 'bg-success-50 text-success-700 dark:bg-success-900/30 dark:text-success-300'">
+                {{ entry.type === 'purchase' ? 'PO' : 'SO' }}
+              </span>
+            </td>
+            <td class="px-3 py-2 text-xs font-medium text-gray-800 dark:text-gray-100">{{ entry.serialNumber }}</td>
+            <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">{{ entry.unitType || '—' }}</td>
+            <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">{{ entry.orderId || '—' }}</td>
+            <td class="px-3 py-2">
+              <span class="rounded-full px-2 py-0.5 text-xs font-medium"
+                [ngClass]="entry.success ? 'bg-success-50 text-success-700 dark:bg-success-900/30 dark:text-success-300' : 'bg-error-50 text-error-700 dark:bg-error-900/30 dark:text-error-300'">
+                {{ entry.success ? '✓' : '✗' }}
+              </span>
+            </td>
+            <td class="max-w-[200px] truncate px-3 py-2 text-xs text-gray-500 dark:text-gray-400">{{ entry.message || '—' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div *ngIf="!isLoadingScanLogEntries && filteredScanLogEntries.length === 0" class="text-sm text-gray-400">No entries found.</div>
+  </div>
+</div>
+
 @if (isAuditLogDrawerOpen) {
   <div class="fixed inset-0 z-100020 bg-gray-900/40" (click)="closeAuditLogDrawer()"></div>
   <aside
