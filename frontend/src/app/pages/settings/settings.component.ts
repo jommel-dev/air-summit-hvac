@@ -22,7 +22,7 @@ import {
 import axios from 'axios';
 import { apiClient } from '../../shared/services/api-client';
 
-type SettingsTab = 'system' | 'branches' | 'print-settings' | 'rbac-configs' | 'audit-logs';
+type SettingsTab = 'system' | 'branches' | 'print-settings' | 'rbac-configs' | 'audit-logs' | 'scan-logs';
 
 interface SettingsPermissionOption {
   key: string;
@@ -97,6 +97,15 @@ export class SettingsComponent implements OnInit {
   auditLogPageSize = 15;
   auditLogTotal = 0;
   auditLogTotalPages = 1;
+
+  // Scan Logs
+  isLoadingScanLogs = false;
+  scanLogFiles: Array<{ filename: string; date: string; sizeKb: number }> = [];
+  scanLogEntries: Array<{ timestamp: string; type: string; serialNumber: string; productId: number | null; capacityId: number | null; unitType: string | null; orderId: number | null; orderNumber: string | null; success: boolean; message?: string; userId?: number | null }> = [];
+  selectedScanLogDate: string | null = null;
+  isLoadingScanLogEntries = false;
+  scanLogError = '';
+  scanLogSearch = '';
   newPermissionForm: CreatePermissionKeyPayload = {
     key: '',
     label: '',
@@ -206,6 +215,7 @@ export class SettingsComponent implements OnInit {
     { key: 'print-settings', label: 'Print Settings' },
     { key: 'rbac-configs', label: 'RBAC Configs' },
     { key: 'audit-logs', label: 'Audit Logs' },
+    { key: 'scan-logs', label: 'Scan Logs' },
   ];
 
   get canReadSettings(): boolean {
@@ -259,6 +269,9 @@ export class SettingsComponent implements OnInit {
     this.activeTab = tab;
     if (tab === 'audit-logs') {
       void this.loadAuditLogs(1);
+    }
+    if (tab === 'scan-logs') {
+      void this.loadScanLogFiles();
     }
   }
 
@@ -411,6 +424,61 @@ export class SettingsComponent implements OnInit {
   getAuditChanges(item: AuditLogListItem | null | undefined): Array<{ field: string; oldValue: unknown; newValue: unknown }> {
     const changes = item?.metadata?.changes;
     return Array.isArray(changes) ? changes : [];
+  }
+
+  // --- Scan Logs ---
+
+  async loadScanLogFiles(): Promise<void> {
+    this.isLoadingScanLogs = true;
+    this.scanLogError = '';
+    try {
+      const response = await apiClient.get<{ success: boolean; files: Array<{ filename: string; date: string; sizeKb: number }> }>('/serial-number/scan-logs');
+      if (response.data.success) {
+        this.scanLogFiles = response.data.files ?? [];
+      } else {
+        this.scanLogError = 'Failed to load scan log files.';
+      }
+    } catch {
+      this.scanLogError = 'Failed to load scan log files.';
+    } finally {
+      this.isLoadingScanLogs = false;
+    }
+  }
+
+  async loadScanLogEntries(date: string): Promise<void> {
+    this.selectedScanLogDate = date;
+    this.isLoadingScanLogEntries = true;
+    this.scanLogError = '';
+    this.scanLogEntries = [];
+    try {
+      const response = await apiClient.get<{ success: boolean; entries: Array<any> }>(`/serial-number/scan-logs/${date}`);
+      if (response.data.success) {
+        this.scanLogEntries = response.data.entries ?? [];
+      } else {
+        this.scanLogError = 'Failed to load scan log entries.';
+      }
+    } catch {
+      this.scanLogError = 'Failed to load scan log entries.';
+    } finally {
+      this.isLoadingScanLogEntries = false;
+    }
+  }
+
+  get filteredScanLogEntries() {
+    const search = this.scanLogSearch.trim().toLowerCase();
+    if (!search) return this.scanLogEntries;
+    return this.scanLogEntries.filter((e) =>
+      e.serialNumber?.toLowerCase().includes(search) ||
+      e.type?.toLowerCase().includes(search) ||
+      String(e.orderId ?? '').includes(search) ||
+      e.orderNumber?.toLowerCase().includes(search)
+    );
+  }
+
+  closeScanLogEntries(): void {
+    this.selectedScanLogDate = null;
+    this.scanLogEntries = [];
+    this.scanLogSearch = '';
   }
 
   async loadRbacConfig(): Promise<void> {

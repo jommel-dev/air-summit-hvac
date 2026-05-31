@@ -4,6 +4,7 @@ import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { AuditLogService, AuditActorContext } from 'src/audit-log/audit-log.service';
 import { SerialEventLogService } from './serial-event-log.service';
+import { ScanFileLoggerService } from './scan-file-logger.service';
 import { ScanSalesOrderDto } from './dto/scan-sales-order.dto';
 import {
   ScanSalesOrderBatchDto,
@@ -98,6 +99,7 @@ export class SerialNumberService {
     private readonly databaseService: DatabaseService,
     private readonly auditLogService: AuditLogService,
     private readonly serialEventLogService: SerialEventLogService,
+    private readonly scanFileLogger: ScanFileLoggerService,
   ) {}
 
   private toOptionalNumber(value: unknown): number | null {
@@ -2554,6 +2556,19 @@ export class SerialNumberService {
             serialNumber: result.item?.serialNumber ?? null,
           },
         });
+
+        // File-based scan log for backup
+        this.scanFileLogger.logSalesScan({
+          serialNumber: this.normalizeSerialNumber(entry.serialNumber),
+          productId: entry.expectedProductId ? Number(entry.expectedProductId) : null,
+          capacityId: entry.expectedCapacityId ? Number(entry.expectedCapacityId) : null,
+          unitType: entry.expectedUnitType ?? null,
+          salesId: Number(entry.salesId) || null,
+          soNumber: null,
+          success: Boolean(result.success),
+          message: result.message,
+          userId: actor?.userId ?? null,
+        });
       } catch (error: unknown) {
         const message =
           error instanceof Error
@@ -3154,6 +3169,19 @@ export class SerialNumberService {
             serialNumber: result.item?.serialNumber ?? null,
             unitType: result.item?.unitType ?? entry.unitType ?? null,
           },
+        });
+
+        // File-based scan log for backup
+        this.scanFileLogger.logPurchaseScan({
+          serialNumber: this.normalizeSerialNumber(entry.serialNumber),
+          productId: entry.expectedProductId ? Number(entry.expectedProductId) : null,
+          capacityId: entry.expectedCapacityId ? Number(entry.expectedCapacityId) : null,
+          unitType: entry.unitType ?? null,
+          purchaseId: Number(entry.purchaseId) || null,
+          poNumber: null,
+          success: Boolean(result.success),
+          message: result.message,
+          userId: actor?.userId ?? null,
         });
       } catch (error: unknown) {
         await this.logSerialScanAudit(
