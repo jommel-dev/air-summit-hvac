@@ -562,6 +562,8 @@ interface ScanSalesSerialBatchResponse {
     serialNumber: string;
     success: boolean;
     message?: string;
+    validationStatus?: string;
+    details?: Record<string, unknown>;
     item?: {
       serialNumber?: string | null;
     };
@@ -943,6 +945,9 @@ export class SalesOrderService {
       expectedProductId?: number;
       expectedCapacityId?: number;
       expectedUnitType?: string;
+      forceAssign?: boolean;
+      forceInsert?: boolean;
+      forceReassign?: boolean;
     }>;
   }): Promise<ScanSalesSerialBatchResponse> {
     const response = await apiClient.post<ScanSalesSerialBatchResponse>(

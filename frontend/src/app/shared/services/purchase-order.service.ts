@@ -524,4 +524,71 @@ export class PurchaseOrderService {
     );
     return response.data;
   }
+
+  async addProductItem(
+    purchaseId: number,
+    item: {
+      productId: number;
+      capacityId: number;
+      unitPrice?: number;
+      sellPrice?: number;
+      discountPrice?: number;
+      totalSetQty?: number;
+      unitTypesQty?: Array<{ label: string; value: number }>;
+    },
+  ): Promise<{ success: boolean; message?: string }> {
+    const response = await apiClient.post<{ success: boolean; message?: string }>(
+      `/purchase/${purchaseId}/product-item`,
+      item,
+    );
+    return response.data;
+  }
+
+  async updateProductItem(
+    purchaseId: number,
+    item: {
+      oldProductId: number;
+      oldCapacityId: number;
+      productId: number;
+      capacityId: number;
+      unitPrice?: number;
+      sellPrice?: number;
+      discountPrice?: number;
+      totalSetQty?: number;
+      unitTypesQty?: Array<{ label: string; value: number }>;
+    },
+  ): Promise<{ success: boolean; message?: string }> {
+    const response = await apiClient.patch<{ success: boolean; message?: string }>(
+      `/purchase/${purchaseId}/update-product-item`,
+      item,
+    );
+    return response.data;
+  }
+
+  async updateSerialsAssignment(
+    purchaseId: number,
+    payload: {
+      oldProductId?: number | null;
+      oldCapacityId?: number | null;
+      newProductId: number;
+      newCapacityId: number;
+    },
+  ): Promise<{ success: boolean; message?: string; updatedCount?: number }> {
+    const response = await apiClient.patch<{ success: boolean; message?: string; updatedCount?: number }>(
+      `/purchase/${purchaseId}/update-serials-assignment`,
+      payload,
+    );
+    return response.data;
+  }
+
+  async removeProductItem(
+    purchaseId: number,
+    item: { productId: number; capacityId: number },
+  ): Promise<{ success: boolean; message?: string }> {
+    const response = await apiClient.post<{ success: boolean; message?: string }>(
+      `/purchase/${purchaseId}/remove-product-item`,
+      item,
+    );
+    return response.data;
+  }
 }

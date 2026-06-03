@@ -14,7 +14,8 @@ export type SerialEventType =
   | 'MARKED_DEFECTIVE'
   | 'STATUS_CHANGED'
   | 'BRANCH_CHANGED'
-  | 'CUSTOMER_CHANGED';
+  | 'CUSTOMER_CHANGED'
+  | 'FORCE_INSERT_SO';
 
 export interface LogEventParams {
   serialId: number;

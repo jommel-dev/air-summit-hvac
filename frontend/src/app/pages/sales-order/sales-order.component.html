@@ -33,6 +33,13 @@
       <div class="flex flex-wrap items-center gap-2">
         <button
           type="button"
+          (click)="openDailyUnitReleaseReport()"
+          class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Daily Unit Release
+        </button>
+        <button
+          type="button"
           (click)="openMigrationModal()"
           class="inline-flex items-center justify-center rounded-lg border border-brand-300 px-4 py-2.5 text-sm font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-500/10"
         >
@@ -966,6 +973,15 @@
                       Scan Serial ({{ getSelectedUnitTypeLabel(activeProductTabIndex) }})
                     </p>
 
+                    @if (rejectedScanCount > 0) {
+                      <div class="mb-2 flex items-center gap-2 rounded-lg border border-error-200 bg-error-50 px-3 py-2 text-xs text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+                        <svg class="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                        </svg>
+                        <span class="font-medium">{{ rejectedScanCount }} rejected scan{{ rejectedScanCount > 1 ? 's' : '' }}</span>
+                      </div>
+                    }
+
                     @for (unitType of activeItem.unitTypes; track unitType.label) {
                       @if (getSelectedUnitTypeLabel(activeProductTabIndex) === unitType.label) {
                         <div class="space-y-3">
@@ -984,6 +1000,9 @@
 
                           @if (unitType.scanError) {
                             <p class="text-xs text-error-600 dark:text-error-400">{{ unitType.scanError }}</p>
+                          }
+                          @if (unitType.scanInfo) {
+                            <p class="text-xs text-blue-600 dark:text-blue-400">ℹ {{ unitType.scanInfo }}</p>
                           }
                           @if (unitType.scanSuccess) {
                             <p class="text-xs text-success-700 dark:text-success-400">{{ unitType.scanSuccess }}</p>
@@ -1354,6 +1373,14 @@
         @if (drawerMode === 'edit' && !isMigrationDrawerMode) {
           <button
             type="button"
+            (click)="downloadSoDetails()"
+            [disabled]="isDownloadingSoDetails"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            {{ isDownloadingSoDetails ? 'Exporting...' : 'Download SO' }}
+          </button>
+          <button
+            type="button"
             (click)="printDeliveryReceiptFromDrawer()"
               [disabled]="isSubmitting || isRemitting || isSendingForDelivery || !editingSalesId || printingOrderIds.has(editingSalesId)"
             class="rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 transition hover:bg-brand-50 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
@@ -1645,4 +1672,72 @@
       </div>
     </div>
   </app-modal>
+
+  <app-serial-validation-modal
+    [isOpen]="isValidationModalOpen"
+    [validationStatus]="validationModalMode"
+    [details]="validationModalDetails"
+    (confirm)="onValidationModalConfirm()"
+    (cancel)="onValidationModalCancel()"
+  ></app-serial-validation-modal>
+
+  @if (isDailyUnitReleaseModalOpen) {
+    <div class="fixed inset-0 z-100006 bg-gray-950/55 backdrop-blur-sm" (click)="closeDailyUnitReleaseReport()"></div>
+    <div class="fixed inset-0 z-100007 flex items-center justify-center p-4">
+      <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <div class="border-b border-gray-200 bg-linear-to-r from-brand-50 via-white to-sky-50 px-6 py-5 dark:border-gray-800 dark:from-brand-500/10 dark:via-gray-900 dark:to-sky-500/10">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-700 dark:text-brand-300">Report</p>
+          <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">Daily Unit Release</h3>
+          <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">Export SO details with serial numbers, products, and payment info.</p>
+        </div>
+
+        <div class="space-y-4 px-6 py-5">
+          @if (dailyUnitReleaseError) {
+            <div class="rounded-2xl border border-error-200 bg-error-50/80 px-4 py-3 text-sm text-error-700 dark:border-error-500/20 dark:bg-error-500/10 dark:text-error-200">
+              {{ dailyUnitReleaseError }}
+            </div>
+          }
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Date From</label>
+              <input
+                type="date"
+                [(ngModel)]="dailyUnitReleaseDateFrom"
+                name="reportDateFrom"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+              />
+            </div>
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Date To</label>
+              <input
+                type="date"
+                [(ngModel)]="dailyUnitReleaseDateTo"
+                name="reportDateTo"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-white"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          <button
+            type="button"
+            (click)="closeDailyUnitReleaseReport()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            (click)="generateDailyUnitReleaseReport()"
+            [disabled]="isGeneratingDailyUnitRelease"
+            class="rounded-lg border border-brand-300 bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-60 dark:border-brand-500/50 dark:bg-brand-500 dark:hover:bg-brand-600"
+          >
+            {{ isGeneratingDailyUnitRelease ? 'Generating...' : 'Download Excel' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
 </div>

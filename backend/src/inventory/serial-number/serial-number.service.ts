@@ -24,6 +24,10 @@ import {
   BulkTransferResponse,
   BulkAssignOrderResponse,
 } from './interfaces/global-search.interfaces';
+import {
+  ScanSalesOrderResponse,
+  ScanSalesOrderValidationStatus,
+} from './interfaces/scan-sales-order-response.interface';
 
 type SerialScanRow = {
   id: number;
@@ -38,6 +42,7 @@ type SerialScanRow = {
   productName: string | null;
   unit: string | null;
   capacity: string | null;
+  isDefective?: boolean | null;
 };
 
 type CapacityStockSerialRow = {
@@ -468,6 +473,47 @@ export class SerialNumberService {
     }
 
     return `sales order #${normalizedSalesId}`;
+  }
+
+  private async getSalesOrderCustomerName(
+    salesId: number | string | null | undefined,
+  ): Promise<string | null> {
+    const normalizedSalesId = String(salesId ?? '').trim();
+    if (!normalizedSalesId) {
+      return null;
+    }
+
+    for (const tableName of ['tblsales_order', 'tblsales_orders']) {
+      try {
+        const result = await this.databaseService.query<{ customerName: string | null }>(
+          `SELECT cust.name AS "customerName"
+           FROM ${tableName} so
+           LEFT JOIN tblcustomer cust ON cust.id = so.customer_id
+           WHERE so.id::text = $1
+           LIMIT 1`,
+          [normalizedSalesId],
+        );
+
+        if (result.rowCount === 0) {
+          continue;
+        }
+
+        return String(result.rows[0]?.customerName ?? '').trim() || null;
+      } catch (error: unknown) {
+        const errorCode =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? String((error as { code?: unknown }).code ?? '')
+            : '';
+
+        if (errorCode === '42P01') {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    return null;
   }
 
   private async buildProductMismatchMessage(input: {
@@ -2305,9 +2351,10 @@ export class SerialNumberService {
       return result;
     };
 
-    // Pick previousSalesId column if available
+    // Pick previousSalesId and previousPurchaseId columns if available
     const serialColumns = await this.getTableColumns('tblserial_numbers');
     const serialPreviousSalesIdColumn = this.pickColumn(serialColumns, ['previousSalesId', 'previous_sales_id']);
+    const serialPreviousPurchaseIdColumn = this.pickColumn(serialColumns, ['previousPurchaseId', 'previous_purchase_id']);
 
     if (!serialNumber) {
       return auditFailure('serialNumber is required');
@@ -2364,7 +2411,8 @@ export class SerialNumberService {
           to_jsonb(p)->>'productname'
         ) AS "productName",
         COALESCE(to_jsonb(p)->>'unit', null) AS unit,
-        COALESCE(to_jsonb(c)->>'capacity', null) AS capacity
+        COALESCE(to_jsonb(c)->>'capacity', null) AS capacity,
+        COALESCE((to_jsonb(sn)->>'isDefective')::boolean, false) AS "isDefective"
       FROM tblserial_numbers sn
       LEFT JOIN tblproducts p
         ON p.id::text = COALESCE(
@@ -2395,7 +2443,86 @@ export class SerialNumberService {
     );
 
     if (serialResult.rowCount === 0) {
-      return auditFailure('Serial number not found');
+      // --- Non-existing serial handling ---
+      if (!dto.forceInsert) {
+        // Return structured not_found response (soft warning)
+        await this.logSerialScanAudit(
+          'SERIAL_SCAN_FAILURE',
+          'SalesOrder',
+          salesId,
+          serialNumber,
+          'Serial number not found',
+          auditMetadata,
+          actor,
+        );
+        return {
+          success: false,
+          message: 'Serial number not found',
+          validationStatus: 'not_found' as ScanSalesOrderValidationStatus,
+          item: undefined,
+        } as ScanSalesOrderResponse;
+      }
+
+      // forceInsert = true: create a new serial record and assign to salesId
+      const insertRecord: Record<string, unknown> = {
+        [serialNumberColumn]: serialNumber,
+        [serialSalesIdColumn]: salesId,
+      };
+
+      if (serialStatusColumn) {
+        insertRecord[serialStatusColumn] = 'reserved';
+      }
+
+      const serialProductIdColumn = this.pickColumn(serialColumns, ['productId', 'product_id']);
+      const serialCapacityIdColumn = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
+      const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+
+      if (serialProductIdColumn && expectedProductId !== null) {
+        insertRecord[serialProductIdColumn] = expectedProductId;
+      }
+      if (serialCapacityIdColumn && expectedCapacityId !== null) {
+        insertRecord[serialCapacityIdColumn] = expectedCapacityId;
+      }
+      if (serialUnitTypeColumn && expectedUnitType) {
+        insertRecord[serialUnitTypeColumn] = expectedUnitType;
+      }
+      if (serialBranchIdColumn && branchId !== null) {
+        insertRecord[serialBranchIdColumn] = branchId;
+      }
+      if (serialCreatedByColumn && userId !== undefined) {
+        insertRecord[serialCreatedByColumn] = userId;
+      }
+
+      const insertResult = await this.runInsert('tblserial_numbers', insertRecord);
+
+      if (insertResult.rowCount === 0) {
+        return auditFailure('Unable to create serial number record');
+      }
+
+      const newSerialId = insertResult.rows[0]?.id;
+
+      await this.serialEventLogService.logEvent({
+        serialId: newSerialId,
+        serialNumber,
+        eventType: 'FORCE_INSERT_SO',
+        previousStatus: null,
+        newStatus: 'reserved',
+        previousSalesId: null,
+        newSalesId: salesId,
+        previousBranchId: null,
+        newBranchId: branchId,
+        performedBy: actor?.userId ?? null,
+        performedByUsername: actor?.username ?? null,
+        ipAddress: actor?.ipAddress ?? null,
+      });
+
+      return auditSuccess({
+        success: true,
+        message: 'Serial number created and assigned to sales order',
+        item: {
+          serialNumber,
+        },
+      });
     }
 
     const serial = serialResult.rows[0];
@@ -2403,34 +2530,79 @@ export class SerialNumberService {
     const normalizedStatus = String(serial.status ?? '').trim().toLowerCase();
     const reservedStatuses = new Set(['reserved', 'sold', 'released', 'out', 'outbound']);
 
-    if (
-      expectedProductId !== null &&
-      Number(serial.productId) !== Number(expectedProductId)
-    ) {
-      return auditFailure(
-        await this.buildProductMismatchMessage({
-          expectedProductId,
-          expectedCapacityId,
-          actualProductName: serial.productName,
-          actualCapacityName: serial.capacity,
-          purchaseId: serial.purchaseId,
-        }),
+    // Defective check: after serial lookup, before product/capacity mismatch
+    if (serial.isDefective && !dto.forceAssign) {
+      await this.logSerialScanAudit(
+        'SERIAL_SCAN_FAILURE',
+        'SalesOrder',
+        salesId,
+        serialNumber,
+        'Serial number is marked as defective',
+        auditMetadata,
+        actor,
       );
+      return {
+        success: false,
+        validationStatus: 'warning_defective' as ScanSalesOrderValidationStatus,
+        message: 'Serial number is marked as defective',
+        item: undefined,
+      } as ScanSalesOrderResponse;
     }
 
-    if (
-      expectedCapacityId !== null &&
-      Number(serial.capacityId) !== Number(expectedCapacityId)
-    ) {
-      return auditFailure(
-        await this.buildCapacityMismatchMessage({
-          expectedProductId,
-          expectedCapacityId,
-          actualProductName: serial.productName,
-          actualCapacityName: serial.capacity,
-          purchaseId: serial.purchaseId,
-        }),
-      );
+    // Product/Capacity mismatch check — skip when forceAssign is true
+    if (!dto.forceAssign) {
+      const productMismatch =
+        expectedProductId !== null &&
+        Number(serial.productId) !== Number(expectedProductId);
+      const capacityMismatch =
+        expectedCapacityId !== null &&
+        Number(serial.capacityId) !== Number(expectedCapacityId);
+
+      if (productMismatch || capacityMismatch) {
+        const expectedProductName = await this.getProductDisplayName(expectedProductId);
+        const expectedCapacityName = await this.getCapacityDisplayName(expectedCapacityId);
+        const actualProductName = String(serial.productName ?? '').trim() || null;
+        const actualCapacityName = String(serial.capacity ?? '').trim() || null;
+
+        const message = productMismatch
+          ? await this.buildProductMismatchMessage({
+              expectedProductId,
+              expectedCapacityId,
+              actualProductName,
+              actualCapacityName,
+              purchaseId: serial.purchaseId,
+            })
+          : await this.buildCapacityMismatchMessage({
+              expectedProductId,
+              expectedCapacityId,
+              actualProductName,
+              actualCapacityName,
+              purchaseId: serial.purchaseId,
+            });
+
+        await this.logSerialScanAudit(
+          'SERIAL_SCAN_FAILURE',
+          'SalesOrder',
+          salesId,
+          serialNumber,
+          message,
+          auditMetadata,
+          actor,
+        );
+
+        return {
+          success: false,
+          message,
+          validationStatus: 'warning_mismatch' as const,
+          details: {
+            expectedProductName: expectedProductName ?? undefined,
+            expectedCapacityName: expectedCapacityName ?? undefined,
+            actualProductName: actualProductName ?? undefined,
+            actualCapacityName: actualCapacityName ?? undefined,
+          },
+          item: undefined,
+        };
+      }
     }
 
     if (expectedUnitType) {
@@ -2440,14 +2612,88 @@ export class SerialNumberService {
       }
     }
 
-    // If serial is already assigned to a different SO, block
+    // If serial is already assigned to a different SO
     if (Number.isFinite(currentSalesId) && currentSalesId > 0 && currentSalesId !== salesId) {
-      const salesReference = await this.getSalesOrderReference(currentSalesId);
-      return auditFailure(
-        salesReference
-          ? `Serial number is already assigned to ${salesReference}`
-          : `Serial number is already assigned to sales order #${currentSalesId}`,
-      );
+      if (!dto.forceReassign) {
+        // Return structured warning_reassignment response
+        const currentSoNumber = await this.getSalesOrderReference(currentSalesId);
+        const currentCustomerName = await this.getSalesOrderCustomerName(currentSalesId);
+
+        const message = currentSoNumber
+          ? `Serial number is already assigned to ${currentSoNumber}`
+          : `Serial number is already assigned to another sales order`;
+
+        await this.logSerialScanAudit(
+          'SERIAL_SCAN_FAILURE',
+          'SalesOrder',
+          salesId,
+          serialNumber,
+          message,
+          auditMetadata,
+          actor,
+        );
+
+        return {
+          success: false,
+          message,
+          validationStatus: 'warning_reassignment' as ScanSalesOrderValidationStatus,
+          details: {
+            currentCustomerName: currentCustomerName ?? undefined,
+            currentSoNumber: currentSoNumber ?? undefined,
+            currentSalesId,
+          },
+          item: undefined,
+        } as ScanSalesOrderResponse;
+      }
+
+      // forceReassign = true: proceed with reassignment
+      const reassignUpdateRecord: Record<string, unknown> = {
+        [serialSalesIdColumn]: salesId,
+      };
+      if (serialPreviousSalesIdColumn) {
+        reassignUpdateRecord[serialPreviousSalesIdColumn] = currentSalesId;
+      }
+      if (serialStatusColumn) {
+        reassignUpdateRecord[serialStatusColumn] = 'reserved';
+      }
+      if (serialBranchIdColumn && branchId !== null) {
+        reassignUpdateRecord[serialBranchIdColumn] = branchId;
+      }
+      if (serialCreatedByColumn && userId !== undefined) {
+        reassignUpdateRecord[serialCreatedByColumn] = userId;
+      }
+
+      const reassignResult = await this.runUpdateById('tblserial_numbers', serial.id, reassignUpdateRecord);
+
+      if (reassignResult.rowCount === 0) {
+        return auditFailure('Unable to update serial number for sales order');
+      }
+
+      await this.serialEventLogService.logEvent({
+        serialId: serial.id,
+        serialNumber: serial.serialNumber ?? serialNumber,
+        eventType: 'ASSIGNED_TO_SO',
+        previousStatus: serial.status,
+        newStatus: 'reserved',
+        previousSalesId: currentSalesId,
+        newSalesId: salesId,
+        previousBranchId: serial.branchId ? Number(serial.branchId) : null,
+        newBranchId: branchId,
+        performedBy: actor?.userId ?? null,
+        performedByUsername: actor?.username ?? null,
+        ipAddress: actor?.ipAddress ?? null,
+      });
+
+      return auditSuccess({
+        success: true,
+        message: 'Serial number reassigned to sales order',
+        item: {
+          ...serial,
+          salesId: String(salesId),
+          status: 'reserved',
+          branchId: branchId !== null ? String(branchId) : serial.branchId,
+        },
+      });
     }
 
     if (reservedStatuses.has(normalizedStatus) && currentSalesId === salesId) {
@@ -2456,6 +2702,90 @@ export class SerialNumberService {
         message: 'Serial number already scanned for this sales order',
         item: serial,
       });
+    }
+
+    // --- Scanned-status serial acceptance (step 6 in pipeline) ---
+    // If the serial has status "scanned" and a non-null purchaseId, it was scanned for a PO
+    // that hasn't been approved yet. Reassign it to this SO with an informational response.
+    const serialPurchaseId = this.toOptionalNumber(serial.purchaseId);
+    if (normalizedStatus === 'scanned' && serialPurchaseId !== null && serialPurchaseId > 0) {
+      const serialPurchaseIdColumn = this.pickColumn(serialColumns, [
+        'purchaseId',
+        'purchase_id',
+        'po_id',
+        'purchaseOrderId',
+        'purchase_order_id',
+      ]);
+
+      const scannedUpdateRecord: Record<string, unknown> = {
+        [serialSalesIdColumn]: salesId,
+      };
+      if (serialStatusColumn) {
+        scannedUpdateRecord[serialStatusColumn] = 'reserved';
+      }
+      if (serialPreviousPurchaseIdColumn) {
+        scannedUpdateRecord[serialPreviousPurchaseIdColumn] = serialPurchaseId;
+      }
+      // Clear the purchaseId since the serial is now assigned to an SO
+      if (serialPurchaseIdColumn) {
+        scannedUpdateRecord[serialPurchaseIdColumn] = null;
+      }
+      if (serialBranchIdColumn && branchId !== null) {
+        scannedUpdateRecord[serialBranchIdColumn] = branchId;
+      }
+      if (serialCreatedByColumn && userId !== undefined) {
+        scannedUpdateRecord[serialCreatedByColumn] = userId;
+      }
+
+      const scannedUpdateResult = await this.runUpdateById('tblserial_numbers', serial.id, scannedUpdateRecord);
+
+      if (scannedUpdateResult.rowCount === 0) {
+        return auditFailure('Unable to update serial number for sales order');
+      }
+
+      // Fetch PO number for the response details
+      const previousPoNumber = await this.getPurchaseOrderReference(serialPurchaseId);
+
+      await this.serialEventLogService.logEvent({
+        serialId: serial.id,
+        serialNumber: serial.serialNumber ?? serialNumber,
+        eventType: 'ASSIGNED_TO_SO',
+        previousStatus: serial.status,
+        newStatus: 'reserved',
+        previousSalesId: Number.isFinite(currentSalesId) && currentSalesId > 0 ? currentSalesId : null,
+        newSalesId: salesId,
+        previousBranchId: serial.branchId ? Number(serial.branchId) : null,
+        newBranchId: branchId,
+        performedBy: actor?.userId ?? null,
+        performedByUsername: actor?.username ?? null,
+        ipAddress: actor?.ipAddress ?? null,
+      });
+
+      await this.logSerialScanAudit(
+        'SERIAL_SCAN_SUCCESS',
+        'SalesOrder',
+        salesId,
+        serialNumber,
+        'Serial reassigned from pending PO',
+        { ...auditMetadata, previousPurchaseId: serialPurchaseId, previousPoNumber },
+        actor,
+      );
+
+      return {
+        success: true,
+        message: 'Serial reassigned from pending PO',
+        validationStatus: 'info_scanned_status' as const,
+        details: {
+          previousPoNumber: previousPoNumber ?? undefined,
+          previousPurchaseId: serialPurchaseId,
+        },
+        item: {
+          ...serial,
+          salesId: String(salesId),
+          status: 'reserved',
+          branchId: branchId !== null ? String(branchId) : serial.branchId,
+        },
+      } as ScanSalesOrderResponse;
     }
 
     // If serial is being reassigned to a new SO (after transfer), set previousSalesId
@@ -2523,6 +2853,8 @@ export class SerialNumberService {
       serialNumber: string;
       success: boolean;
       message?: string;
+      validationStatus?: string;
+      details?: Record<string, unknown>;
       item?: {
         serialNumber?: string | null;
       };
@@ -2544,14 +2876,25 @@ export class SerialNumberService {
         ...(entry.expectedUnitType === null || entry.expectedUnitType === undefined
           ? {}
           : { expectedUnitType: entry.expectedUnitType }),
+        ...(entry.forceAssign ? { forceAssign: true } : {}),
+        ...(entry.forceInsert ? { forceInsert: true } : {}),
+        ...(entry.forceReassign ? { forceReassign: true } : {}),
       };
 
       try {
-        const result = await this.scanSalesOrder(payload, actor);
+        const result = await this.scanSalesOrder(payload, actor) as {
+          success: boolean;
+          message: string;
+          validationStatus?: string;
+          details?: Record<string, unknown>;
+          item?: { serialNumber?: string | null };
+        };
         results.push({
           serialNumber: this.normalizeSerialNumber(entry.serialNumber),
           success: Boolean(result.success),
           message: result.message,
+          validationStatus: result.validationStatus,
+          details: result.details,
           item: {
             serialNumber: result.item?.serialNumber ?? null,
           },
@@ -2598,7 +2941,14 @@ export class SerialNumberService {
     }
 
     const successCount = results.filter((entry) => entry.success).length;
-    const failureCount = results.length - successCount;
+    const warningCount = results.filter(
+      (entry) =>
+        !entry.success &&
+        entry.validationStatus &&
+        (entry.validationStatus.startsWith('warning_') || entry.validationStatus === 'not_found'),
+    ).length;
+    // failureCount excludes validation warnings (those are handled by frontend modals)
+    const failureCount = results.length - successCount - warningCount;
 
     return {
       success: failureCount === 0,
@@ -2610,6 +2960,7 @@ export class SerialNumberService {
         total: results.length,
         successCount,
         failureCount,
+        warningCount,
       },
       items: results,
     };
@@ -3066,6 +3417,12 @@ export class SerialNumberService {
     }
     if (serialSalesIdColumn) {
       updateRecord[serialSalesIdColumn] = null;
+    }
+    if (serialProductIdColumn && expectedProductId !== null) {
+      updateRecord[serialProductIdColumn] = expectedProductId;
+    }
+    if (serialCapacityIdColumn && expectedCapacityId !== null) {
+      updateRecord[serialCapacityIdColumn] = expectedCapacityId;
     }
     if (serialUnitTypeColumn) {
       updateRecord[serialUnitTypeColumn] = unitType;

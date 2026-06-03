@@ -401,7 +401,7 @@
 
                 <div>
                   <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Capacity</label>
-                  <select [(ngModel)]="activeItem.capacityId" [name]="'capacityId_' + activeProductTabIndex" [disabled]="isMasterDataDrawerMode() || isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
+                  <select [(ngModel)]="activeItem.capacityId" [name]="'capacityId_' + activeProductTabIndex" [disabled]="isMasterDataDrawerMode() || isTransferPOViewOnly" (ngModelChange)="onCapacityChanged(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
                     <option value="">Select Capacity</option>
                     @for (capacity of getCapacitiesByProduct(activeItem.productId); track capacity.id) {
                       <option [value]="capacity.id">{{ capacity.name }}</option>
