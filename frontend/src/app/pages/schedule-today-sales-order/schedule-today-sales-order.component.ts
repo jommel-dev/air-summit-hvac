@@ -7,11 +7,28 @@ import {
   SalesOrderDetailItem,
   SalesOrderListItem,
   SalesOrderService,
+  SalesReturnSerialOptionGroup,
 } from '../../shared/services/sales-order.service';
 import { NotificationService } from '../../shared/services/notification.service';
 import { AuditLogFrontendService } from '../../shared/services/audit-log.service';
 import { ModalComponent } from '../../shared/components/ui/modal/modal.component';
+import {
+  SerialValidationModalComponent,
+  SerialValidationModalMode,
+  SerialValidationDetails,
+} from '../sales-order/serial-validation-modal/serial-validation-modal.component';
 import axios from 'axios';
+
+interface PendingValidationWarning {
+  serialNumber: string;
+  productIndex: number;
+  unitLabel: string;
+  validationStatus: string;
+  details: Record<string, unknown>;
+  salesId: number;
+  productId: number;
+  capacityId: number;
+}
 
 interface WarehouseUnitTypeScanItem {
   label: string;
@@ -20,6 +37,7 @@ interface WarehouseUnitTypeScanItem {
   scanInput: string;
   scanError: string;
   scanSuccess: string;
+  scanInfo: string;
   isScanning: boolean;
 }
 
@@ -55,7 +73,7 @@ interface TodaySchedulePendingSerialRemoval {
 
 @Component({
   selector: 'app-schedule-today-sales-order',
-  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, ModalComponent],
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, ModalComponent, SerialValidationModalComponent],
   templateUrl: './schedule-today-sales-order.component.html',
 })
 export class ScheduleTodaySalesOrderComponent implements OnInit {
@@ -96,13 +114,34 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     this.errorModal.isOpen = false;
   }
   private readonly serialScanDebounceMs = 120;
-  private readonly serialBatchSize = 20;
-  private readonly serialBatchIdleMs = 1000;
+  private readonly serialBatchSize = 50;
+  private readonly serialBatchIdleMs = 1500;
   private readonly serialBatchIntervalMs = 5000;
   private serialScanTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   isFlushingQueuedSerials = false;
   private activeSerialFlushCount = 0;
   private queuedSerialScans: QueuedSalesSerialScan[] = [];
+  rejectedScanCount: number = 0;
+  rejectedScanList: Array<{ serialNumber: string; reason: string; timestamp: Date }> = [];
+
+  // Serial validation warning modal state
+  pendingValidationWarnings: PendingValidationWarning[] = [];
+  currentValidationWarning: PendingValidationWarning | null = null;
+  isValidationModalOpen = false;
+  validationModalMode: SerialValidationModalMode | null = null;
+  validationModalDetails: SerialValidationDetails = {};
+
+  // Return modal state
+  isReturnModalOpen = false;
+  isReturnModalLoading = false;
+  returnModalError = '';
+  pendingReturnOrder: SalesOrderListItem | null = null;
+  returnSerialGroups: SalesReturnSerialOptionGroup[] = [];
+  returnForm = {
+    remarks: '',
+    isDefective: false,
+  };
+  selectedReturnedSerialNumbers = new Set<string>();
 
   get pendingSerialScanCount(): number {
     return this.queuedSerialScans.length + this.activeSerialFlushCount;
@@ -313,6 +352,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     unitEntry.scanInput = value;
     unitEntry.scanError = '';
     unitEntry.scanSuccess = '';
+    unitEntry.scanInfo = '';
 
     const normalizedSerial = this.normalizeSerial(value);
     if (!normalizedSerial) {
@@ -370,6 +410,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     const serialNumber = this.normalizeSerial(unitEntry.scanInput);
     unitEntry.scanError = '';
     unitEntry.scanSuccess = '';
+    unitEntry.scanInfo = '';
 
     if (!serialNumber) {
       if (showEmptyError) {
@@ -540,6 +581,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
 
     unitEntry.scanError = '';
     unitEntry.scanSuccess = '';
+    unitEntry.scanInfo = '';
     unitEntry.isScanning = true;
 
     try {
@@ -713,53 +755,159 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       return;
     }
 
-    const rawRemarks = window.prompt('Enter reason for returned units:');
-    if (rawRemarks === null) {
+    this.pendingReturnOrder = order;
+    this.isReturnModalOpen = true;
+    this.isReturnModalLoading = true;
+    this.returnModalError = '';
+    this.returnForm = { remarks: '', isDefective: false };
+    this.selectedReturnedSerialNumbers = new Set<string>();
+    this.returnSerialGroups = [];
+
+    try {
+      const detail = await this.salesOrderService.getSalesOrderById(order.id);
+      this.returnSerialGroups = this.buildReturnSerialGroups(detail);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.returnModalError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to load sales order serials';
+      } else {
+        this.returnModalError = 'Failed to load sales order serials';
+      }
+    } finally {
+      this.isReturnModalLoading = false;
+    }
+  }
+
+  closeReturnModal(): void {
+    if (this.isReturnModalLoading || this.returningOrderIds.has(this.pendingReturnOrder?.id ?? -1)) {
       return;
     }
 
-    const remarks = rawRemarks.trim();
+    this.isReturnModalOpen = false;
+    this.pendingReturnOrder = null;
+    this.returnModalError = '';
+    this.returnSerialGroups = [];
+    this.returnForm = { remarks: '', isDefective: false };
+    this.selectedReturnedSerialNumbers = new Set<string>();
+  }
+
+  onReturnDefectiveChange(value: boolean): void {
+    this.returnForm.isDefective = value;
+    if (!value) {
+      this.selectedReturnedSerialNumbers = new Set<string>();
+    }
+  }
+
+  isReturnedSerialSelected(serialNumber: string): boolean {
+    return this.selectedReturnedSerialNumbers.has(this.normalizeSerial(serialNumber));
+  }
+
+  toggleReturnedSerialSelection(serialNumber: string, checked: boolean): void {
+    const normalizedSerial = this.normalizeSerial(serialNumber);
+    if (!normalizedSerial) return;
+
+    const next = new Set(this.selectedReturnedSerialNumbers);
+    if (checked) {
+      next.add(normalizedSerial);
+    } else {
+      next.delete(normalizedSerial);
+    }
+    this.selectedReturnedSerialNumbers = next;
+  }
+
+  async confirmReturnedUnits(): Promise<void> {
+    const order = this.pendingReturnOrder;
+    if (!order || !this.isForDeliveryStatus(order.status ?? '')) {
+      return;
+    }
+
+    const remarks = String(this.returnForm.remarks ?? '').trim();
     if (!remarks) {
-      this.notificationService.warning('Missing Input', 'Return remarks are required.');
+      this.returnModalError = 'Return remarks are required.';
+      return;
+    }
+
+    if (this.returnForm.isDefective && this.selectedReturnedSerialNumbers.size === 0) {
+      this.returnModalError = 'Select one or more indoor or outdoor serial numbers for defective return.';
       return;
     }
 
     this.returningOrderIds.add(order.id);
     this.loadErrorMessage = '';
+    this.returnModalError = '';
 
     try {
       const response = await this.salesOrderService.updateSalesOrder(order.id, {
         productItems: [],
         status: 'pending',
         remarks: `Returned Units: ${remarks}`,
+        returnedSerialDetails: {
+          isDefective: this.returnForm.isDefective,
+          defectReason: this.returnForm.isDefective ? remarks : undefined,
+          defectDate: this.returnForm.isDefective ? new Date().toISOString() : null,
+          serialNumbers: this.returnForm.isDefective
+            ? [...this.selectedReturnedSerialNumbers]
+            : undefined,
+        },
       });
 
       if (!response.success) {
-        this.notificationService.error(
-          'Update Failed',
-          response.message ?? 'Failed to mark sales order as returned',
-        );
+        this.returnModalError = response.message ?? 'Failed to mark sales order as returned';
         return;
       }
 
       this.notificationService.success(
         'Success',
-        'Returned units has been recorded and status moved back to Pending.',
+        this.returnForm.isDefective
+          ? 'Returned units were recorded, linked serials were marked defective, and the SO status moved back to Pending.'
+          : 'Returned units has been recorded and status moved back to Pending.',
       );
+      this.closeReturnModal();
       await this.loadTodaySchedules();
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
-        this.notificationService.error(
-          'Update Failed',
+        this.returnModalError =
           (error.response?.data as { message?: string } | undefined)?.message ??
-            'Failed to mark sales order as returned',
-        );
+          'Failed to mark sales order as returned';
       } else {
-        this.notificationService.error('Update Failed', 'Failed to mark sales order as returned');
+        this.returnModalError = 'Failed to mark sales order as returned';
       }
     } finally {
       this.returningOrderIds.delete(order.id);
     }
+  }
+
+  private buildReturnSerialGroups(detail: SalesOrderDetailItem): SalesReturnSerialOptionGroup[] {
+    const grouped = new Map<string, string[]>();
+
+    for (const item of detail.productItems ?? []) {
+      for (const [unitLabel, serials] of Object.entries(item.serialNumbers ?? {})) {
+        const normalizedUnitLabel = String(unitLabel ?? '').trim();
+        if (!normalizedUnitLabel || !Array.isArray(serials)) {
+          continue;
+        }
+
+        const existing = grouped.get(normalizedUnitLabel) ?? [];
+        const seen = new Set(existing.map((s) => this.normalizeSerial(s).toLowerCase()));
+
+        for (const serial of serials) {
+          const normalizedSerial = this.normalizeSerial(serial);
+          const normalizedKey = normalizedSerial.toLowerCase();
+          if (!normalizedSerial || seen.has(normalizedKey)) continue;
+          seen.add(normalizedKey);
+          existing.push(normalizedSerial);
+        }
+
+        if (existing.length > 0) {
+          grouped.set(normalizedUnitLabel, existing);
+        }
+      }
+    }
+
+    return [...grouped.entries()]
+      .map(([unitLabel, serials]) => ({ unitLabel, serials }))
+      .sort((left, right) => left.unitLabel.localeCompare(right.unitLabel));
   }
 
   formatAmount(value: number): string {
@@ -768,6 +916,118 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       currency: 'PHP',
       minimumFractionDigits: 2,
     }).format(Number(value ?? 0));
+  }
+
+  isDownloadingSoDetails = false;
+  downloadingSoId: number | null = null;
+
+  async downloadSoDetails(order: SalesOrderListItem): Promise<void> {
+    if (this.isDownloadingSoDetails) return;
+
+    this.isDownloadingSoDetails = true;
+    this.downloadingSoId = order.id;
+
+    try {
+      const detail = await this.salesOrderService.getSalesOrderById(order.id);
+      if (!detail) {
+        this.notificationService.error('Export Failed', 'Failed to load SO details for export');
+        return;
+      }
+
+      const excelJsModule = await import('exceljs').catch(async () => import('exceljs/dist/exceljs.min.js'));
+      const WorkbookCtor =
+        (excelJsModule as { Workbook?: new () => any }).Workbook ??
+        (excelJsModule as { default?: { Workbook?: new () => any } }).default?.Workbook;
+
+      if (!WorkbookCtor) {
+        this.notificationService.error('Export Failed', 'Excel export is unavailable.');
+        return;
+      }
+
+      const workbook = new WorkbookCtor();
+
+      // Sheet 1: SO Summary
+      const summarySheet = workbook.addWorksheet('SO Details');
+      summarySheet.columns = [{ width: 22 }, { width: 40 }];
+      summarySheet.addRow(['SO Number', detail.soNumber ?? '']);
+      summarySheet.addRow(['Customer', detail.customerName ?? '']);
+      summarySheet.addRow(['Address', detail.customerAddress ?? '']);
+      summarySheet.addRow(['Contact Person', detail.customerContactPerson ?? '']);
+      summarySheet.addRow(['Contact Number', detail.customerContactNumber ?? '']);
+      summarySheet.addRow(['Status', detail.status ?? '']);
+      summarySheet.addRow(['Schedule Date', detail.scheduleDate ?? '']);
+      summarySheet.addRow(['Sales Type', detail.salesType ?? '']);
+      summarySheet.addRow(['Total Amount', detail.totalAmount ?? 0]);
+      summarySheet.addRow(['Remarks', detail.remarks ?? '']);
+      summarySheet.addRow(['Created At', detail.createdAt ?? '']);
+      summarySheet.getColumn(1).font = { bold: true };
+
+      // Sheet 2: Product Items & Serials
+      const serialsSheet = workbook.addWorksheet('Product Items & Serials');
+      const serialHeaders = ['Product Name', 'Capacity', 'Unit Type', 'Serial Number', 'Unit Price', 'Sell Price', 'Discount Price', 'Qty'];
+      const headerRow = serialsSheet.addRow(serialHeaders);
+      headerRow.font = { bold: true };
+      serialsSheet.columns = serialHeaders.map(() => ({ width: 20 }));
+
+      for (const item of detail.productItems ?? []) {
+        const product = this.catalogProducts.find((p) => String(p.id) === String(item.productId));
+        const productName = product?.name ?? `Product #${item.productId}`;
+        const capacity = product?.capacities?.find((c) => String(c.id) === String(item.capacityId));
+        const capacityName = capacity?.name ?? `Capacity #${item.capacityId}`;
+
+        const serialEntries = item.serialNumbers ?? {};
+        let hasSerials = false;
+
+        for (const [unitType, serials] of Object.entries(serialEntries)) {
+          if (!Array.isArray(serials)) continue;
+          for (const serial of serials) {
+            serialsSheet.addRow([productName, capacityName, unitType, serial, item.unitPrice, item.sellPrice, item.discountPrice, item.totalSetQty]);
+            hasSerials = true;
+          }
+        }
+
+        if (!hasSerials) {
+          serialsSheet.addRow([productName, capacityName, '', '(no serials)', item.unitPrice, item.sellPrice, item.discountPrice, item.totalSetQty]);
+        }
+      }
+
+      // Sheet 3: Payment Details
+      const paymentSheet = workbook.addWorksheet('Payment Details');
+      const paymentHeaders = ['Method', 'Amount', 'Status', 'Terms', 'Due Date', 'Bank Name', 'Reference No', 'Check No', 'Down Payment'];
+      const paymentHeaderRow = paymentSheet.addRow(paymentHeaders);
+      paymentHeaderRow.font = { bold: true };
+      paymentSheet.columns = paymentHeaders.map(() => ({ width: 18 }));
+
+      for (const payment of detail.paymentDetails ?? []) {
+        paymentSheet.addRow([
+          payment.method ?? '',
+          payment.amount ?? 0,
+          payment.status ?? '',
+          payment.terms ?? '',
+          payment.termsDueDate ?? '',
+          payment.bankName ?? '',
+          payment.referenceNo ?? '',
+          payment.checkNo ?? '',
+          payment.downPayment ?? 0,
+        ]);
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const fileName = `${detail.soNumber ?? `SO-${order.id}`}_details.xlsx`;
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = fileName;
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error: unknown) {
+      this.notificationService.error('Export Failed', 'Failed to export SO details');
+      console.error('downloadSoDetails error', error);
+    } finally {
+      this.isDownloadingSoDetails = false;
+      this.downloadingSoId = null;
+    }
   }
 
   formatDate(value: string | null): string {
@@ -896,6 +1156,13 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     this.isDetailLoading = true;
     this.detailError = '';
     this.serialPageByUnitType = {};
+    this.rejectedScanCount = 0;
+    this.rejectedScanList = [];
+    this.pendingValidationWarnings = [];
+    this.currentValidationWarning = null;
+    this.isValidationModalOpen = false;
+    this.validationModalMode = null;
+    this.validationModalDetails = {};
     this.closeGuardDialog();
 
     try {
@@ -962,6 +1229,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
           scanInput: '',
           scanError: '',
           scanSuccess: '',
+          scanInfo: '',
           isScanning: false,
         };
       });
@@ -1085,6 +1353,8 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       });
 
       const results = Array.isArray(response.items) ? response.items : [];
+      const warningStatuses = ['not_found', 'warning_defective', 'warning_mismatch', 'warning_reassignment'];
+
       batch.forEach((entry, index) => {
         const result = results[index];
         const unitEntry = this.getUnitEntry(entry.productIndex, entry.unitLabel);
@@ -1092,10 +1362,41 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
           return;
         }
 
+        // Check if this result is a validation warning that needs user confirmation
+        if (!result?.success && result?.validationStatus && warningStatuses.includes(result.validationStatus)) {
+          this.removeLocalSerial(unitEntry, entry.serialNumber);
+          unitEntry.scanError = '';
+          unitEntry.scanSuccess = '';
+          unitEntry.scanInfo = '';
+          this.pendingValidationWarnings.push({
+            serialNumber: entry.serialNumber,
+            productIndex: entry.productIndex,
+            unitLabel: entry.unitLabel,
+            validationStatus: result.validationStatus,
+            details: result.details ?? {},
+            salesId: entry.salesId,
+            productId: entry.productId,
+            capacityId: entry.capacityId,
+          });
+          return;
+        }
+
         if (!result?.success) {
           this.removeLocalSerial(unitEntry, entry.serialNumber);
           unitEntry.scanError = result?.message ?? 'Failed to save serial number';
           unitEntry.scanSuccess = '';
+          unitEntry.scanInfo = '';
+
+          // Increment rejected counter only for hard errors (no validationStatus means it's not a validation warning)
+          if (!result?.validationStatus) {
+            this.rejectedScanCount++;
+            this.rejectedScanList.push({
+              serialNumber: entry.serialNumber,
+              reason: result?.message ?? 'Failed to save serial number',
+              timestamp: new Date(),
+            });
+          }
+
           void this.auditLogService.createAuditLog({
             action: 'SERIAL_SCAN_FAILURE',
             entityType: 'SalesOrder',
@@ -1119,13 +1420,31 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
         );
         this.replaceLocalSerial(unitEntry, entry.serialNumber, normalizedSavedSerial);
         unitEntry.scanError = '';
-        unitEntry.scanSuccess =
-          response.summary && response.summary.successCount > 1
-            ? `${response.summary.successCount} serial numbers saved`
-            : result.message ?? 'Serial number saved successfully';
+
+        // Display informational message for scanned-status serial reassignment
+        if (
+          result.validationStatus === 'info_scanned_status' &&
+          result.details?.['previousPoNumber']
+        ) {
+          unitEntry.scanInfo = `Serial reassigned from PO ${result.details['previousPoNumber']}`;
+          unitEntry.scanSuccess = '';
+        } else {
+          unitEntry.scanInfo = '';
+          unitEntry.scanSuccess =
+            response.summary && response.summary.successCount > 1
+              ? `${response.summary.successCount} serial numbers saved`
+              : result.message ?? 'Serial number saved successfully';
+        }
       });
 
-      if (!response.success && (response.summary?.failureCount ?? 0) > 0) {
+      // After processing all batch items, present queued warnings sequentially
+      if (this.pendingValidationWarnings.length > 0 && !this.isValidationModalOpen) {
+        this.processNextValidationWarning();
+      }
+
+      // Only show error modal for genuine hard failures (not validation warnings handled by modals)
+      const hardFailureCount = (response.summary?.failureCount ?? 0);
+      if (!response.success && hardFailureCount > 0) {
         this.openErrorModal('Scan Failed', response.message ?? 'Some serial numbers failed to save.');
       }
 
@@ -1138,6 +1457,16 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       if (axios.isAxiosError(error)) {
         errorMessage =
           (error.response?.data as { message?: string } | undefined)?.message ?? errorMessage;
+      }
+
+      // Increment rejected scan counter for network/timeout/backend errors
+      for (const entry of batch) {
+        this.rejectedScanCount++;
+        this.rejectedScanList.push({
+          serialNumber: entry.serialNumber,
+          reason: errorMessage,
+          timestamp: new Date(),
+        });
       }
 
       this.openErrorModal('Scan Error', errorMessage);
@@ -1182,6 +1511,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       if (unitEntry) {
         unitEntry.scanError = message;
         unitEntry.scanSuccess = '';
+        unitEntry.scanInfo = '';
       }
     }
   }
@@ -1236,6 +1566,158 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
 
   private hasPendingSerialScanWork(): boolean {
     return this.queuedSerialScans.length > 0 || this.isFlushingQueuedSerials;
+  }
+
+  // --- Serial Validation Warning Modal Methods ---
+
+  processNextValidationWarning(): void {
+    if (this.pendingValidationWarnings.length === 0) {
+      this.currentValidationWarning = null;
+      this.isValidationModalOpen = false;
+      this.validationModalMode = null;
+      this.validationModalDetails = {};
+      return;
+    }
+
+    const warning = this.pendingValidationWarnings[0];
+    this.currentValidationWarning = warning;
+    this.validationModalMode = this.mapValidationStatusToMode(warning.validationStatus);
+    this.validationModalDetails = {
+      serialNumber: warning.serialNumber,
+      ...(warning.details as SerialValidationDetails),
+    };
+    this.isValidationModalOpen = true;
+  }
+
+  onValidationModalConfirm(): void {
+    const warning = this.currentValidationWarning;
+    if (!warning) {
+      this.isValidationModalOpen = false;
+      return;
+    }
+
+    // Remove the current warning from queue
+    this.pendingValidationWarnings.shift();
+    this.isValidationModalOpen = false;
+
+    // Re-send the serial with the appropriate force flag
+    const forceFlags = this.getForceFlags(warning.validationStatus);
+    void this.rescanWithForce(warning, forceFlags);
+
+    // Process next warning in queue
+    this.processNextValidationWarning();
+  }
+
+  onValidationModalCancel(): void {
+    // Discard the serial from the queue
+    this.pendingValidationWarnings.shift();
+    this.currentValidationWarning = null;
+    this.isValidationModalOpen = false;
+
+    // Refocus scan input
+    const unitLabel = this.getSelectedUnitTypeLabel(this.activeProductTabIndex);
+    this.focusSerialScanInput(this.activeProductTabIndex, unitLabel);
+
+    // Process next warning in queue
+    this.processNextValidationWarning();
+  }
+
+  private mapValidationStatusToMode(status: string): SerialValidationModalMode {
+    switch (status) {
+      case 'warning_mismatch':
+        return 'mismatch-warning';
+      case 'warning_defective':
+        return 'defective-warning';
+      case 'warning_reassignment':
+        return 'reassignment-warning';
+      case 'not_found':
+        return 'force-insert-prompt';
+      default:
+        return 'mismatch-warning';
+    }
+  }
+
+  private getForceFlags(validationStatus: string): Record<string, boolean> {
+    switch (validationStatus) {
+      case 'warning_mismatch':
+      case 'warning_defective':
+        return { forceAssign: true };
+      case 'not_found':
+        return { forceInsert: true };
+      case 'warning_reassignment':
+        return { forceReassign: true };
+      default:
+        return { forceAssign: true };
+    }
+  }
+
+  private async rescanWithForce(
+    warning: PendingValidationWarning,
+    forceFlags: Record<string, boolean>,
+  ): Promise<void> {
+    const unitEntry = this.getUnitEntry(warning.productIndex, warning.unitLabel);
+
+    try {
+      const response = await this.salesOrderService.scanSalesSerialBatch({
+        items: [
+          {
+            serialNumber: warning.serialNumber,
+            salesId: warning.salesId,
+            expectedProductId: warning.productId,
+            expectedCapacityId: warning.capacityId,
+            expectedUnitType: warning.unitLabel,
+            ...forceFlags,
+          },
+        ],
+      });
+
+      const result = response.items?.[0];
+      if (result?.success) {
+        const normalizedSerial = this.normalizeSerial(
+          result.item?.serialNumber ?? warning.serialNumber,
+        );
+
+        if (unitEntry) {
+          // Add serial back to the local list
+          unitEntry.serials = [...unitEntry.serials, normalizedSerial];
+          unitEntry.scanError = '';
+          unitEntry.scanInfo = '';
+          unitEntry.scanSuccess = result.message ?? 'Serial number saved successfully';
+        }
+      } else {
+        if (unitEntry) {
+          unitEntry.scanError = result?.message ?? 'Force scan failed';
+          unitEntry.scanSuccess = '';
+          unitEntry.scanInfo = '';
+        }
+
+        this.rejectedScanCount++;
+        this.rejectedScanList.push({
+          serialNumber: warning.serialNumber,
+          reason: result?.message ?? 'Force scan failed',
+          timestamp: new Date(),
+        });
+      }
+    } catch (error: unknown) {
+      let errorMessage = 'Failed to re-scan serial number';
+      if (axios.isAxiosError(error)) {
+        errorMessage =
+          (error.response?.data as { message?: string } | undefined)?.message ?? errorMessage;
+      }
+
+      if (unitEntry) {
+        unitEntry.scanError = errorMessage;
+        unitEntry.scanSuccess = '';
+        unitEntry.scanInfo = '';
+      }
+
+      this.rejectedScanCount++;
+      this.rejectedScanList.push({
+        serialNumber: warning.serialNumber,
+        reason: errorMessage,
+        timestamp: new Date(),
+      });
+    }
   }
 
   private focusSerialScanInput(productIndex: number, unitLabel: string): void {

@@ -1,0 +1,119 @@
+@if (isOpen && validationStatus) {
+  <!-- Backdrop -->
+  <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="onCancel()"></div>
+
+  <!-- Modal container -->
+  <div class="fixed inset-0 z-100011 flex items-center justify-center p-4">
+    <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+
+      <!-- Header -->
+      <div [class]="getHeaderGradientClasses()">
+        <p [class]="getHeaderLabelClasses()">{{ getHeaderLabel() }}</p>
+        <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">{{ getTitle() }}</h3>
+      </div>
+
+      <!-- Body -->
+      <div class="space-y-4 px-6 py-5">
+        <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">{{ getMessage() }}</p>
+
+        <!-- Mismatch details -->
+        @if (validationStatus === 'mismatch-warning') {
+          <div [class]="getAlertClasses()">
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="font-medium">Expected Product:</span>
+                <span>{{ details.expectedProductName || '—' }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="font-medium">Expected Capacity:</span>
+                <span>{{ details.expectedCapacityName || '—' }}</span>
+              </div>
+              <div class="mt-2 border-t border-amber-200 pt-2 dark:border-amber-500/20">
+                <div class="flex items-center justify-between">
+                  <span class="font-medium">Actual Product:</span>
+                  <span>{{ details.actualProductName || '—' }}</span>
+                </div>
+                <div class="flex items-center justify-between">
+                  <span class="font-medium">Actual Capacity:</span>
+                  <span>{{ details.actualCapacityName || '—' }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        }
+
+        <!-- Defective details -->
+        @if (validationStatus === 'defective-warning') {
+          <div [class]="getAlertClasses()">
+            <div class="flex items-center gap-2">
+              <svg class="h-5 w-5 shrink-0 text-rose-500" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+              </svg>
+              <span class="font-medium">This serial is marked as DEFECTIVE</span>
+            </div>
+            @if (details.serialNumber) {
+              <p class="mt-1 text-xs opacity-80">Serial: {{ details.serialNumber }}</p>
+            }
+          </div>
+        }
+
+        <!-- Reassignment details -->
+        @if (validationStatus === 'reassignment-warning') {
+          <div [class]="getAlertClasses()">
+            <div class="space-y-2">
+              @if (details.serialNumber) {
+                <div class="flex items-center justify-between">
+                  <span class="font-medium">Serial Number:</span>
+                  <span>{{ details.serialNumber }}</span>
+                </div>
+              }
+              <div class="flex items-center justify-between">
+                <span class="font-medium">Current Customer:</span>
+                <span>{{ details.currentCustomerName || '—' }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="font-medium">Current SO:</span>
+                <span>{{ details.currentSoNumber || '—' }}</span>
+              </div>
+            </div>
+          </div>
+        }
+
+        <!-- Force insert details -->
+        @if (validationStatus === 'force-insert-prompt') {
+          <div [class]="getAlertClasses()">
+            <div class="flex items-center gap-2">
+              <svg class="h-5 w-5 shrink-0 text-sky-500" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+              <span>A new serial record will be created and assigned to this SO line item.</span>
+            </div>
+            @if (details.serialNumber) {
+              <p class="mt-1 text-xs opacity-80">Serial: {{ details.serialNumber }}</p>
+            }
+          </div>
+        }
+      </div>
+
+      <!-- Footer -->
+      <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button
+          type="button"
+          (click)="onCancel()"
+          class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          {{ getCancelText() }}
+        </button>
+        @if (validationStatus !== 'mismatch-warning') {
+          <button
+            type="button"
+            (click)="onConfirm()"
+            [class]="getConfirmButtonClasses()"
+          >
+            {{ getConfirmText() }}
+          </button>
+        }
+      </div>
+    </div>
+  </div>
+}

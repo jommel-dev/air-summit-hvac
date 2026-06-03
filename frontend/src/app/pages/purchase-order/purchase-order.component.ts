@@ -74,6 +74,10 @@ interface PurchaseProductFormItem {
   discountPrice: number | '';
   unitTypes: PurchaseUnitTypeFormItem[];
   totalSetQty: number;
+  // Edit-mode tracking (transient, not persisted)
+  _preservedSerials?: Record<string, string[]>;
+  _originalProductId?: string;
+  _originalCapacityId?: string;
 }
 
 interface PurchaseUnitTypeFormItem {
@@ -259,6 +263,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   private isSerialAutoRetryPaused = false;
   private readonly serialFlushMaxAutoRetryFailures = 2;
   private queuedSerialScans: QueuedPurchaseSerialScan[] = [];
+  /** Tracks serials deleted during this session to prevent re-queue after failed batch flush */
+  private deletedSerialKeys: Set<string> = new Set();
   private queuedSerialFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private queuedSerialIntervalTimer: ReturnType<typeof setInterval> | null = null;
   private poIdleWarningTimer: ReturnType<typeof setTimeout> | null = null;
@@ -520,10 +526,12 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
+    // Capture old productId BEFORE mutation so onProductChanged can track it
+    const previousProductId = item.productId;
     item.productId = String(productId ?? '').trim();
     this.productSearchByItem[index] = this.getProductDisplayLabel(item.productId);
     this.isProductDropdownOpenByItem[index] = false;
-    this.onProductChanged(index);
+    this.onProductChanged(index, previousProductId);
   }
 
   getProductSearchValue(index: number): string {
@@ -1419,6 +1427,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
    * For transfer POs, get serials from originatingSalesOrder if present.
    */
   getDisplayUnitTypeSerials(unitType: any): string[] {
+    const sortAsc = (arr: string[]) => arr.slice().sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
     if (this.isMasterDataDrawerMode() && this.createForm.productItems.length === 1) {
       const normalizedLabel = String(unitType?.label ?? '').trim().toLowerCase();
       const allocations = this.getAllocatedFallbackSerialsByProductKey();
@@ -1439,11 +1449,11 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
             merged.push(serial);
           }
 
-          return merged;
+          return sortAsc(merged);
         }
       }
 
-      return allocated;
+      return sortAsc(allocated);
     }
 
     if (this.isMasterDataDrawerMode()) {
@@ -1465,7 +1475,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           merged.push(serial);
         }
 
-        return merged;
+        return sortAsc(merged);
       }
     }
 
@@ -1489,10 +1499,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         return true;
       });
       if (soProduct && soProduct.serialNumbers && unitType.label in soProduct.serialNumbers) {
-        return soProduct.serialNumbers[unitType.label] || [];
+        return sortAsc(soProduct.serialNumbers[unitType.label] || []);
       }
     }
-    return unitType.serials;
+    return sortAsc(unitType.serials);
   }
 
   private getBaseUnresolvedLinkedSerialEntries(): Array<{ unitType: string; serials: string[] }> {
@@ -2465,6 +2475,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.unresolvedLinkedSerialNumbersByUnitType = {};
     this.poLinkedSerialNumbersByUnitType = {};
     this.queuedSerialScans = [];
+    this.deletedSerialKeys.clear();
     this.activeSerialFlushCount = 0;
     this.serialFlushFailureCount = 0;
     this.isSerialAutoRetryPaused = false;
@@ -2472,6 +2483,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.isFormDrawerOpen = false;
     this.isProcessingApprovalAction = false;
     this.isExportingSerials = false;
+
+    // Refresh the PO list so the user sees their changes immediately
+    void this.loadTabData(this.activeTab);
   }
 
   private openRefreshConfirmDialog(): void {
@@ -2825,6 +2839,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
+    const removedItem = this.createForm.productItems[index];
+
     this.createForm.productItems = this.createForm.productItems.filter((_, itemIndex) => itemIndex !== index);
     delete this.selectedUnitTypeByProduct[index];
     this.selectedUnitTypeByProduct = Object.fromEntries(
@@ -2842,11 +2858,37 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.activeProductTabIndex = Math.max(0, Math.min(this.activeProductTabIndex, this.createForm.productItems.length - 1));
     this.ensureSelectedUnitType(this.activeProductTabIndex);
     this.recalculateTotalAmount();
+
+    // Auto-delete from DB when in edit mode
+    if (this.drawerMode === 'edit' && this.editingPurchaseId && removedItem) {
+      const productId = Number(removedItem.productId);
+      const capacityId = Number(removedItem.capacityId);
+      if (Number.isFinite(productId) && productId > 0 && Number.isFinite(capacityId) && capacityId > 0) {
+        void this.purchaseOrderService.removeProductItem(this.editingPurchaseId, {
+          productId,
+          capacityId,
+        });
+      }
+    }
   }
 
-  onProductChanged(index: number): void {
+  onProductChanged(index: number, previousProductId?: string): void {
     const nextItems = [...this.createForm.productItems];
     const currentItem = nextItems[index];
+    // Use the explicitly passed previousProductId (from selectProduct) if available,
+    // otherwise fall back to the current value (for other callers).
+    const oldProductId = previousProductId ?? currentItem?.productId ?? '';
+    const oldCapacityId = currentItem?.capacityId ?? '';
+
+    // Capture existing serials before rebuilding unitTypes (edit mode only)
+    const preservedSerials: Record<string, string[]> = {};
+    if (this.drawerMode === 'edit' && currentItem.unitTypes) {
+      for (const ut of currentItem.unitTypes) {
+        if (ut.serials && ut.serials.length > 0) {
+          preservedSerials[ut.label] = [...ut.serials];
+        }
+      }
+    }
 
     let nextUnitTypes;
     if (this.poType === 'replacement') {
@@ -2859,16 +2901,179 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         : [this.createUnitTypeEntry('set', 0, [])];
     }
 
+    // If in edit mode with preserved serials, populate new unitTypes with preserved serials
+    // so they remain visible in the UI while the user selects a new capacity
+    if (this.drawerMode === 'edit' && Object.keys(preservedSerials).length > 0) {
+      // First pass: match by label
+      for (const ut of nextUnitTypes) {
+        if (preservedSerials[ut.label]) {
+          ut.serials = [...preservedSerials[ut.label]];
+          ut.serialInput = preservedSerials[ut.label].join('\n');
+        }
+      }
+
+      // Collect unmatched serials (labels that don't exist in new unitTypes)
+      const remaining: string[] = [];
+      for (const [label, serials] of Object.entries(preservedSerials)) {
+        if (!nextUnitTypes.some((ut: PurchaseUnitTypeFormItem) => ut.label === label)) {
+          remaining.push(...serials);
+        }
+      }
+
+      // Put remaining into first unit type
+      if (remaining.length > 0 && nextUnitTypes.length > 0) {
+        nextUnitTypes[0].serials = [...(nextUnitTypes[0].serials || []), ...remaining];
+        nextUnitTypes[0].serialInput = nextUnitTypes[0].serials.join('\n');
+      }
+    }
+
     nextItems[index] = {
       ...nextItems[index],
       capacityId: '',
       unitTypes: nextUnitTypes,
+      ...(this.drawerMode === 'edit' && Object.keys(preservedSerials).length > 0
+        ? { _preservedSerials: preservedSerials }
+        : {}),
+      // Track original product/capacity for the update endpoint
+      ...(this.drawerMode === 'edit' && oldProductId && oldCapacityId
+        ? { _originalProductId: oldProductId, _originalCapacityId: oldCapacityId }
+        : {}),
     };
     this.createForm.productItems = nextItems;
     this.syncProductComboboxState();
     this.scannedSerialTablePageByKey = {};
     this.ensureSelectedUnitType(index);
     this.recalculateTotalAmount();
+  }
+
+  onCapacityChanged(index: number): void {
+    const item = this.createForm.productItems[index];
+    if (!item) {
+      return;
+    }
+
+    // Reassign preserved serials to new unitTypes
+    if (this.drawerMode === 'edit' && item._preservedSerials) {
+      this.reassignPreservedSerials(index);
+    }
+
+    this.recalculateTotalAmount();
+
+    // Auto-persist product item to DB when both product and capacity are selected (edit mode)
+    if (this.drawerMode === 'edit' && this.editingPurchaseId) {
+      const productId = Number(item.productId);
+      const capacityId = Number(item.capacityId);
+      if (Number.isFinite(productId) && productId > 0 && Number.isFinite(capacityId) && capacityId > 0) {
+        void this.autoSaveProductItem(index);
+
+        // Trigger serial reassignment with old values
+        const oldProductId = Number(item._originalProductId);
+        const oldCapacityId = Number(item._originalCapacityId);
+        if (Number.isFinite(oldProductId) && oldProductId > 0 &&
+            Number.isFinite(oldCapacityId) && oldCapacityId > 0) {
+          void this.autoUpdateSerialsAssignment(oldProductId, oldCapacityId, productId, capacityId);
+          // Clear tracking fields after reassignment triggered
+          item._originalProductId = undefined;
+          item._originalCapacityId = undefined;
+          item._preservedSerials = undefined;
+        }
+      }
+    }
+  }
+
+  private async autoSaveProductItem(productIndex: number): Promise<void> {
+    if (!this.editingPurchaseId) return;
+
+    const item = this.createForm.productItems[productIndex];
+    if (!item) return;
+
+    const productId = Number(item.productId);
+    const capacityId = Number(item.capacityId);
+    if (!Number.isFinite(productId) || productId <= 0) return;
+    if (!Number.isFinite(capacityId) || capacityId <= 0) return;
+
+    try {
+      const unitTypesQty = item.unitTypes.map((ut) => ({
+        label: ut.label,
+        value: Number(ut.value) || 0,
+      }));
+
+      const payload = {
+        productId,
+        capacityId,
+        unitPrice: Number(item.unitPrice) || 0,
+        sellPrice: Number(item.sellPrice) || 0,
+        discountPrice: Number(item.discountPrice) || 0,
+        totalSetQty: Number(item.totalSetQty) || 0,
+        unitTypesQty,
+      };
+
+      const isExistingItem = !!(item._originalProductId && item._originalCapacityId);
+
+      if (isExistingItem) {
+        // UPDATE existing row identified by old product/capacity
+        await this.purchaseOrderService.updateProductItem(this.editingPurchaseId, {
+          ...payload,
+          oldProductId: Number(item._originalProductId),
+          oldCapacityId: Number(item._originalCapacityId),
+        });
+      } else {
+        // INSERT new row (first time adding this item)
+        await this.purchaseOrderService.addProductItem(this.editingPurchaseId, payload);
+      }
+    } catch {
+      // Silent — product item will still be persisted on full Update PO
+    }
+  }
+
+  private async autoUpdateSerialsAssignment(
+    oldProductId: number,
+    oldCapacityId: number,
+    newProductId: number,
+    newCapacityId: number,
+  ): Promise<void> {
+    if (!this.editingPurchaseId) return;
+
+    try {
+      await this.purchaseOrderService.updateSerialsAssignment(this.editingPurchaseId, {
+        oldProductId,
+        oldCapacityId,
+        newProductId,
+        newCapacityId,
+      });
+    } catch {
+      // Silent — serials will be updated on full Update PO
+    }
+  }
+
+  private reassignPreservedSerials(index: number): void {
+    const item = this.createForm.productItems[index];
+    if (!item?._preservedSerials) return;
+
+    const preservedSerials = item._preservedSerials;
+    if (Object.keys(preservedSerials).length === 0) return;
+
+    // First pass: match by label
+    for (const ut of item.unitTypes) {
+      if (preservedSerials[ut.label]) {
+        ut.serials = [...preservedSerials[ut.label]];
+        ut.serialInput = ut.serials.join('\n');
+      }
+    }
+
+    // Collect unmatched serials
+    const remaining: string[] = [];
+    for (const [label, serials] of Object.entries(preservedSerials)) {
+      if (!item.unitTypes.some(ut => ut.label === label)) {
+        remaining.push(...serials);
+      }
+    }
+
+    // Put remaining into first unit type
+    if (remaining.length > 0 && item.unitTypes.length > 0) {
+      item.unitTypes[0].serials = [...(item.unitTypes[0].serials || []), ...remaining];
+      item.unitTypes[0].serialInput = item.unitTypes[0].serials.join('\n');
+    }
   }
 
   recalculateTotalAmount(): void {
@@ -3554,13 +3759,19 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       return true;
     } catch (error: unknown) {
       this.serialFlushFailureCount += 1;
-      this.queuedSerialScans = [...batch, ...this.queuedSerialScans];
+
+      // Filter out serials that were deleted during this session before re-queuing
+      const survivingBatch = batch.filter((entry) => {
+        const key = `${entry.purchaseId}::${this.normalizeSerial(entry.serialNumber).toLowerCase()}`;
+        return !this.deletedSerialKeys.has(key);
+      });
+      this.queuedSerialScans = [...survivingBatch, ...this.queuedSerialScans];
 
       if (this.serialFlushFailureCount >= this.serialFlushMaxAutoRetryFailures) {
         this.isSerialAutoRetryPaused = true;
         this.createError = 'Failed to save scanned serial numbers. Automatic retry paused. Scans saved locally.';
         // Save to localStorage as offline backup
-        this.saveScansToLocalStorage(batch);
+        this.saveScansToLocalStorage(survivingBatch);
       } else {
         this.createError = 'Failed to save scanned serial numbers. Retrying automatically.';
       }
@@ -3747,18 +3958,29 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.serialFlushFailureCount = 0;
     this.isSerialAutoRetryPaused = false;
 
-    // Re-queue them as normal scans
-    const rescanned: QueuedPurchaseSerialScan[] = offlineScans.map((s) => ({
-      serialNumber: s.serialNumber,
-      purchaseId: s.purchaseId,
-      productId: s.productId,
-      capacityId: s.capacityId,
-      unitLabel: s.unitLabel,
-      productIndex: s.productIndex,
-    }));
+    // Re-queue them as normal scans, filtering out any that were deleted during this session
+    const rescanned: QueuedPurchaseSerialScan[] = offlineScans
+      .filter((s) => {
+        const key = `${s.purchaseId}::${this.normalizeSerial(s.serialNumber).toLowerCase()}`;
+        return !this.deletedSerialKeys.has(key);
+      })
+      .map((s) => ({
+        serialNumber: s.serialNumber,
+        purchaseId: s.purchaseId,
+        productId: s.productId,
+        capacityId: s.capacityId,
+        unitLabel: s.unitLabel,
+        productIndex: s.productIndex,
+      }));
 
     this.queuedSerialScans = [...rescanned, ...this.queuedSerialScans];
     this.clearOfflineScans();
+
+    if (rescanned.length === 0) {
+      this.createSuccess = 'All offline scans were already handled.';
+      return;
+    }
+
     this.createSuccess = `Retrying ${rescanned.length} offline scan(s)...`;
 
     void this.flushQueuedSerialScans();
@@ -3831,6 +4053,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         unitEntry.scanError = response.message ?? 'Failed to delete serial number';
         return;
       }
+
+      // Track deleted serial to prevent re-creation from re-queued batch retries
+      const deletedKey = `${this.editingPurchaseId}::${this.normalizeSerial(serialNumber).toLowerCase()}`;
+      this.deletedSerialKeys.add(deletedKey);
 
       const normalizedTarget = this.normalizeSerial(serialNumber).toLowerCase();
       unitEntry.serials = unitEntry.serials.filter(

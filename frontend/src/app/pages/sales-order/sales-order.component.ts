@@ -32,6 +32,7 @@ import { RbacService } from '../../shared/services/rbac.service';
 import { UserManagementService, UserApiItem } from '../../shared/services/user-management.service';
 import { AuditLogFrontendService } from '../../shared/services/audit-log.service';
 import { ModalComponent } from '../../shared/components/ui/modal/modal.component';
+import { SerialValidationModalComponent, SerialValidationModalMode, SerialValidationDetails } from './serial-validation-modal/serial-validation-modal.component';
 
 type SalesOrderErrorDialog = {
   title: string;
@@ -47,6 +48,26 @@ interface SalesPendingSerialRemoval {
   serialNumber: string;
 }
 
+interface QueuedSalesSerialScan {
+  productIndex: number;
+  unitLabel: string;
+  serialNumber: string;
+  salesId: number;
+  productId: number;
+  capacityId: number;
+}
+
+interface PendingValidationWarning {
+  serialNumber: string;
+  productIndex: number;
+  unitLabel: string;
+  validationStatus: string;
+  details: Record<string, unknown>;
+  salesId: number;
+  productId: number;
+  capacityId: number;
+}
+
 interface SalesUnitTypeFormItem {
   label: string;
   value: number;
@@ -55,6 +76,7 @@ interface SalesUnitTypeFormItem {
   scanInput: string;
   scanError: string;
   scanSuccess: string;
+  scanInfo: string;
   isScanning?: boolean;
 }
 
@@ -96,7 +118,7 @@ interface SalesPaymentFormItem {
 
 @Component({
   selector: 'app-sales-order',
-  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, ModalComponent],
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, ModalComponent, SerialValidationModalComponent],
   templateUrl: './sales-order.component.html',
   styles: ``,
 })
@@ -177,8 +199,20 @@ export class SalesOrderComponent {
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private customerDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly serialScanDebounceMs = 120;
+  private readonly serialBatchSize = 50;
+  private readonly serialBatchIdleMs = 1500;
+  private readonly serialBatchIntervalMs = 5000;
   private serialScanTimers: Record<string, ReturnType<typeof setTimeout>> = {};
   private serialScanErrorTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+  isFlushingQueuedSerials = false;
+  private activeSerialFlushCount = 0;
+  private queuedSerialScans: QueuedSalesSerialScan[] = [];
+  private queuedSerialFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private queuedSerialIntervalTimer: ReturnType<typeof setInterval> | null = null;
+
+  get pendingSerialScanCount(): number {
+    return this.queuedSerialScans.length + this.activeSerialFlushCount;
+  }
 
   orders: SalesOrderRow[] = [];
   returningOrderIds = new Set<number>();
@@ -230,6 +264,14 @@ export class SalesOrderComponent {
   customerMode: 'existing' | 'new' = 'existing';
   uiMessage = '';
   uiError = '';
+
+  // Daily Unit Release Report state
+  isDailyUnitReleaseModalOpen = false;
+  isGeneratingDailyUnitRelease = false;
+  dailyUnitReleaseError = '';
+  dailyUnitReleaseDateFrom = new Date().toISOString().split('T')[0];
+  dailyUnitReleaseDateTo = new Date().toISOString().split('T')[0];
+
   isMigrationModalOpen = false;
   isMigrationPreviewLoading = false;
   isMigrationImporting = false;
@@ -278,6 +320,17 @@ export class SalesOrderComponent {
   materialItems: MaterialTransactionItem[] = [];
   branchOptions: Array<{ id: number; branchName: string }> = [];
   activeExpenseTabIndex = 0;
+
+  // Rejected scan counter state
+  rejectedScanCount = 0;
+  rejectedScanList: Array<{ serialNumber: string; reason: string; timestamp: Date }> = [];
+
+  // Serial validation warning modal state
+  pendingValidationWarnings: PendingValidationWarning[] = [];
+  currentValidationWarning: PendingValidationWarning | null = null;
+  isValidationModalOpen = false;
+  validationModalMode: SerialValidationModalMode | null = null;
+  validationModalDetails: SerialValidationDetails = {};
 
   // Project search/picker properties
   projectSearchInput = '';
@@ -347,6 +400,7 @@ export class SalesOrderComponent {
     void this.loadTabData(this.activeTab);
     void this.loadReferenceData();
     void this.loadCustomerOptions();
+    this.startQueuedSerialAutoFlush();
 
     // Load employees for receiver dropdown
     this.userManagementService.getUsers().then((res) => {
@@ -379,6 +433,9 @@ export class SalesOrderComponent {
       clearTimeout(timer);
     }
     this.serialScanErrorTimers = {};
+
+    this.clearQueuedSerialFlushTimer();
+    this.stopQueuedSerialAutoFlush();
 
     this.revokeDrPreviewUrl();
   }
@@ -1485,6 +1542,319 @@ export class SalesOrderComponent {
     link.click();
   }
 
+  isDownloadingSoDetails = false;
+
+  async downloadSoDetails(): Promise<void> {
+    if (!this.editingSalesId || this.isDownloadingSoDetails) {
+      return;
+    }
+
+    this.isDownloadingSoDetails = true;
+
+    try {
+      const detail = await this.salesOrderService.getSalesOrderById(this.editingSalesId);
+      if (!detail) {
+        this.uiError = 'Failed to load SO details for export';
+        return;
+      }
+
+      const excelJsModule = await import('exceljs').catch(async () => import('exceljs/dist/exceljs.min.js'));
+      const WorkbookCtor =
+        (excelJsModule as { Workbook?: new () => any }).Workbook ??
+        (excelJsModule as { default?: { Workbook?: new () => any } }).default?.Workbook;
+
+      if (!WorkbookCtor) {
+        this.uiError = 'Excel export is unavailable.';
+        return;
+      }
+
+      const workbook = new WorkbookCtor();
+
+      // Sheet 1: SO Summary
+      const summarySheet = workbook.addWorksheet('SO Details');
+      summarySheet.columns = [{ width: 22 }, { width: 40 }];
+      summarySheet.addRow(['SO Number', detail.soNumber ?? '']);
+      summarySheet.addRow(['Customer', detail.customerName ?? '']);
+      summarySheet.addRow(['Address', detail.customerAddress ?? '']);
+      summarySheet.addRow(['Contact Person', detail.customerContactPerson ?? '']);
+      summarySheet.addRow(['Contact Number', detail.customerContactNumber ?? '']);
+      summarySheet.addRow(['Status', detail.status ?? '']);
+      summarySheet.addRow(['Schedule Date', detail.scheduleDate ?? '']);
+      summarySheet.addRow(['Sales Type', detail.salesType ?? '']);
+      summarySheet.addRow(['Total Amount', detail.totalAmount ?? 0]);
+      summarySheet.addRow(['Remarks', detail.remarks ?? '']);
+      summarySheet.addRow(['Created At', detail.createdAt ?? '']);
+      summarySheet.getColumn(1).font = { bold: true };
+
+      // Sheet 2: Product Items & Serials
+      const serialsSheet = workbook.addWorksheet('Product Items & Serials');
+      const serialHeaders = ['Product Name', 'Capacity', 'Unit Type', 'Serial Number', 'Unit Price', 'Sell Price', 'Discount Price', 'Qty'];
+      const headerRow = serialsSheet.addRow(serialHeaders);
+      headerRow.font = { bold: true };
+      serialsSheet.columns = serialHeaders.map(() => ({ width: 20 }));
+
+      for (const item of detail.productItems ?? []) {
+        const product = this.catalogProducts.find((p) => String(p.id) === String(item.productId));
+        const productName = product?.name ?? `Product #${item.productId}`;
+        const capacity = product?.capacities?.find((c) => String(c.id) === String(item.capacityId));
+        const capacityName = capacity?.name ?? `Capacity #${item.capacityId}`;
+
+        const serialEntries = item.serialNumbers ?? {};
+        let hasSerials = false;
+
+        for (const [unitType, serials] of Object.entries(serialEntries)) {
+          if (!Array.isArray(serials)) continue;
+          for (const serial of serials) {
+            serialsSheet.addRow([productName, capacityName, unitType, serial, item.unitPrice, item.sellPrice, item.discountPrice, item.totalSetQty]);
+            hasSerials = true;
+          }
+        }
+
+        if (!hasSerials) {
+          serialsSheet.addRow([productName, capacityName, '', '(no serials)', item.unitPrice, item.sellPrice, item.discountPrice, item.totalSetQty]);
+        }
+      }
+
+      // Sheet 3: Payment Details
+      const paymentSheet = workbook.addWorksheet('Payment Details');
+      const paymentHeaders = ['Method', 'Amount', 'Status', 'Terms', 'Due Date', 'Bank Name', 'Reference No', 'Check No', 'Down Payment'];
+      const paymentHeaderRow = paymentSheet.addRow(paymentHeaders);
+      paymentHeaderRow.font = { bold: true };
+      paymentSheet.columns = paymentHeaders.map(() => ({ width: 18 }));
+
+      for (const payment of detail.paymentDetails ?? []) {
+        paymentSheet.addRow([
+          payment.method ?? '',
+          payment.amount ?? 0,
+          payment.status ?? '',
+          payment.terms ?? '',
+          payment.termsDueDate ?? '',
+          payment.bankName ?? '',
+          payment.referenceNo ?? '',
+          payment.checkNo ?? '',
+          payment.downPayment ?? 0,
+        ]);
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const fileName = `${detail.soNumber ?? `SO-${this.editingSalesId}`}_details.xlsx`;
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = fileName;
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error: unknown) {
+      this.uiError = 'Failed to export SO details';
+      console.error('downloadSoDetails error', error);
+    } finally {
+      this.isDownloadingSoDetails = false;
+    }
+  }
+
+  openDailyUnitReleaseReport(): void {
+    this.isDailyUnitReleaseModalOpen = true;
+    this.dailyUnitReleaseError = '';
+    this.dailyUnitReleaseDateFrom = new Date().toISOString().split('T')[0];
+    this.dailyUnitReleaseDateTo = new Date().toISOString().split('T')[0];
+  }
+
+  closeDailyUnitReleaseReport(): void {
+    if (this.isGeneratingDailyUnitRelease) return;
+    this.isDailyUnitReleaseModalOpen = false;
+    this.dailyUnitReleaseError = '';
+  }
+
+  async generateDailyUnitReleaseReport(): Promise<void> {
+    if (this.isGeneratingDailyUnitRelease) return;
+
+    if (!this.dailyUnitReleaseDateFrom || !this.dailyUnitReleaseDateTo) {
+      this.dailyUnitReleaseError = 'Both date fields are required.';
+      return;
+    }
+
+    this.isGeneratingDailyUnitRelease = true;
+    this.dailyUnitReleaseError = '';
+
+    try {
+      // Load all SOs from multiple tabs to get a complete picture
+      const allOrders: SalesOrderListItem[] = [];
+      for (const loader of [
+        () => this.salesOrderService.getDeliveries({ page: 1, limit: 500 }),
+        () => this.salesOrderService.getRemittedSales({ page: 1, limit: 500 }),
+        () => this.salesOrderService.getSchedules({ page: 1, limit: 500 }),
+      ]) {
+        const result = await loader();
+        allOrders.push(...result.items);
+      }
+
+      // Deduplicate by id
+      const uniqueOrders = [...new Map(allOrders.map((o) => [o.id, o])).values()];
+
+      // Filter by date range (scheduleDate or createdAt)
+      const from = this.dailyUnitReleaseDateFrom;
+      const to = this.dailyUnitReleaseDateTo;
+      const filteredOrders = uniqueOrders.filter((order) => {
+        const dateStr = order.scheduleDate ?? order.createdAt ?? '';
+        const orderDate = dateStr.split('T')[0];
+        return orderDate >= from && orderDate <= to;
+      });
+
+      if (filteredOrders.length === 0) {
+        this.dailyUnitReleaseError = 'No sales orders found for the selected date range.';
+        return;
+      }
+
+      // Fetch detail for each SO (serial numbers, product info)
+      const details: Array<{ order: SalesOrderListItem; detail: SalesOrderDetailItem }> = [];
+      for (const order of filteredOrders) {
+        try {
+          const detail = await this.salesOrderService.getSalesOrderById(order.id);
+          if (detail) {
+            details.push({ order, detail });
+          }
+        } catch {
+          // Skip if detail fails to load
+        }
+      }
+
+      // Build Excel
+      const excelJsModule = await import('exceljs').catch(async () => import('exceljs/dist/exceljs.min.js'));
+      const WorkbookCtor =
+        (excelJsModule as { Workbook?: new () => any }).Workbook ??
+        (excelJsModule as { default?: { Workbook?: new () => any } }).default?.Workbook;
+
+      if (!WorkbookCtor) {
+        this.dailyUnitReleaseError = 'Excel export is unavailable.';
+        return;
+      }
+
+      const workbook = new WorkbookCtor();
+
+      // Sheet 1: Daily Unit Release
+      const sheet1 = workbook.addWorksheet('Daily Unit Release');
+      const s1Headers = ['Date', 'SO No', 'Customer Name', 'Team (Installer)', 'Unit (Product Capacity)', 'Indoor Serial', 'Outdoor Serial', 'Window Serial', 'Remarks'];
+      const s1HeaderRow = sheet1.addRow(s1Headers);
+      s1HeaderRow.font = { bold: true };
+      sheet1.columns = [
+        { width: 12 }, { width: 14 }, { width: 22 }, { width: 18 },
+        { width: 24 }, { width: 22 }, { width: 22 }, { width: 22 }, { width: 30 },
+      ];
+
+      for (const { order, detail } of details) {
+        const date = (order.scheduleDate ?? order.createdAt ?? '').split('T')[0];
+        const soNo = detail.soNumber ?? '';
+        const customer = detail.customerName ?? '';
+        const installer = detail.installer ?? '';
+        const remarks = this.buildReportRemarks(detail);
+
+        for (const item of detail.productItems ?? []) {
+          const product = this.catalogProducts.find((p) => String(p.id) === String(item.productId));
+          const productName = product?.name ?? `Product #${item.productId}`;
+          const capacity = product?.capacities?.find((c) => String(c.id) === String(item.capacityId));
+          const capacityName = capacity?.name ?? '';
+          const unitLabel = `${productName} ${capacityName}`.trim();
+
+          const serials = item.serialNumbers ?? {};
+          const indoorSerials = serials['indoor'] ?? [];
+          const outdoorSerials = serials['outdoor'] ?? [];
+          const windowSerials = serials['window'] ?? [];
+
+          const maxRows = Math.max(1, indoorSerials.length, outdoorSerials.length, windowSerials.length);
+          for (let i = 0; i < maxRows; i++) {
+            sheet1.addRow([
+              i === 0 ? date : '',
+              i === 0 ? soNo : '',
+              i === 0 ? customer : '',
+              i === 0 ? installer : '',
+              i === 0 ? unitLabel : '',
+              indoorSerials[i] ?? '',
+              outdoorSerials[i] ?? '',
+              windowSerials[i] ?? '',
+              i === 0 ? remarks : '',
+            ]);
+          }
+        }
+      }
+
+      // Sheet 2: By Products
+      const sheet2 = workbook.addWorksheet('By Products');
+      const productGroups = new Map<string, { indoor: string[]; outdoor: string[]; window: string[] }>();
+
+      for (const { detail } of details) {
+        for (const item of detail.productItems ?? []) {
+          const product = this.catalogProducts.find((p) => String(p.id) === String(item.productId));
+          const productName = product?.name ?? `Product #${item.productId}`;
+          const capacity = product?.capacities?.find((c) => String(c.id) === String(item.capacityId));
+          const capacityName = capacity?.name ?? '';
+          const groupKey = `${productName} ${capacityName}`.trim();
+
+          const existing = productGroups.get(groupKey) ?? { indoor: [], outdoor: [], window: [] };
+          const serials = item.serialNumbers ?? {};
+          existing.indoor.push(...(serials['indoor'] ?? []));
+          existing.outdoor.push(...(serials['outdoor'] ?? []));
+          existing.window.push(...(serials['window'] ?? []));
+          productGroups.set(groupKey, existing);
+        }
+      }
+
+      sheet2.columns = [{ width: 30 }, { width: 25 }, { width: 15 }];
+      const s2HeaderRow = sheet2.addRow(['Product', 'Serial Number', 'Unit Type']);
+      s2HeaderRow.font = { bold: true };
+
+      for (const [groupName, serials] of productGroups.entries()) {
+        sheet2.addRow([]);
+        const titleRow = sheet2.addRow([groupName]);
+        titleRow.font = { bold: true };
+
+        for (const serial of serials.indoor) {
+          sheet2.addRow(['', serial, 'indoor']);
+        }
+        for (const serial of serials.outdoor) {
+          sheet2.addRow(['', serial, 'outdoor']);
+        }
+        for (const serial of serials.window) {
+          sheet2.addRow(['', serial, 'window']);
+        }
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const fileName = `daily_unit_release_${from}_${to}.xlsx`;
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = fileName;
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+
+      this.closeDailyUnitReleaseReport();
+    } catch (error: unknown) {
+      this.dailyUnitReleaseError = 'Failed to generate report. Please try again.';
+      console.error('generateDailyUnitReleaseReport error', error);
+    } finally {
+      this.isGeneratingDailyUnitRelease = false;
+    }
+  }
+
+  private buildReportRemarks(detail: SalesOrderDetailItem): string {
+    const parts: string[] = [];
+    const remarks = String(detail.remarks ?? '').trim();
+    if (remarks) parts.push(remarks);
+
+    // Check for returned/defective info
+    for (const item of detail.productItems ?? []) {
+      const serials = item.serialNumbers ?? {};
+      for (const [, serialList] of Object.entries(serials)) {
+        if (!Array.isArray(serialList)) continue;
+        // nothing to add per-serial here, but remarks covers returned info
+      }
+    }
+
+    return parts.join(' | ');
+  }
+
   private async buildDeliveryReceiptPdf(
     row: SalesOrderRow,
     detail: SalesOrderDetailItem,
@@ -2039,6 +2409,8 @@ export class SalesOrderComponent {
     this.serialPageByUnitType = {};
     this.uiMessage = '';
     this.uiError = '';
+    this.rejectedScanCount = 0;
+    this.rejectedScanList = [];
     this.captureDrawerBaselineSnapshot();
   }
 
@@ -2070,6 +2442,8 @@ export class SalesOrderComponent {
     this.serialPageByUnitType = {};
     this.uiMessage = '';
     this.uiError = '';
+    this.rejectedScanCount = 0;
+    this.rejectedScanList = [];
 
     try {
       const detail = await this.salesOrderService.getSalesOrderById(orderId);
@@ -2757,6 +3131,7 @@ export class SalesOrderComponent {
     unitEntry.scanInput = value;
     unitEntry.scanError = '';
     unitEntry.scanSuccess = '';
+    unitEntry.scanInfo = '';
 
     const normalizedSerial = this.normalizeSerial(value);
     if (!normalizedSerial) return;
@@ -2781,9 +3156,17 @@ export class SalesOrderComponent {
     const unitEntry = item.unitTypes.find((entry: SalesUnitTypeFormItem) => entry.label === unitLabel);
     if (!unitEntry) return;
 
+    const timerKey = `${productIndex}::${unitLabel}`;
+    const existingTimer = this.serialScanTimers[timerKey];
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      delete this.serialScanTimers[timerKey];
+    }
+
     const serialNumber = this.normalizeSerial(unitEntry.scanInput);
     unitEntry.scanError = '';
     unitEntry.scanSuccess = '';
+    unitEntry.scanInfo = '';
     if (!serialNumber) {
       unitEntry.scanError = 'Enter serial number before scanning';
       return;
@@ -2821,82 +3204,32 @@ export class SalesOrderComponent {
       return;
     }
 
-    unitEntry.isScanning = true;
-
-    try {
-      const response = await this.salesOrderService.scanSalesSerial({
-        serialNumber,
-        salesId: this.editingSalesId,
-        expectedProductId: productId,
-        expectedCapacityId: capacityId,
-        expectedUnitType: unitLabel,
-      });
-
-      if (!response.success) {
-        this.openErrorModal('Scan Error', response.message ?? 'Failed to scan serial number');
-        void this.auditLogService.createAuditLog({
-          action: 'SERIAL_SCAN_FAILURE',
-          entityType: 'SalesOrder',
-          entityId: this.editingSalesId,
-          metadata: {
-            serialNumber,
-            reason: 'api_scan_failure',
-            message: response.message ?? 'Failed to scan serial number',
-            productIndex,
-            unitLabel,
-            expectedProductId: productId,
-            expectedCapacityId: capacityId,
-            event: 'api_failure',
-          },
-        });
-        return;
-      }
-
-      const normalizedSerial = this.normalizeSerial(response.item?.serialNumber ?? serialNumber);
-      const existingSerialsLower = new Set(
-        unitEntry.serials.map((entry: string) => this.normalizeSerial(entry).toLowerCase()),
-      );
-
-      if (!existingSerialsLower.has(normalizedSerial.toLowerCase())) {
-        unitEntry.serials = [...unitEntry.serials, normalizedSerial];
-        this.changeSerialPage(
-          productIndex,
-          unitLabel,
-          this.getTotalSerialPages(productIndex, unitLabel),
-        );
-      }
-
+    const existingInCurrentUnit = unitEntry.serials.some(
+      (entry: string) => this.normalizeSerial(entry).toLowerCase() === normalizedIncoming,
+    );
+    if (existingInCurrentUnit) {
+      unitEntry.scanError = 'Serial number already scanned for this unit type';
       unitEntry.scanInput = '';
-      unitEntry.scanSuccess = response.message ?? 'Serial number scanned successfully';
-      unitEntry.scanError = '';
-      unitEntry.serialInput = unitEntry.serials.join('\n');
       this.focusSerialScanInput(productIndex, unitLabel);
-    } catch (error: unknown) {
-      let errorMessage = 'Failed to scan serial number';
-      if (axios.isAxiosError(error)) {
-        errorMessage =
-          (error.response?.data as { message?: string } | undefined)?.message ??
-          'Failed to scan serial number';
-      }
-      this.openErrorModal('Scan Error', errorMessage);
-      void this.auditLogService.createAuditLog({
-        action: 'SERIAL_SCAN_FAILURE',
-        entityType: 'SalesOrder',
-        entityId: this.editingSalesId,
-        metadata: {
-          serialNumber,
-          reason: 'api_exception',
-          message: errorMessage,
-          productIndex,
-          unitLabel,
-          expectedProductId: productId,
-          expectedCapacityId: capacityId,
-          event: 'api_failure',
-        },
-      });
-    } finally {
-      unitEntry.isScanning = false;
+      return;
     }
+
+    unitEntry.serials = [...unitEntry.serials, serialNumber];
+    this.changeSerialPage(productIndex, unitLabel, this.getTotalSerialPages(productIndex, unitLabel));
+    unitEntry.scanInput = '';
+    unitEntry.scanSuccess = 'Serial number queued for saving';
+    unitEntry.scanError = '';
+
+    this.queueSerialScan({
+      productIndex,
+      unitLabel,
+      serialNumber,
+      salesId: this.editingSalesId,
+      productId,
+      capacityId,
+    });
+
+    this.focusSerialScanInput(productIndex, unitLabel);
   }
 
   requestRemoveScannedSerial(productIndex: number, unitLabel: string, serialNumber: string): void {
@@ -2929,6 +3262,7 @@ export class SalesOrderComponent {
 
     unitEntry.scanError = '';
     unitEntry.scanSuccess = '';
+    unitEntry.scanInfo = '';
     unitEntry.isScanning = true;
 
     try {
@@ -3408,6 +3742,7 @@ export class SalesOrderComponent {
       scanInput: '',
       scanError: '',
       scanSuccess: '',
+      scanInfo: '',
       isScanning: false,
     };
   }
@@ -3472,6 +3807,7 @@ export class SalesOrderComponent {
 
     unitEntry.scanError = message;
     unitEntry.scanSuccess = '';
+    unitEntry.scanInfo = '';
 
     this.serialScanErrorTimers[timerKey] = setTimeout(() => {
       const currentItem = this.form.productItems[productIndex];
@@ -3878,8 +4214,441 @@ export class SalesOrderComponent {
     return 'pending';
   }
 
+  private queueSerialScan(scan: QueuedSalesSerialScan): void {
+    this.queuedSerialScans = [...this.queuedSerialScans, scan];
+
+    if (this.queuedSerialScans.length >= this.serialBatchSize) {
+      void this.flushQueuedSerialScans();
+      return;
+    }
+
+    this.scheduleQueuedSerialFlush();
+  }
+
+  private scheduleQueuedSerialFlush(): void {
+    this.clearQueuedSerialFlushTimer();
+    this.queuedSerialFlushTimer = setTimeout(() => {
+      this.queuedSerialFlushTimer = null;
+      void this.flushQueuedSerialScans();
+    }, this.serialBatchIdleMs);
+  }
+
+  private clearQueuedSerialFlushTimer(): void {
+    if (!this.queuedSerialFlushTimer) {
+      return;
+    }
+
+    clearTimeout(this.queuedSerialFlushTimer);
+    this.queuedSerialFlushTimer = null;
+  }
+
+  private startQueuedSerialAutoFlush(): void {
+    this.stopQueuedSerialAutoFlush();
+    this.queuedSerialIntervalTimer = setInterval(() => {
+      if (this.queuedSerialScans.length === 0) {
+        return;
+      }
+
+      void this.flushQueuedSerialScans();
+    }, this.serialBatchIntervalMs);
+  }
+
+  private stopQueuedSerialAutoFlush(): void {
+    if (!this.queuedSerialIntervalTimer) {
+      return;
+    }
+
+    clearInterval(this.queuedSerialIntervalTimer);
+    this.queuedSerialIntervalTimer = null;
+  }
+
+  private async flushQueuedSerialScans(): Promise<boolean> {
+    if (this.isFlushingQueuedSerials) {
+      return false;
+    }
+
+    if (this.queuedSerialScans.length === 0) {
+      return true;
+    }
+
+    this.clearQueuedSerialFlushTimer();
+
+    const batch = this.queuedSerialScans.splice(0, this.serialBatchSize);
+    this.isFlushingQueuedSerials = true;
+    this.activeSerialFlushCount = batch.length;
+    this.setBatchScanningState(batch, true);
+
+    try {
+      const response = await this.salesOrderService.scanSalesSerialBatch({
+        items: batch.map((entry) => ({
+          serialNumber: entry.serialNumber,
+          salesId: entry.salesId,
+          expectedProductId: entry.productId,
+          expectedCapacityId: entry.capacityId,
+          expectedUnitType: entry.unitLabel,
+        })),
+      });
+
+      const results = Array.isArray(response.items) ? response.items : [];
+      const warningStatuses = ['not_found', 'warning_defective', 'warning_mismatch', 'warning_reassignment'];
+
+      batch.forEach((entry, index) => {
+        const result = results[index];
+        const unitEntry = this.getUnitEntryForBatch(entry.productIndex, entry.unitLabel);
+        if (!unitEntry) {
+          return;
+        }
+
+        // Check if this item has a validation warning that requires user confirmation
+        if (!result?.success && result?.validationStatus && warningStatuses.includes(result.validationStatus)) {
+          // Remove the optimistic local serial; it will be re-added if user confirms
+          this.removeLocalSerial(unitEntry, entry.serialNumber);
+          unitEntry.scanError = '';
+          unitEntry.scanSuccess = '';
+          unitEntry.scanInfo = '';
+
+          // Queue the warning for sequential user presentation
+          this.pendingValidationWarnings.push({
+            serialNumber: entry.serialNumber,
+            productIndex: entry.productIndex,
+            unitLabel: entry.unitLabel,
+            validationStatus: result.validationStatus,
+            details: (result.details as Record<string, unknown>) ?? {},
+            salesId: entry.salesId,
+            productId: entry.productId,
+            capacityId: entry.capacityId,
+          });
+          return;
+        }
+
+        if (!result?.success) {
+          this.removeLocalSerial(unitEntry, entry.serialNumber);
+          unitEntry.scanError = result?.message ?? 'Failed to save serial number';
+          unitEntry.scanSuccess = '';
+          unitEntry.scanInfo = '';
+          void this.auditLogService.createAuditLog({
+            action: 'SERIAL_SCAN_FAILURE',
+            entityType: 'SalesOrder',
+            entityId: entry.salesId,
+            metadata: {
+              serialNumber: entry.serialNumber,
+              reason: 'api_scan_failure',
+              message: result?.message ?? 'Failed to save serial number',
+              productIndex: entry.productIndex,
+              unitLabel: entry.unitLabel,
+              expectedProductId: entry.productId,
+              expectedCapacityId: entry.capacityId,
+              event: 'api_failure',
+            },
+          });
+          return;
+        }
+
+        const normalizedSavedSerial = this.normalizeSerial(
+          result.item?.serialNumber ?? entry.serialNumber,
+        );
+        this.replaceLocalSerial(unitEntry, entry.serialNumber, normalizedSavedSerial);
+        unitEntry.scanError = '';
+
+        // Display informational message for scanned-status serial reassignment
+        if (
+          result.validationStatus === 'info_scanned_status' &&
+          result.details?.['previousPoNumber']
+        ) {
+          unitEntry.scanInfo = `Serial reassigned from PO ${result.details['previousPoNumber']}`;
+          unitEntry.scanSuccess = '';
+        } else {
+          unitEntry.scanInfo = '';
+          unitEntry.scanSuccess =
+            response.summary && response.summary.successCount > 1
+              ? `${response.summary.successCount} serial numbers saved`
+              : result.message ?? 'Serial number saved successfully';
+        }
+      });
+
+      // After processing all batch items, present any queued warnings to the user
+      if (this.pendingValidationWarnings.length > 0 && !this.isValidationModalOpen) {
+        this.presentNextValidationWarning();
+      }
+
+      // Only show error modal for genuine hard failures (not validation warnings handled by modals)
+      const hardFailureCount = (response.summary?.failureCount ?? 0);
+      if (!response.success && hardFailureCount > 0) {
+        this.openErrorModal('Scan Failed', response.message ?? 'Some serial numbers failed to save.');
+      }
+
+      return true;
+    } catch (error: unknown) {
+      this.queuedSerialScans = [...batch, ...this.queuedSerialScans];
+      let errorMessage = 'Failed to save scanned serial numbers. Retrying automatically.';
+      this.setBatchScanError(batch, 'Failed to save serial numbers. They remain queued.');
+
+      if (axios.isAxiosError(error)) {
+        errorMessage =
+          (error.response?.data as { message?: string } | undefined)?.message ?? errorMessage;
+      }
+
+      this.openErrorModal('Scan Error', errorMessage);
+      return false;
+    } finally {
+      this.isFlushingQueuedSerials = false;
+      this.activeSerialFlushCount = 0;
+      this.setBatchScanningState(batch, false);
+
+      if (this.queuedSerialScans.length > 0) {
+        this.scheduleQueuedSerialFlush();
+      }
+    }
+  }
+
+  private setBatchScanningState(batch: QueuedSalesSerialScan[], isScanning: boolean): void {
+    const visited = new Set<string>();
+    for (const entry of batch) {
+      const key = `${entry.productIndex}::${entry.unitLabel}`;
+      if (visited.has(key)) {
+        continue;
+      }
+
+      visited.add(key);
+      const unitEntry = this.getUnitEntryForBatch(entry.productIndex, entry.unitLabel);
+      if (unitEntry) {
+        unitEntry.isScanning = isScanning;
+      }
+    }
+  }
+
+  private setBatchScanError(batch: QueuedSalesSerialScan[], message: string): void {
+    const visited = new Set<string>();
+    for (const entry of batch) {
+      const key = `${entry.productIndex}::${entry.unitLabel}`;
+      if (visited.has(key)) {
+        continue;
+      }
+
+      visited.add(key);
+      const unitEntry = this.getUnitEntryForBatch(entry.productIndex, entry.unitLabel);
+      if (unitEntry) {
+        unitEntry.scanError = message;
+        unitEntry.scanSuccess = '';
+        unitEntry.scanInfo = '';
+      }
+    }
+  }
+
+  private getUnitEntryForBatch(productIndex: number, unitLabel: string): SalesUnitTypeFormItem | null {
+    const item = this.form.productItems[productIndex];
+    if (!item) {
+      return null;
+    }
+
+    return item.unitTypes.find((entry: SalesUnitTypeFormItem) => entry.label === unitLabel) ?? null;
+  }
+
+  private removeLocalSerial(unitEntry: SalesUnitTypeFormItem, serialNumber: string): void {
+    unitEntry.serials = unitEntry.serials.filter(
+      (s: string) => this.normalizeSerial(s).toLowerCase() !== this.normalizeSerial(serialNumber).toLowerCase(),
+    );
+  }
+
+  private replaceLocalSerial(
+    unitEntry: SalesUnitTypeFormItem,
+    oldSerial: string,
+    newSerial: string,
+  ): void {
+    const normalizedOld = this.normalizeSerial(oldSerial).toLowerCase();
+    unitEntry.serials = unitEntry.serials.map((s: string) =>
+      this.normalizeSerial(s).toLowerCase() === normalizedOld ? newSerial : s,
+    );
+  }
+
   private normalizeSerial(value: unknown): string {
     return String(value ?? '').trim().replace(/\s+/g, ' ');
+  }
+
+  // --- Serial Validation Warning Modal Handling ---
+
+  /**
+   * Presents the next queued validation warning to the user via the modal.
+   * Warnings are processed sequentially, one at a time.
+   */
+  private presentNextValidationWarning(): void {
+    if (this.pendingValidationWarnings.length === 0) {
+      this.currentValidationWarning = null;
+      this.isValidationModalOpen = false;
+      this.validationModalMode = null;
+      this.validationModalDetails = {};
+      return;
+    }
+
+    const warning = this.pendingValidationWarnings[0];
+    this.currentValidationWarning = warning;
+    this.validationModalMode = this.mapValidationStatusToModalMode(warning.validationStatus);
+    this.validationModalDetails = {
+      serialNumber: warning.serialNumber,
+      expectedProductName: warning.details['expectedProductName'] as string | undefined,
+      expectedCapacityName: warning.details['expectedCapacityName'] as string | undefined,
+      actualProductName: warning.details['actualProductName'] as string | undefined,
+      actualCapacityName: warning.details['actualCapacityName'] as string | undefined,
+      currentCustomerName: warning.details['currentCustomerName'] as string | undefined,
+      currentSoNumber: warning.details['currentSoNumber'] as string | undefined,
+      currentSalesId: warning.details['currentSalesId'] as number | undefined,
+    };
+    this.isValidationModalOpen = true;
+  }
+
+  /**
+   * Maps a backend validationStatus string to the appropriate modal mode.
+   */
+  private mapValidationStatusToModalMode(status: string): SerialValidationModalMode {
+    switch (status) {
+      case 'warning_mismatch':
+        return 'mismatch-warning';
+      case 'warning_defective':
+        return 'defective-warning';
+      case 'warning_reassignment':
+        return 'reassignment-warning';
+      case 'not_found':
+        return 'force-insert-prompt';
+      default:
+        return 'mismatch-warning';
+    }
+  }
+
+  /**
+   * Determines which force flag to set based on the current validation warning status.
+   */
+  private getForceFlags(status: string): { forceAssign?: boolean; forceInsert?: boolean; forceReassign?: boolean } {
+    switch (status) {
+      case 'warning_mismatch':
+      case 'warning_defective':
+        return { forceAssign: true };
+      case 'not_found':
+        return { forceInsert: true };
+      case 'warning_reassignment':
+        return { forceReassign: true };
+      default:
+        return {};
+    }
+  }
+
+  /**
+   * Called when the user confirms the validation warning modal.
+   * Re-sends the serial with the appropriate force flag.
+   */
+  onValidationModalConfirm(): void {
+    if (!this.currentValidationWarning) {
+      this.presentNextValidationWarning();
+      return;
+    }
+
+    const warning = this.currentValidationWarning;
+
+    // Remove from queue
+    this.pendingValidationWarnings.shift();
+
+    // Close modal immediately before async re-send
+    this.isValidationModalOpen = false;
+    this.currentValidationWarning = null;
+
+    // Re-send serial with the appropriate force flag
+    const forceFlags = this.getForceFlags(warning.validationStatus);
+    void this.resendSerialWithForce(warning, forceFlags);
+
+    // Present the next warning (if any) after a brief delay for UX
+    setTimeout(() => {
+      this.presentNextValidationWarning();
+    }, 200);
+  }
+
+  /**
+   * Called when the user cancels the validation warning modal.
+   * Discards the serial from the queue and refocuses scan input.
+   */
+  onValidationModalCancel(): void {
+    if (!this.currentValidationWarning) {
+      this.presentNextValidationWarning();
+      return;
+    }
+
+    const warning = this.currentValidationWarning;
+
+    // Remove from queue
+    this.pendingValidationWarnings.shift();
+
+    // Close modal
+    this.isValidationModalOpen = false;
+    this.currentValidationWarning = null;
+
+    // Refocus the scan input for the relevant product/unit type
+    this.focusSerialScanInput(warning.productIndex, warning.unitLabel);
+
+    // Present the next warning (if any) after a brief delay
+    setTimeout(() => {
+      this.presentNextValidationWarning();
+    }, 200);
+  }
+
+  /**
+   * Re-sends a single serial scan with force flags via the batch API.
+   */
+  private async resendSerialWithForce(
+    warning: PendingValidationWarning,
+    forceFlags: { forceAssign?: boolean; forceInsert?: boolean; forceReassign?: boolean },
+  ): Promise<void> {
+    const unitEntry = this.getUnitEntryForBatch(warning.productIndex, warning.unitLabel);
+
+    try {
+      const response = await this.salesOrderService.scanSalesSerialBatch({
+        items: [
+          {
+            serialNumber: warning.serialNumber,
+            salesId: warning.salesId,
+            expectedProductId: warning.productId,
+            expectedCapacityId: warning.capacityId,
+            expectedUnitType: warning.unitLabel,
+            ...forceFlags,
+          },
+        ],
+      });
+
+      const result = response.items?.[0];
+      if (result?.success) {
+        // Re-add serial to the local list on success
+        const normalizedSerial = this.normalizeSerial(result.item?.serialNumber ?? warning.serialNumber);
+        if (unitEntry) {
+          unitEntry.serials = [...unitEntry.serials, normalizedSerial];
+          unitEntry.scanError = '';
+          unitEntry.scanInfo = '';
+          unitEntry.scanSuccess = result.message ?? 'Serial number saved successfully';
+        }
+      } else {
+        // Force re-send still failed, treat as a rejected scan
+        if (unitEntry) {
+          unitEntry.scanError = result?.message ?? 'Force scan failed';
+          unitEntry.scanSuccess = '';
+          unitEntry.scanInfo = '';
+        }
+        this.rejectedScanCount++;
+        this.rejectedScanList.push({
+          serialNumber: warning.serialNumber,
+          reason: result?.message ?? 'Force scan failed after confirmation',
+          timestamp: new Date(),
+        });
+      }
+    } catch {
+      // Network error during force re-send
+      if (unitEntry) {
+        unitEntry.scanError = 'Failed to save serial after confirmation. Please try scanning again.';
+        unitEntry.scanSuccess = '';
+        unitEntry.scanInfo = '';
+      }
+      this.rejectedScanCount++;
+      this.rejectedScanList.push({
+        serialNumber: warning.serialNumber,
+        reason: 'Network error during force re-send',
+        timestamp: new Date(),
+      });
+    }
   }
 
   openDatePicker(event: Event): void {

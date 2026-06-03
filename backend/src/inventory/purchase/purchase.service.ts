@@ -2752,60 +2752,154 @@ export class PurchaseService {
               )
             : null;
 
-          await client.query(
-            `DELETE FROM tbltransaction_product_items
-             WHERE COALESCE(
-               to_jsonb(tbltransaction_product_items)->>'purchaseId',
-               to_jsonb(tbltransaction_product_items)->>'purchase_id',
-               to_jsonb(tbltransaction_product_items)->>'po_id'
-             ) = $1
-             AND LOWER(COALESCE(
-               to_jsonb(tbltransaction_product_items)->>'transType',
-               to_jsonb(tbltransaction_product_items)->>'trans_type',
-               'purchase'
-             )) = 'purchase'`,
+          // --- Smart Diff: Fetch existing items for this PO ---
+          const existingItemsResult = await client.query<{
+            id: number;
+            productId: string | number | null;
+            capacityId: string | number | null;
+          }>(
+            `SELECT
+               id,
+               "${productIdColumn ?? 'productId'}"::text AS "productId",
+               "${capacityIdColumn ?? 'capacityId'}"::text AS "capacityId"
+             FROM tbltransaction_product_items
+             WHERE "${purchaseIdColumn ?? 'purchaseId'}"::text = $1
+             AND LOWER(COALESCE("${transTypeColumn ?? 'transType'}", 'purchase')) = 'purchase'`,
             [String(id)],
           );
 
-          const serialColumns = await this.getTableColumns(client, 'tblserial_numbers');
-          const serialBranchIdColumn = this.pickColumn(serialColumns, ['branchId', 'branch_id']);
-          const serialVendorIdColumn = this.pickColumn(serialColumns, ['vendorId', 'vendor_id']);
-          const serialPurchaseIdColumn = this.pickColumn(serialColumns, [
-            'purchaseId',
-            'purchase_id',
-          ]);
-          const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
-          const serialProductIdColumn = this.pickColumn(serialColumns, [
-            'productId',
-            'product_id',
-          ]);
-          const serialCapacityIdColumn = this.pickColumn(serialColumns, [
-            'capacityId',
-            'capacity_id',
-          ]);
-          const serialNumberColumn = this.pickColumn(serialColumns, [
-            'serialNumber',
-            'serial_number',
-          ]);
-          const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
-          const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
-          const serialCreatedByColumn = this.pickColumn(serialColumns, [
-            'created_by',
-            'createdBy',
-            'createdby',
-          ]);
+          const existingItems = existingItemsResult.rows;
 
-          for (const item of productItems) {
-            const transType = String(item.transType ?? 'purchase').trim().toLowerCase();
-            if (transType !== 'purchase') {
-              continue;
-            }
+          // --- Smart Diff: Match payload items to existing rows by (productId, capacityId) ---
+          const usedExistingIds = new Set<number>();
+          const updates: Array<{ existingId: number; payloadItem: (typeof productItems)[number] }> = [];
+          const inserts: Array<(typeof productItems)[number]> = [];
 
-            const productId = this.toOptionalNumber(item.productId);
-            const capacityId = this.toOptionalNumber(item.capacityId);
-            if (productId === null || capacityId === null) {
+          // Filter to purchase-type items only
+          const purchasePayloadItems = productItems.filter(
+            (pi) => String(pi.transType ?? 'purchase').trim().toLowerCase() === 'purchase',
+          );
+
+          // Pass 1: Exact match by (productId, capacityId)
+          for (const payloadItem of purchasePayloadItems) {
+            const pId = this.toOptionalNumber(payloadItem.productId);
+            const cId = this.toOptionalNumber(payloadItem.capacityId);
+            if (pId === null || cId === null) {
               throw new Error('productId and capacityId are required for purchase items');
             }
+
+            const match = existingItems.find(
+              (e) =>
+                String(e.productId) === String(pId) &&
+                String(e.capacityId) === String(cId) &&
+                !usedExistingIds.has(e.id),
+            );
+
+            if (match) {
+              updates.push({ existingId: match.id, payloadItem });
+              usedExistingIds.add(match.id);
+            } else {
+              inserts.push(payloadItem);
+            }
+          }
+
+          // Pass 2: Existing items not matched → DELETE
+          const deletedIds = existingItems
+            .filter((e) => !usedExistingIds.has(e.id))
+            .map((e) => e.id);
+
+          // --- Execute UPDATEs for matched items ---
+          for (const { existingId, payloadItem } of updates) {
+            const productId = this.toOptionalNumber(payloadItem.productId)!;
+            const capacityId = this.toOptionalNumber(payloadItem.capacityId)!;
+
+            const productExistsResult = await client.query<{ id: string | number }>(
+              `SELECT id FROM tblproducts WHERE id::text = $1 LIMIT 1`,
+              [String(productId)],
+            );
+            if (productExistsResult.rowCount === 0) {
+              throw new Error(`Product ID ${productId} does not exist in tblproducts`);
+            }
+
+            const capacityExistsResult = await client.query<{ id: string | number }>(
+              `SELECT id FROM tblcapacity WHERE id::text = $1 LIMIT 1`,
+              [String(capacityId)],
+            );
+            if (capacityExistsResult.rowCount === 0) {
+              throw new Error(`Capacity ID ${capacityId} does not exist in tblcapacity`);
+            }
+
+            const unitTypesQty = Array.isArray(payloadItem.unitTypesQty) ? payloadItem.unitTypesQty : [];
+            const qtyFromList = unitTypesQty.reduce((sum, current) => {
+              const parsedQty = this.toOptionalNumber(current.qty ?? current.value) ?? 0;
+              return sum + (parsedQty > 0 ? parsedQty : 0);
+            }, 0);
+            const fallbackTotalQty = this.toOptionalNumber(payloadItem.totalSetQty) ?? 0;
+            const totalQty = qtyFromList > 0 ? qtyFromList : fallbackTotalQty;
+
+            const setClauses: string[] = [];
+            const setValues: unknown[] = [];
+            let paramIndex = 1;
+
+            if (productIdColumn) {
+              setClauses.push(`"${productIdColumn}" = $${paramIndex++}`);
+              setValues.push(productId);
+            }
+            if (capacityIdColumn) {
+              setClauses.push(`"${capacityIdColumn}" = $${paramIndex++}`);
+              setValues.push(capacityId);
+            }
+            if (unitPriceColumn) {
+              setClauses.push(`"${unitPriceColumn}" = $${paramIndex++}`);
+              setValues.push(this.toOptionalNumber(payloadItem.unitPrice) ?? 0);
+            }
+            if (sellPriceColumn) {
+              setClauses.push(`"${sellPriceColumn}" = $${paramIndex++}`);
+              setValues.push(this.toOptionalNumber(payloadItem.sellPrice) ?? 0);
+            }
+            if (discountPriceColumn) {
+              setClauses.push(`"${discountPriceColumn}" = $${paramIndex++}`);
+              setValues.push(this.toOptionalNumber(payloadItem.discountPrice) ?? 0);
+            }
+            if (unitTypesQtyColumn) {
+              const normalizedUnitTypesQty = unitTypesQty.map((entry) => ({
+                label: String(entry.label ?? entry.unitType ?? 'set').trim() || 'set',
+                value: this.toOptionalNumber(entry.value ?? entry.qty) ?? 0,
+              }));
+
+              let unitTypesQtyValue: unknown;
+              if (
+                unitTypesQtyMeta &&
+                (unitTypesQtyMeta.data_type === 'ARRAY' ||
+                  unitTypesQtyMeta.udt_name.startsWith('_'))
+              ) {
+                unitTypesQtyValue = normalizedUnitTypesQty.map(
+                  (entry) => `${entry.label}:${entry.value}`,
+                );
+              } else {
+                unitTypesQtyValue = JSON.stringify(normalizedUnitTypesQty);
+              }
+              setClauses.push(`"${unitTypesQtyColumn}" = $${paramIndex++}`);
+              setValues.push(unitTypesQtyValue);
+            }
+            if (totalSetQtyColumn) {
+              setClauses.push(`"${totalSetQtyColumn}" = $${paramIndex++}`);
+              setValues.push(totalQty);
+            }
+
+            if (setClauses.length > 0) {
+              setValues.push(existingId);
+              await client.query(
+                `UPDATE tbltransaction_product_items SET ${setClauses.join(', ')} WHERE id = $${paramIndex}`,
+                setValues,
+              );
+            }
+          }
+
+          // --- Execute INSERTs for new items ---
+          for (const item of inserts) {
+            const productId = this.toOptionalNumber(item.productId)!;
+            const capacityId = this.toOptionalNumber(item.capacityId)!;
 
             const productExistsResult = await client.query<{ id: string | number }>(
               `SELECT id FROM tblproducts WHERE id::text = $1 LIMIT 1`,
@@ -2833,7 +2927,7 @@ export class PurchaseService {
 
             const itemRecord: Record<string, unknown> = {};
             if (transTypeColumn) {
-              itemRecord[transTypeColumn] = transType;
+              itemRecord[transTypeColumn] = 'purchase';
             }
             if (productIdColumn) {
               itemRecord[productIdColumn] = productId;
@@ -2888,6 +2982,55 @@ export class PurchaseService {
 
             if (Object.keys(itemRecord).length > 0) {
               await this.runInsert(client, 'tbltransaction_product_items', itemRecord);
+            }
+          }
+
+          // --- Execute DELETEs for removed items ---
+          for (const removedId of deletedIds) {
+            await client.query(
+              `DELETE FROM tbltransaction_product_items WHERE id = $1`,
+              [removedId],
+            );
+          }
+
+          const serialColumns = await this.getTableColumns(client, 'tblserial_numbers');
+          const serialBranchIdColumn = this.pickColumn(serialColumns, ['branchId', 'branch_id']);
+          const serialVendorIdColumn = this.pickColumn(serialColumns, ['vendorId', 'vendor_id']);
+          const serialPurchaseIdColumn = this.pickColumn(serialColumns, [
+            'purchaseId',
+            'purchase_id',
+          ]);
+          const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
+          const serialProductIdColumn = this.pickColumn(serialColumns, [
+            'productId',
+            'product_id',
+          ]);
+          const serialCapacityIdColumn = this.pickColumn(serialColumns, [
+            'capacityId',
+            'capacity_id',
+          ]);
+          const serialNumberColumn = this.pickColumn(serialColumns, [
+            'serialNumber',
+            'serial_number',
+          ]);
+          const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+          const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+          const serialCreatedByColumn = this.pickColumn(serialColumns, [
+            'created_by',
+            'createdBy',
+            'createdby',
+          ]);
+
+          for (const item of productItems) {
+            const transType = String(item.transType ?? 'purchase').trim().toLowerCase();
+            if (transType !== 'purchase') {
+              continue;
+            }
+
+            const productId = this.toOptionalNumber(item.productId);
+            const capacityId = this.toOptionalNumber(item.capacityId);
+            if (productId === null || capacityId === null) {
+              throw new Error('productId and capacityId are required for purchase items');
             }
 
             const serialPayload =
@@ -3722,5 +3865,508 @@ export class PurchaseService {
       .filter((entry): entry is { label: string; value: number } => entry !== null);
 
     return normalized;
+  }
+
+  /**
+   * Add a single product item to an existing PO (tbltransaction_product_items)
+   * so that serial scanning can begin without clicking "Update PO".
+   */
+  async addProductItem(
+    purchaseId: number,
+    item: {
+      productId: number;
+      capacityId: number;
+      unitPrice?: number;
+      sellPrice?: number;
+      discountPrice?: number;
+      totalSetQty?: number;
+      unitTypesQty?: Array<{ label: string; value: number }>;
+    },
+    userId?: number,
+  ) {
+    if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
+      return { success: false, message: 'Invalid purchase ID' };
+    }
+
+    const productId = Number(item.productId);
+    const capacityId = Number(item.capacityId);
+
+    if (!Number.isFinite(productId) || productId <= 0) {
+      return { success: false, message: 'productId is required' };
+    }
+    if (!Number.isFinite(capacityId) || capacityId <= 0) {
+      return { success: false, message: 'capacityId is required' };
+    }
+
+    try {
+      const result = await this.databaseService.withTransaction(async (client) => {
+        // Verify PO exists
+        const poResult = await client.query<{ id: number }>(
+          `SELECT id FROM tblpurchase_orders WHERE id = $1 LIMIT 1`,
+          [purchaseId],
+        );
+        if (poResult.rowCount === 0) {
+          throw new Error('Purchase order not found');
+        }
+
+        // Verify product and capacity exist
+        const productResult = await client.query<{ id: number }>(
+          `SELECT id FROM tblproducts WHERE id::text = $1 LIMIT 1`,
+          [String(productId)],
+        );
+        if (productResult.rowCount === 0) {
+          throw new Error('Product not found');
+        }
+
+        const capacityResult = await client.query<{ id: number }>(
+          `SELECT id FROM tblcapacity WHERE id::text = $1 LIMIT 1`,
+          [String(capacityId)],
+        );
+        if (capacityResult.rowCount === 0) {
+          throw new Error('Capacity not found');
+        }
+
+        const transactionItemColumns = await this.getTableColumns(
+          client,
+          'tbltransaction_product_items',
+        );
+
+        const transTypeColumn = this.pickColumn(transactionItemColumns, ['transType', 'trans_type']);
+        const itemProductIdColumn = this.pickColumn(transactionItemColumns, ['productId', 'product_id']);
+        const itemCapacityIdColumn = this.pickColumn(transactionItemColumns, ['capacityId', 'capacity_id']);
+        const unitPriceColumn = this.pickColumn(transactionItemColumns, ['unitPrice', 'unit_price']);
+        const sellPriceColumn = this.pickColumn(transactionItemColumns, ['sellPrice', 'sell_price']);
+        const discountPriceColumn = this.pickColumn(transactionItemColumns, ['discountPrice', 'discount_price']);
+        const unitTypesQtyColumn = this.pickColumn(transactionItemColumns, ['unitTypesQty', 'unit_types_qty']);
+        const totalSetQtyColumn = this.pickColumn(transactionItemColumns, ['totalSetQty', 'total_set_qty']);
+        const purchaseIdColumn = this.pickColumn(transactionItemColumns, ['purchaseId', 'purchase_id', 'po_id']);
+        const itemStatusColumn = this.pickColumn(transactionItemColumns, ['status']);
+        const itemCreatedByColumn = this.pickColumn(transactionItemColumns, ['created_by', 'createdBy', 'createdby']);
+
+        // Check for existing row with same purchaseId + productId + capacityId to prevent duplicates
+        if (itemProductIdColumn && itemCapacityIdColumn && purchaseIdColumn) {
+          const duplicateCheck = await client.query<{ id: number }>(
+            `SELECT id FROM tbltransaction_product_items
+             WHERE "${purchaseIdColumn}"::text = $1
+               AND "${itemProductIdColumn}"::text = $2
+               AND "${itemCapacityIdColumn}"::text = $3
+               ${transTypeColumn ? `AND LOWER(COALESCE("${transTypeColumn}", 'purchase')) = 'purchase'` : ''}
+             LIMIT 1`,
+            [String(purchaseId), String(productId), String(capacityId)],
+          );
+
+          if (duplicateCheck.rowCount && duplicateCheck.rowCount > 0) {
+            // Row already exists — update it instead of inserting a duplicate
+            const existingId = duplicateCheck.rows[0].id;
+            const setClauses: string[] = [];
+            const setValues: unknown[] = [];
+            let pIdx = 1;
+
+            if (unitPriceColumn) { setClauses.push(`"${unitPriceColumn}" = $${pIdx++}`); setValues.push(item.unitPrice ?? 0); }
+            if (sellPriceColumn) { setClauses.push(`"${sellPriceColumn}" = $${pIdx++}`); setValues.push(item.sellPrice ?? 0); }
+            if (discountPriceColumn) { setClauses.push(`"${discountPriceColumn}" = $${pIdx++}`); setValues.push(item.discountPrice ?? 0); }
+            if (totalSetQtyColumn) { setClauses.push(`"${totalSetQtyColumn}" = $${pIdx++}`); setValues.push(item.totalSetQty ?? 0); }
+
+            if (setClauses.length > 0) {
+              setValues.push(existingId);
+              await client.query(
+                `UPDATE tbltransaction_product_items SET ${setClauses.join(', ')} WHERE id = $${pIdx}`,
+                setValues,
+              );
+            }
+
+            return { id: existingId };
+          }
+        }
+
+        const unitTypesQtyMeta = unitTypesQtyColumn
+          ? await this.getColumnMeta(client, 'tbltransaction_product_items', unitTypesQtyColumn)
+          : null;
+
+        const unitTypesQty = Array.isArray(item.unitTypesQty) ? item.unitTypesQty : [];
+        const qtyFromList = unitTypesQty.reduce((sum, entry) => sum + (entry.value > 0 ? entry.value : 0), 0);
+        const totalQty = qtyFromList > 0 ? qtyFromList : (item.totalSetQty ?? 0);
+
+        const record: Record<string, unknown> = {};
+        if (transTypeColumn) record[transTypeColumn] = 'purchase';
+        if (itemProductIdColumn) record[itemProductIdColumn] = productId;
+        if (itemCapacityIdColumn) record[itemCapacityIdColumn] = capacityId;
+        if (unitPriceColumn) record[unitPriceColumn] = item.unitPrice ?? 0;
+        if (sellPriceColumn) record[sellPriceColumn] = item.sellPrice ?? 0;
+        if (discountPriceColumn) record[discountPriceColumn] = item.discountPrice ?? 0;
+        if (unitTypesQtyColumn) {
+          const normalizedQty = unitTypesQty.map((entry) => ({
+            label: String(entry.label ?? 'set').trim() || 'set',
+            value: entry.value ?? 0,
+          }));
+          if (unitTypesQtyMeta && (unitTypesQtyMeta.data_type === 'ARRAY' || unitTypesQtyMeta.udt_name.startsWith('_'))) {
+            record[unitTypesQtyColumn] = normalizedQty.map((entry) => `${entry.label}:${entry.value}`);
+          } else {
+            record[unitTypesQtyColumn] = JSON.stringify(normalizedQty);
+          }
+        }
+        if (totalSetQtyColumn) record[totalSetQtyColumn] = totalQty;
+        if (purchaseIdColumn) record[purchaseIdColumn] = purchaseId;
+        if (itemStatusColumn) record[itemStatusColumn] = 'pending';
+        if (itemCreatedByColumn && userId) record[itemCreatedByColumn] = userId;
+
+        const insertResult = await this.runInsert(client, 'tbltransaction_product_items', record);
+        return { id: insertResult.rows[0]?.id };
+      });
+
+      return { success: true, message: 'Product item added', data: result };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to add product item',
+      };
+    }
+  }
+
+  /**
+   * Update an existing product item row in tbltransaction_product_items,
+   * located by (purchaseId, oldProductId, oldCapacityId).
+   * Falls back to INSERT if no matching row is found.
+   */
+  async updateProductItem(
+    purchaseId: number,
+    item: {
+      oldProductId: number;
+      oldCapacityId: number;
+      productId: number;
+      capacityId: number;
+      unitPrice?: number;
+      sellPrice?: number;
+      discountPrice?: number;
+      totalSetQty?: number;
+      unitTypesQty?: Array<{ label: string; value: number }>;
+    },
+    userId?: number,
+  ): Promise<{ success: boolean; message?: string }> {
+    if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
+      return { success: false, message: 'Invalid purchase ID' };
+    }
+
+    const oldProductId = Number(item.oldProductId);
+    const oldCapacityId = Number(item.oldCapacityId);
+    const productId = Number(item.productId);
+    const capacityId = Number(item.capacityId);
+
+    if (!Number.isFinite(oldProductId) || oldProductId <= 0) {
+      return { success: false, message: 'oldProductId is required' };
+    }
+    if (!Number.isFinite(oldCapacityId) || oldCapacityId <= 0) {
+      return { success: false, message: 'oldCapacityId is required' };
+    }
+    if (!Number.isFinite(productId) || productId <= 0) {
+      return { success: false, message: 'productId is required' };
+    }
+    if (!Number.isFinite(capacityId) || capacityId <= 0) {
+      return { success: false, message: 'capacityId is required' };
+    }
+
+    try {
+      await this.databaseService.withTransaction(async (client) => {
+        // Verify PO exists
+        const poResult = await client.query<{ id: number }>(
+          `SELECT id FROM tblpurchase_orders WHERE id = $1 LIMIT 1`,
+          [purchaseId],
+        );
+        if (poResult.rowCount === 0) {
+          throw new Error('Purchase order not found');
+        }
+
+        // Verify new product and capacity exist
+        const productResult = await client.query<{ id: number }>(
+          `SELECT id FROM tblproducts WHERE id::text = $1 LIMIT 1`,
+          [String(productId)],
+        );
+        if (productResult.rowCount === 0) {
+          throw new Error('Product not found');
+        }
+
+        const capacityResult = await client.query<{ id: number }>(
+          `SELECT id FROM tblcapacity WHERE id::text = $1 LIMIT 1`,
+          [String(capacityId)],
+        );
+        if (capacityResult.rowCount === 0) {
+          throw new Error('Capacity not found');
+        }
+
+        // Detect column names
+        const transactionItemColumns = await this.getTableColumns(
+          client,
+          'tbltransaction_product_items',
+        );
+
+        const transTypeColumn = this.pickColumn(transactionItemColumns, ['transType', 'trans_type']);
+        const itemProductIdColumn = this.pickColumn(transactionItemColumns, ['productId', 'product_id']);
+        const itemCapacityIdColumn = this.pickColumn(transactionItemColumns, ['capacityId', 'capacity_id']);
+        const unitPriceColumn = this.pickColumn(transactionItemColumns, ['unitPrice', 'unit_price']);
+        const sellPriceColumn = this.pickColumn(transactionItemColumns, ['sellPrice', 'sell_price']);
+        const discountPriceColumn = this.pickColumn(transactionItemColumns, ['discountPrice', 'discount_price']);
+        const unitTypesQtyColumn = this.pickColumn(transactionItemColumns, ['unitTypesQty', 'unit_types_qty']);
+        const totalSetQtyColumn = this.pickColumn(transactionItemColumns, ['totalSetQty', 'total_set_qty']);
+        const purchaseIdColumn = this.pickColumn(transactionItemColumns, ['purchaseId', 'purchase_id', 'po_id']);
+
+        if (!itemProductIdColumn || !itemCapacityIdColumn || !purchaseIdColumn) {
+          throw new Error('Required columns not found in tbltransaction_product_items');
+        }
+
+        // Try to find existing row by (purchaseId, oldProductId, oldCapacityId, transType='purchase')
+        const whereClauses = [
+          `"${purchaseIdColumn}"::text = $1`,
+          `"${itemProductIdColumn}"::text = $2`,
+          `"${itemCapacityIdColumn}"::text = $3`,
+        ];
+        const whereParams: unknown[] = [String(purchaseId), String(oldProductId), String(oldCapacityId)];
+
+        if (transTypeColumn) {
+          whereClauses.push(`LOWER(COALESCE("${transTypeColumn}", 'purchase')) = 'purchase'`);
+        }
+
+        const existingResult = await client.query<{ id: number }>(
+          `SELECT id FROM tbltransaction_product_items WHERE ${whereClauses.join(' AND ')} LIMIT 1`,
+          whereParams,
+        );
+
+        // Prepare unitTypesQty value
+        const unitTypesQtyMeta = unitTypesQtyColumn
+          ? await this.getColumnMeta(client, 'tbltransaction_product_items', unitTypesQtyColumn)
+          : null;
+
+        const unitTypesQty = Array.isArray(item.unitTypesQty) ? item.unitTypesQty : [];
+        const qtyFromList = unitTypesQty.reduce((sum, entry) => sum + (entry.value > 0 ? entry.value : 0), 0);
+        const totalQty = qtyFromList > 0 ? qtyFromList : (item.totalSetQty ?? 0);
+
+        let unitTypesQtyValue: unknown = null;
+        if (unitTypesQtyColumn) {
+          const normalizedQty = unitTypesQty.map((entry) => ({
+            label: String(entry.label ?? 'set').trim() || 'set',
+            value: entry.value ?? 0,
+          }));
+          if (unitTypesQtyMeta && (unitTypesQtyMeta.data_type === 'ARRAY' || unitTypesQtyMeta.udt_name.startsWith('_'))) {
+            unitTypesQtyValue = normalizedQty.map((entry) => `${entry.label}:${entry.value}`);
+          } else {
+            unitTypesQtyValue = JSON.stringify(normalizedQty);
+          }
+        }
+
+        if (existingResult.rowCount && existingResult.rowCount > 0) {
+          // UPDATE the existing row
+          const existingId = existingResult.rows[0].id;
+          const setClauses: string[] = [];
+          const updateParams: unknown[] = [];
+          let paramIdx = 1;
+
+          if (itemProductIdColumn) {
+            setClauses.push(`"${itemProductIdColumn}" = $${paramIdx++}`);
+            updateParams.push(productId);
+          }
+          if (itemCapacityIdColumn) {
+            setClauses.push(`"${itemCapacityIdColumn}" = $${paramIdx++}`);
+            updateParams.push(capacityId);
+          }
+          if (unitPriceColumn) {
+            setClauses.push(`"${unitPriceColumn}" = $${paramIdx++}`);
+            updateParams.push(item.unitPrice ?? 0);
+          }
+          if (sellPriceColumn) {
+            setClauses.push(`"${sellPriceColumn}" = $${paramIdx++}`);
+            updateParams.push(item.sellPrice ?? 0);
+          }
+          if (discountPriceColumn) {
+            setClauses.push(`"${discountPriceColumn}" = $${paramIdx++}`);
+            updateParams.push(item.discountPrice ?? 0);
+          }
+          if (unitTypesQtyColumn && unitTypesQtyValue !== null) {
+            setClauses.push(`"${unitTypesQtyColumn}" = $${paramIdx++}`);
+            updateParams.push(unitTypesQtyValue);
+          }
+          if (totalSetQtyColumn) {
+            setClauses.push(`"${totalSetQtyColumn}" = $${paramIdx++}`);
+            updateParams.push(totalQty);
+          }
+
+          if (setClauses.length > 0) {
+            updateParams.push(existingId);
+            await client.query(
+              `UPDATE tbltransaction_product_items SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`,
+              updateParams,
+            );
+          }
+        } else {
+          // No matching row found — skip INSERT to avoid duplicates.
+          // The full PO update (smart diff) will handle creating the row
+          // when the user submits the form.
+        }
+      });
+
+      return { success: true, message: 'Product item updated' };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to update product item',
+      };
+    }
+  }
+
+  /**
+   * Update productId and capacityId on all serial numbers linked to a PO
+   * that currently have the old product/capacity values.
+   */
+  async updateSerialsAssignment(
+    purchaseId: number,
+    payload: {
+      oldProductId?: number | null;
+      oldCapacityId?: number | null;
+      newProductId: number;
+      newCapacityId: number;
+    },
+  ) {
+    if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
+      return { success: false, message: 'Invalid purchase ID' };
+    }
+
+    const { newProductId, newCapacityId, oldProductId, oldCapacityId } = payload;
+
+    if (!Number.isFinite(newProductId) || newProductId <= 0) {
+      return { success: false, message: 'newProductId is required' };
+    }
+    if (!Number.isFinite(newCapacityId) || newCapacityId <= 0) {
+      return { success: false, message: 'newCapacityId is required' };
+    }
+
+    try {
+      const serialColumns = await this.getTableColumns(this.databaseService, 'tblserial_numbers');
+      const serialProductIdColumn = this.pickColumn(serialColumns, ['productId', 'product_id']);
+      const serialCapacityIdColumn = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
+      const serialPurchaseIdColumn = this.pickColumn(serialColumns, ['purchaseId', 'purchase_id', 'po_id', 'purchaseOrderId', 'purchase_order_id']);
+
+      if (!serialProductIdColumn || !serialCapacityIdColumn || !serialPurchaseIdColumn) {
+        return { success: false, message: 'Serial number columns not configured' };
+      }
+
+      // Build WHERE clause: match by purchaseId and optionally old product/capacity
+      const conditions: string[] = [`"${serialPurchaseIdColumn}"::text = $1`];
+      const params: unknown[] = [String(purchaseId)];
+
+      if (oldProductId !== null && oldProductId !== undefined && Number.isFinite(oldProductId)) {
+        params.push(String(oldProductId));
+        conditions.push(`"${serialProductIdColumn}"::text = $${params.length}`);
+      }
+      if (oldCapacityId !== null && oldCapacityId !== undefined && Number.isFinite(oldCapacityId)) {
+        params.push(String(oldCapacityId));
+        conditions.push(`"${serialCapacityIdColumn}"::text = $${params.length}`);
+      }
+
+      params.push(newProductId);
+      const productSetIdx = params.length;
+      params.push(newCapacityId);
+      const capacitySetIdx = params.length;
+
+      const updateResult = await this.databaseService.query(
+        `UPDATE tblserial_numbers
+         SET "${serialProductIdColumn}" = $${productSetIdx},
+             "${serialCapacityIdColumn}" = $${capacitySetIdx}
+         WHERE ${conditions.join(' AND ')}`,
+        params,
+      );
+
+      return {
+        success: true,
+        message: `Updated ${updateResult.rowCount ?? 0} serial(s)`,
+        updatedCount: updateResult.rowCount ?? 0,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to update serials',
+      };
+    }
+  }
+
+  /**
+   * Remove a product item from a PO and delete its associated serial numbers.
+   */
+  async removeProductItem(
+    purchaseId: number,
+    item: { productId: number; capacityId: number },
+  ) {
+    if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
+      return { success: false, message: 'Invalid purchase ID' };
+    }
+
+    const productId = Number(item.productId);
+    const capacityId = Number(item.capacityId);
+
+    if (!Number.isFinite(productId) || productId <= 0) {
+      return { success: false, message: 'productId is required' };
+    }
+    if (!Number.isFinite(capacityId) || capacityId <= 0) {
+      return { success: false, message: 'capacityId is required' };
+    }
+
+    try {
+      await this.databaseService.withTransaction(async (client) => {
+        // Delete matching product item from tbltransaction_product_items
+        const transItemColumns = await this.getTableColumns(client, 'tbltransaction_product_items');
+        const transProductIdColumn = this.pickColumn(transItemColumns, ['productId', 'product_id']);
+        const transCapacityIdColumn = this.pickColumn(transItemColumns, ['capacityId', 'capacity_id']);
+        const transPurchaseIdColumn = this.pickColumn(transItemColumns, ['purchaseId', 'purchase_id', 'po_id']);
+        const transTypeColumn = this.pickColumn(transItemColumns, ['transType', 'trans_type']);
+
+        if (transPurchaseIdColumn && transProductIdColumn && transCapacityIdColumn) {
+          const conditions = [
+            `COALESCE(to_jsonb(tbltransaction_product_items)->>'${transPurchaseIdColumn}', '') = $1`,
+            `COALESCE(to_jsonb(tbltransaction_product_items)->>'${transProductIdColumn}', '') = $2`,
+            `COALESCE(to_jsonb(tbltransaction_product_items)->>'${transCapacityIdColumn}', '') = $3`,
+          ];
+          const params: unknown[] = [String(purchaseId), String(productId), String(capacityId)];
+
+          if (transTypeColumn) {
+            conditions.push(`LOWER(COALESCE(to_jsonb(tbltransaction_product_items)->>'${transTypeColumn}', 'purchase')) = 'purchase'`);
+          }
+
+          await client.query(
+            `DELETE FROM tbltransaction_product_items WHERE ${conditions.join(' AND ')}`,
+            params,
+          );
+        }
+
+        // Delete associated serial numbers for this PO + product + capacity
+        const serialColumns = await this.getTableColumns(client, 'tblserial_numbers');
+        const serialPurchaseIdColumn = this.pickColumn(serialColumns, ['purchaseId', 'purchase_id', 'po_id', 'purchaseOrderId', 'purchase_order_id']);
+        const serialProductIdColumn = this.pickColumn(serialColumns, ['productId', 'product_id']);
+        const serialCapacityIdColumn = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
+        const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
+
+        if (serialPurchaseIdColumn && serialProductIdColumn && serialCapacityIdColumn) {
+          // Only delete serials not assigned to an SO
+          const serialConditions = [
+            `"${serialPurchaseIdColumn}"::text = $1`,
+            `"${serialProductIdColumn}"::text = $2`,
+            `"${serialCapacityIdColumn}"::text = $3`,
+          ];
+          const serialParams: unknown[] = [String(purchaseId), String(productId), String(capacityId)];
+
+          if (serialSalesIdColumn) {
+            serialConditions.push(`("${serialSalesIdColumn}" IS NULL OR "${serialSalesIdColumn}"::text = '' OR "${serialSalesIdColumn}"::text = '0')`);
+          }
+
+          await client.query(
+            `DELETE FROM tblserial_numbers WHERE ${serialConditions.join(' AND ')}`,
+            serialParams,
+          );
+        }
+      });
+
+      return { success: true, message: 'Product item and associated serials removed' };
+    } catch (error) {
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to remove product item',
+      };
+    }
   }
 }

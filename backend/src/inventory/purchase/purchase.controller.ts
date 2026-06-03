@@ -281,4 +281,74 @@ export class PurchaseController {
       Number.isFinite(branchId) ? branchId : undefined,
     );
   }
+
+  @Post(':id/product-item')
+  async addProductItem(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.purchaseService.addProductItem(
+      +id,
+      {
+        productId: Number(body.productId),
+        capacityId: Number(body.capacityId),
+        unitPrice: body.unitPrice !== undefined ? Number(body.unitPrice) : undefined,
+        sellPrice: body.sellPrice !== undefined ? Number(body.sellPrice) : undefined,
+        discountPrice: body.discountPrice !== undefined ? Number(body.discountPrice) : undefined,
+        totalSetQty: body.totalSetQty !== undefined ? Number(body.totalSetQty) : undefined,
+        unitTypesQty: Array.isArray(body.unitTypesQty) ? body.unitTypesQty as Array<{ label: string; value: number }> : undefined,
+      },
+      Number.isFinite(userId) ? userId : undefined,
+    );
+  }
+
+  @Patch(':id/update-product-item')
+  async updateProductItem(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.purchaseService.updateProductItem(
+      +id,
+      {
+        oldProductId: Number(body.oldProductId),
+        oldCapacityId: Number(body.oldCapacityId),
+        productId: Number(body.productId),
+        capacityId: Number(body.capacityId),
+        unitPrice: body.unitPrice !== undefined ? Number(body.unitPrice) : undefined,
+        sellPrice: body.sellPrice !== undefined ? Number(body.sellPrice) : undefined,
+        discountPrice: body.discountPrice !== undefined ? Number(body.discountPrice) : undefined,
+        totalSetQty: body.totalSetQty !== undefined ? Number(body.totalSetQty) : undefined,
+        unitTypesQty: Array.isArray(body.unitTypesQty) ? body.unitTypesQty as Array<{ label: string; value: number }> : undefined,
+      },
+      Number.isFinite(userId) ? userId : undefined,
+    );
+  }
+
+  @Patch(':id/update-serials-assignment')
+  async updateSerialsAssignment(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.purchaseService.updateSerialsAssignment(+id, {
+      oldProductId: body.oldProductId !== undefined ? Number(body.oldProductId) : null,
+      oldCapacityId: body.oldCapacityId !== undefined ? Number(body.oldCapacityId) : null,
+      newProductId: Number(body.newProductId),
+      newCapacityId: Number(body.newCapacityId),
+    });
+  }
+
+  @Post(':id/remove-product-item')
+  async removeProductItem(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    return this.purchaseService.removeProductItem(+id, {
+      productId: Number(body.productId),
+      capacityId: Number(body.capacityId),
+    });
+  }
 }
