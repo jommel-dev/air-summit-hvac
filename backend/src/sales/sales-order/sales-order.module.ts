@@ -9,11 +9,12 @@ import { MaterialTransactionsModule } from 'src/inventory/material-transactions/
 import { MaterialsModule } from 'src/inventory/materials/materials.module';
 import { PurchaseModule } from 'src/inventory/purchase/purchase.module';
 import { AuditLogModule } from 'src/audit-log/audit-log.module';
+import { SoNumberService } from './so-number.service';
 
 @Module({
   imports: [DatabaseModule, MaterialStockModule, MaterialTransactionsModule, MaterialsModule, PurchaseModule, AuditLogModule],
   controllers: [SalesOrderController],
-  providers: [SalesOrderService, JwtAuthGuard],
-  exports: [SalesOrderService],
+  providers: [SalesOrderService, SoNumberService, JwtAuthGuard],
+  exports: [SalesOrderService, SoNumberService],
 })
 export class SalesOrderModule {}

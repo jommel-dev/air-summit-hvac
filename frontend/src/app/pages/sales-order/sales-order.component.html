@@ -109,14 +109,15 @@
           <thead>
             <tr class="border-b border-gray-200 dark:border-gray-800">
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">SO Number</th>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Installer</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Customer</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Schedule Date</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Method</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Sales Type</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Project Code</th>
-              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Project Name</th>
+              <!-- <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Sales Type</th> -->
+              <!-- <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Project Code</th> -->
+              <!-- <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Project Name</th> -->
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Serial Count</th>
               <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Created At</th>
               <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
@@ -126,6 +127,7 @@
             @for (order of orders; track order.id) {
               <tr class="border-b border-gray-100 dark:border-gray-800/70">
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.soNumber }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.installer || '-' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.customerName }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDateOnly(order.scheduleDate) }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatAmount(order.totalAmount) }}</td>
@@ -154,9 +156,9 @@
                     </span>
                   }
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.salesType || '-' }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.projectCode || '-' }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.projectName || '-' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hidden">{{ order.salesType || '-' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hidden">{{ order.projectCode || '-' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hidden">{{ order.projectName || '-' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.serialCount }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDate(order.createdAt) }}</td>
                 <td class="px-4 py-3 text-right">
@@ -179,6 +181,15 @@
                         class="rounded-lg border border-warning-300 px-3 py-1.5 text-xs font-medium text-warning-700 transition hover:bg-warning-50 disabled:opacity-60 dark:border-warning-700 dark:text-warning-400 dark:hover:bg-warning-500/10"
                       >
                         {{ returningOrderIds.has(order.id) ? 'Processing...' : 'Returned Units' }}
+                      </button>
+                    }
+                    @if (isDrEligibleStatus(order.status)) {
+                      <button
+                        type="button"
+                        (click)="printNewDeliveryReceipt(order.id)"
+                        class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                      >
+                        Print DR
                       </button>
                     }
                     @if (activeTab === 'schedules' && canEditSalesOrder()) {
@@ -437,6 +448,12 @@
         <div>
           <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">{{ isMigrationDrawerMode ? 'Edit Migration Payload' : (drawerMode === 'create' ? 'Create Sales Order' : 'Update Sales Order') }}</h3>
           <p class="text-sm text-gray-500 dark:text-gray-400">{{ isMigrationDrawerMode ? 'Use the standard SO form to correct this migration row payload.' : 'Standardized layout matching Purchase Order flow.' }}</p>
+          @if (drawerMode === 'create' && nextSoNumberPreview) {
+            <div class="mt-1 inline-flex items-center gap-1.5 rounded-md bg-brand-50 px-2.5 py-1 text-xs font-medium text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
+              <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"/></svg>
+              Next: {{ nextSoNumberPreview }}
+            </div>
+          }
         </div>
         <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
       </div>
@@ -1385,7 +1402,15 @@
               [disabled]="isSubmitting || isRemitting || isSendingForDelivery || !editingSalesId || printingOrderIds.has(editingSalesId)"
             class="rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 transition hover:bg-brand-50 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
           >
-              {{ editingSalesId && printingOrderIds.has(editingSalesId) ? 'Printing...' : 'Print DR' }}
+              {{ editingSalesId && printingOrderIds.has(editingSalesId) ? 'Printing...' : 'Print DR (Legacy)' }}
+          </button>
+          <button
+            type="button"
+            (click)="printNewDeliveryReceiptFromDrawer()"
+            [disabled]="isSubmitting || isRemitting || isSendingForDelivery || !editingSalesId || !form.customer_id || !isDrEligibleStatus(form.status)"
+            class="rounded-lg border border-brand-300 px-4 py-2 text-sm font-medium text-brand-700 transition hover:bg-brand-50 disabled:opacity-60 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+          >
+            Print New DR
           </button>
           @if (canSendForDeliveryFromDrawer()) {
             <button

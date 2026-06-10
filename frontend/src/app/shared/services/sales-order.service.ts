@@ -202,6 +202,7 @@ export interface SalesOrderListItem {
   salesType?: string;
   projectName?: string;
   projectCode?: string;
+  installer?: string;
   scheduleDate: string | null;
   createdAt: string | null;
   serialCount: number;
@@ -212,6 +213,8 @@ export interface SalesOrderRow {
   id: number;
   soNumber: string;
   customerName: string;
+  customerId?: string | null;
+  installer?: string;
   totalAmount: number;
   paymentMethod: string;
   status: string;
@@ -1010,4 +1013,36 @@ export class SalesOrderService {
     );
     return response.data;
   }
+
+  async getDrEligibleOrders(orderId: number): Promise<{ success: boolean; message?: string; items: DrEligibleOrderResponse[] }> {
+    const response = await apiClient.get<{ success: boolean; message?: string; items: DrEligibleOrderResponse[] }>(
+      `/sales-order/${orderId}/dr-eligible-group`,
+    );
+    return response.data;
+  }
+
+  async getNextSoNumber(): Promise<{ success: boolean; nextSoNumber: string }> {
+    const response = await apiClient.get<{ success: boolean; nextSoNumber: string }>('/sales-order/next-so-number');
+    return response.data;
+  }
+}
+
+export interface DrEligibleOrderResponse {
+  id: number;
+  soNumber: string;
+  customerName: string;
+  customerAddress: string;
+  customerType: 'regular' | 'sub_dealer';
+  installer: string | null;
+  scheduleDate: string | null;
+  paymentMethod: string | null;
+  productItems: Array<{
+    productName: string;
+    capacityName: string;
+    sellPrice: number;
+    serialNumbers: Array<{
+      serialNumber: string;
+      unitType: 'indoor' | 'outdoor' | 'window';
+    }>;
+  }>;
 }

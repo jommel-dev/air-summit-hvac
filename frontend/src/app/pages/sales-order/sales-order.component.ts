@@ -33,6 +33,8 @@ import { UserManagementService, UserApiItem } from '../../shared/services/user-m
 import { AuditLogFrontendService } from '../../shared/services/audit-log.service';
 import { ModalComponent } from '../../shared/components/ui/modal/modal.component';
 import { SerialValidationModalComponent, SerialValidationModalMode, SerialValidationDetails } from './serial-validation-modal/serial-validation-modal.component';
+import { DrGeneratorService } from '../../shared/services/dr-generator.service';
+import { DrEligibleOrder } from '../../shared/interfaces/dr-generator.interfaces';
 
 type SalesOrderErrorDialog = {
   title: string;
@@ -176,6 +178,7 @@ export class SalesOrderComponent {
   constructor(
     private readonly salesOrderService: SalesOrderService,
     private readonly businessSettingsService: BusinessSettingsService,
+    private readonly drGeneratorService: DrGeneratorService,
     private readonly route: ActivatedRoute,
     private readonly sanitizer: DomSanitizer,
     private readonly rbacService: RbacService,
@@ -229,6 +232,7 @@ export class SalesOrderComponent {
 
   isDrawerOpen = false;
   drawerMode: 'create' | 'edit' = 'create';
+  nextSoNumberPreview = '';
   guardDialogMode: SalesGuardDialogMode | null = null;
   isGuardDialogOpen = false;
   pendingSerialRemoval: SalesPendingSerialRemoval | null = null;
@@ -1526,6 +1530,96 @@ export class SalesOrderComponent {
     await this.printDeliveryReceipt(row);
   }
 
+  /**
+   * Checks if a given order status is eligible for DR generation.
+   * DR-eligible statuses: 'for-delivery', 'remitted', 'complete', 'released'
+   */
+  isDrEligibleStatus(status: string): boolean {
+    const normalized = String(status ?? '').trim().toLowerCase().replace(/[\s_]/g, '-');
+    return ['for-delivery', 'remitted', 'complete', 'released'].includes(normalized);
+  }
+
+  /**
+   * NEW DR generation path: Fetches all DR-eligible orders for a customer
+   * and generates a new-format DR PDF using DrGeneratorService.
+   * Keeps existing printDeliveryReceipt() as legacy path (Req 5.4).
+   */
+  async printNewDeliveryReceipt(orderId: number): Promise<void> {
+    if (!orderId) {
+      this.openErrorModal('Print Error', 'Order ID is required for DR generation.');
+      return;
+    }
+
+    this.uiError = '';
+    this.uiMessage = '';
+
+    try {
+      const result = await this.salesOrderService.getDrEligibleOrders(orderId);
+      if (!result.success || !result.items || result.items.length === 0) {
+        const msg = (result as { message?: string }).message || 'No DR-eligible orders found for this installer + delivery date.';
+        this.openErrorModal('Print Error', msg);
+        return;
+      }
+
+      const businessProfile = await this.loadBusinessProfileSettings();
+
+      // Map API response to DrEligibleOrder interface for the generator
+      const drOrders: DrEligibleOrder[] = result.items.map((item) => ({
+        id: item.id,
+        soNumber: item.soNumber,
+        customerName: item.customerName,
+        customerAddress: item.customerAddress,
+        customerType: item.customerType,
+        installer: item.installer,
+        scheduleDate: item.scheduleDate,
+        paymentMethod: item.paymentMethod,
+        productItems: (item.productItems ?? []).map((pi) => ({
+          productName: pi.productName,
+          capacityName: pi.capacityName,
+          sellPrice: pi.sellPrice,
+          serialNumbers: (pi.serialNumbers ?? []).map((sn) => ({
+            serialNumber: sn.serialNumber,
+            unitType: sn.unitType,
+          })),
+        })),
+      }));
+
+      const pdfBytes = await this.drGeneratorService.generateDr(drOrders, businessProfile);
+      const blobSafeBytes = new Uint8Array(pdfBytes.length);
+      blobSafeBytes.set(pdfBytes);
+      const blob = new Blob([blobSafeBytes], { type: 'application/pdf' });
+      const blobUrl = URL.createObjectURL(blob);
+      this.openDrPreview(blobUrl, `DR-${drOrders[0]?.installer || 'Unknown'}.pdf`);
+    } catch (error: unknown) {
+      let errorMessage = 'Failed to generate new Delivery Receipt';
+      if (axios.isAxiosError(error)) {
+        errorMessage =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to generate new Delivery Receipt';
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      this.openErrorModal('Print Error', errorMessage);
+    }
+  }
+
+  /**
+   * Prints the new DR from the drawer, using the currently editing order's ID.
+   */
+  async printNewDeliveryReceiptFromDrawer(): Promise<void> {
+    if (this.drawerMode !== 'edit') {
+      return;
+    }
+
+    const orderId = this.editingSalesId;
+    if (!orderId) {
+      this.uiError = 'No order ID available for DR generation.';
+      return;
+    }
+
+    await this.printNewDeliveryReceipt(orderId);
+  }
+
   closeDrPreview(): void {
     this.isDrPreviewOpen = false;
     this.revokeDrPreviewUrl();
@@ -2412,6 +2506,12 @@ export class SalesOrderComponent {
     this.rejectedScanCount = 0;
     this.rejectedScanList = [];
     this.captureDrawerBaselineSnapshot();
+
+    this.salesOrderService.getNextSoNumber().then((result) => {
+      this.nextSoNumberPreview = result.nextSoNumber ?? '';
+    }).catch(() => {
+      this.nextSoNumberPreview = '';
+    });
   }
 
   async openEditDrawer(order: SalesOrderRow): Promise<void> {
@@ -2475,6 +2575,7 @@ export class SalesOrderComponent {
 
     const shouldReturnToMigrationModal = this.isMigrationDrawerMode;
     this.isDrawerOpen = false;
+    this.nextSoNumberPreview = '';
     this.closeGuardDialog();
 
     if (shouldReturnToMigrationModal) {
@@ -2647,6 +2748,8 @@ export class SalesOrderComponent {
       id: item.id,
       soNumber: item.soNumber,
       customerName: item.customerName,
+      customerId: item.customerId ?? null,
+      installer: item.installer ?? '',
       totalAmount: Number(item.totalAmount ?? 0),
       paymentMethod: item.paymentMethod ?? '-',
       status: item.status ?? 'pending',
