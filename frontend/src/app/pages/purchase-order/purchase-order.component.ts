@@ -646,6 +646,15 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           this.createError = 'Pending serial scans must finish saving before updating the purchase order.';
           return;
         }
+
+        // Verify all scanned serials are in the database, re-insert any missing ones
+        if (this.editingPurchaseId) {
+          const verificationResult = await this.verifyAndRecoverMissingSerials();
+          if (!verificationResult) {
+            this.createError = 'Failed to verify serial numbers. Please try again.';
+            return;
+          }
+        }
       }
 
       const payload = this.buildPurchasePayload();
@@ -3677,6 +3686,144 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
 
     return !this.isFlushingQueuedSerials;
+  }
+
+  /**
+   * Verifies all scanned serials in the UI are actually stored in the database.
+   * If any are missing, re-inserts them via the batch scan endpoint.
+   * Also logs the final serial state to the audit log.
+   */
+  private async verifyAndRecoverMissingSerials(): Promise<boolean> {
+    if (!this.editingPurchaseId) return true;
+
+    // Collect all serials currently in the UI
+    const allSerials: Array<{
+      serialNumber: string;
+      productIndex: number;
+      unitLabel: string;
+      productId: number;
+      capacityId: number;
+    }> = [];
+
+    for (const [index, item] of this.createForm.productItems.entries()) {
+      const productId = Number(item.productId);
+      const capacityId = Number(item.capacityId);
+      if (!Number.isFinite(productId) || productId <= 0) continue;
+      if (!Number.isFinite(capacityId) || capacityId <= 0) continue;
+
+      for (const ut of item.unitTypes) {
+        for (const serial of ut.serials) {
+          const normalized = serial.trim();
+          if (normalized) {
+            allSerials.push({
+              serialNumber: normalized,
+              productIndex: index,
+              unitLabel: ut.label,
+              productId,
+              capacityId,
+            });
+          }
+        }
+      }
+    }
+
+    if (allSerials.length === 0) return true;
+
+    try {
+      // Check which serials exist in the database for this PO
+      const checkResponse = await this.purchaseOrderService.checkSerials({
+        serialNumbers: allSerials.map((s) => s.serialNumber),
+        purchaseId: this.editingPurchaseId,
+      });
+
+      const existingSerials = new Set(
+        checkResponse.results
+          .filter((r) => r.exists && r.isSamePoAssignment)
+          .map((r) => r.serialNumber.trim().toLowerCase()),
+      );
+
+      // Find serials that are in the UI but not in the DB
+      const missingSerials = allSerials.filter(
+        (s) => !existingSerials.has(s.serialNumber.trim().toLowerCase()),
+      );
+
+      if (missingSerials.length > 0) {
+        // Re-insert the missing serials via batch scan
+        const batchResponse = await this.purchaseOrderService.scanPurchaseSerialBatch({
+          items: missingSerials.map((s) => ({
+            serialNumber: s.serialNumber,
+            purchaseId: this.editingPurchaseId!,
+            expectedProductId: s.productId,
+            expectedCapacityId: s.capacityId,
+            unitType: s.unitLabel,
+          })),
+        });
+
+        const failedCount = batchResponse.summary?.failureCount ?? 0;
+        if (failedCount > 0) {
+          this.createError = `${failedCount} serial(s) could not be recovered. Check the audit log for details.`;
+        }
+
+        // Log the recovery action
+        void this.auditLogService.createAuditLog({
+          action: 'PO_SERIAL_RECOVERY',
+          entityType: 'PurchaseOrder',
+          entityId: this.editingPurchaseId,
+          metadata: {
+            description: `Recovered ${missingSerials.length} missing serial(s) out of ${allSerials.length} total serials in PO.`,
+            after: {
+              totalSerialsInUI: allSerials.length,
+              missingCount: missingSerials.length,
+              failedRecoveryCount: failedCount,
+              recoveredSerials: missingSerials.map((s) => `${s.serialNumber} (${s.unitLabel})`),
+            },
+          },
+        });
+      }
+
+      // Log the full serial state to audit log for traceability
+      const serialsByProduct: Record<string, { productId: number; capacityId: number; serials: Record<string, string[]> }> = {};
+      for (const s of allSerials) {
+        const key = `${s.productId}-${s.capacityId}`;
+        if (!serialsByProduct[key]) {
+          serialsByProduct[key] = { productId: s.productId, capacityId: s.capacityId, serials: {} };
+        }
+        if (!serialsByProduct[key].serials[s.unitLabel]) {
+          serialsByProduct[key].serials[s.unitLabel] = [];
+        }
+        serialsByProduct[key].serials[s.unitLabel].push(s.serialNumber);
+      }
+
+      // Build a readable after payload for the audit log UI
+      const afterPayload: Record<string, unknown> = {
+        totalSerials: allSerials.length,
+        verifiedAt: new Date().toISOString(),
+      };
+
+      for (const [key, group] of Object.entries(serialsByProduct)) {
+        const productLabel = `Product ${group.productId} / Capacity ${group.capacityId}`;
+        const serialSummary: Record<string, string[]> = {};
+        for (const [unitType, serials] of Object.entries(group.serials)) {
+          serialSummary[unitType] = serials;
+        }
+        afterPayload[productLabel] = serialSummary;
+      }
+
+      void this.auditLogService.createAuditLog({
+        action: 'PO_SERIAL_SNAPSHOT',
+        entityType: 'PurchaseOrder',
+        entityId: this.editingPurchaseId,
+        metadata: {
+          description: `Serial snapshot: ${allSerials.length} serial(s) across ${Object.keys(serialsByProduct).length} product item(s).`,
+          after: afterPayload,
+        },
+      });
+
+      return true;
+    } catch (error: unknown) {
+      console.error('verifyAndRecoverMissingSerials error', error);
+      return false;
+    }
   }
 
   private async flushQueuedSerialScans(): Promise<boolean> {

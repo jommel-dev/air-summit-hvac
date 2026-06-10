@@ -14,6 +14,7 @@ import { MaterialTransactionsService } from 'src/inventory/material-transactions
 import { MaterialsService } from 'src/inventory/materials/materials.service';
 import { PurchaseService } from 'src/inventory/purchase/purchase.service';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import { SoNumberService } from './so-number.service';
 
 type SalesMode =
   | 'deliveries'
@@ -67,7 +68,17 @@ export class SalesOrderService {
     private readonly materialsService: MaterialsService,
     private readonly purchaseService: PurchaseService,
     private readonly auditLogService: AuditLogService,
+    private readonly soNumberService: SoNumberService,
   ) {}
+
+  async getNextSoNumber() {
+    try {
+      const nextSo = await this.soNumberService.peekNext(this.databaseService);
+      return { success: true, nextSoNumber: nextSo };
+    } catch {
+      return { success: false, nextSoNumber: '' };
+    }
+  }
 
   private async getSalesOrderAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
     const result = await this.findOne(id);
@@ -2833,6 +2844,7 @@ export class SalesOrderService {
           NULLIF(COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', ''), '')::numeric AS branch_id_numeric,
           COALESCE(to_jsonb(so)->>'projectName', to_jsonb(so)->>'project_name', '') AS project_name,
           COALESCE(to_jsonb(so)->>'projectCode', to_jsonb(so)->>'project_code', '') AS project_code,
+          COALESCE(to_jsonb(so)->>'installer', '') AS installer,
           COALESCE(sc.serial_count, 0)::int AS serial_count,
           COALESCE(pt.payment_method, '-') AS payment_method,
           COALESCE(pt.paid_amount, 0) AS paid_amount,
@@ -2863,7 +2875,7 @@ export class SalesOrderService {
         total_amount::numeric AS "totalAmount", computed_status AS status, sales_type AS "salesType",
         project_name AS "projectName", project_code AS "projectCode", payment_method AS "paymentMethod",
         schedule_date AS "scheduleDate", created_at AS "createdAt", serial_count AS "serialCount",
-        concern_status AS "concernStatus"
+        concern_status AS "concernStatus", installer
       FROM base
       ${whereSql}
       ORDER BY id DESC
@@ -3032,8 +3044,9 @@ export class SalesOrderService {
         if (branchColumn && branchId) {
           salesRecord[branchColumn] = branchId;
         }
-        if (soNumberColumn && payload['so_number']) {
-          salesRecord[soNumberColumn] = payload['so_number'];
+        if (soNumberColumn) {
+          const generatedSoNumber = await this.soNumberService.generateNext(client);
+          salesRecord[soNumberColumn] = generatedSoNumber;
         }
         if (scheduleDateColumn && payload.scheduleDate !== undefined) {
           salesRecord[scheduleDateColumn] = this.toIsoDateOrNull(payload.scheduleDate);
@@ -6642,6 +6655,211 @@ export class SalesOrderService {
 
   remove(id: number) {
     return `This action removes a #${id} salesOrder`;
+  }
+
+  async getDrEligibleGroup(orderId: string, branchId?: string) {
+    const id = String(orderId ?? '').trim();
+    if (!id || !Number.isFinite(Number(id)) || Number(id) <= 0) {
+      return { success: false, message: 'Invalid order id', items: [] };
+    }
+
+    try {
+      // Step 1: Look up the given order to get its installer and scheduleDate
+      const sourceResult = await this.databaseService.query<{
+        installer: string | null;
+        scheduleDate: string | null;
+      }>(
+        `SELECT
+           COALESCE(to_jsonb(so)->>'installer', '') AS installer,
+           COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', null) AS "scheduleDate"
+         FROM tblsales_order so
+         WHERE so.id = $1`,
+        [id],
+      );
+
+      if (sourceResult.rowCount === 0) {
+        return { success: false, message: 'Order not found', items: [] };
+      }
+
+      const sourceOrder = sourceResult.rows[0];
+      const installer = (sourceOrder.installer ?? '').trim();
+      const scheduleDate = (sourceOrder.scheduleDate ?? '').trim();
+
+      if (!installer) {
+        return { success: false, message: 'Order has no installer assigned. Cannot group for DR.', items: [] };
+      }
+      if (!scheduleDate) {
+        return { success: false, message: 'Order has no delivery date (scheduleDate). Cannot group for DR.', items: [] };
+      }
+
+      // Step 2: Find all DR-eligible orders with same installer + same scheduleDate
+      const params: unknown[] = [installer, scheduleDate];
+      const whereParts: string[] = [
+        `COALESCE(to_jsonb(so)->>'installer', '') = $1`,
+        `COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', '') = $2`,
+        `REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, ''))), '_', '-'), ' ', '-') IN ('for-delivery', 'remitted', 'complete', 'released')`,
+      ];
+
+      if (branchId && Number.isFinite(Number(branchId)) && Number(branchId) > 0) {
+        params.push(branchId);
+        whereParts.push(
+          `COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') = $${params.length}`,
+        );
+      }
+
+      const whereSql = whereParts.join(' AND ');
+
+      const ordersResult = await this.databaseService.query<{
+        id: number;
+        soNumber: string | null;
+        customerName: string | null;
+        customerAddress: string | null;
+        customerType: string | null;
+        installer: string | null;
+        scheduleDate: string | null;
+      }>(
+        `SELECT
+           so.id,
+           COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', '') AS "soNumber",
+           COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '') AS "customerName",
+           COALESCE(to_jsonb(c)->>'address', '') AS "customerAddress",
+           COALESCE(to_jsonb(c)->>'customer_type', to_jsonb(c)->>'customerType', 'regular') AS "customerType",
+           COALESCE(to_jsonb(so)->>'installer', '') AS installer,
+           COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', null) AS "scheduleDate"
+         FROM tblsales_order so
+         LEFT JOIN tblcustomer c
+           ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
+         WHERE ${whereSql}
+         ORDER BY so.id ASC`,
+        params,
+      );
+
+      if (ordersResult.rowCount === 0) {
+        return { success: true, items: [] };
+      }
+
+      const orderIds = ordersResult.rows.map((row) => row.id);
+
+      // Fetch serial numbers with product and capacity info for all eligible orders
+      // JOIN with tbltransaction_product_items to get the actual sellPrice
+      const serialsResult = await this.databaseService.query<{
+        salesId: string;
+        serialNumber: string | null;
+        unitType: string | null;
+        productId: string | null;
+        capacityId: string | null;
+        productName: string | null;
+        capacityName: string | null;
+        sellPrice: string | null;
+      }>(
+        `SELECT
+           COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id') AS "salesId",
+           COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '') AS "serialNumber",
+           COALESCE(to_jsonb(sn)->>'unitType', to_jsonb(sn)->>'unit_type', 'set') AS "unitType",
+           COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id', '') AS "productId",
+           COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', '') AS "capacityId",
+           COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'name', to_jsonb(p)->>'product_name', '') AS "productName",
+           COALESCE(to_jsonb(cap)->>'name', to_jsonb(cap)->>'capacity_name', to_jsonb(cap)->>'capacity', '') AS "capacityName",
+           COALESCE(tpi."sellPrice"::text, '0') AS "sellPrice"
+         FROM tblserial_numbers sn
+         LEFT JOIN tblproducts p
+           ON p.id::text = COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id')
+         LEFT JOIN tblcapacity cap
+           ON cap.id::text = COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id')
+         LEFT JOIN tbltransaction_product_items tpi
+           ON tpi."salesId"::text = COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id')
+           AND tpi."productId"::text = COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id')
+           AND tpi."capacityId"::text = COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id')
+         WHERE COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id') = ANY($1::text[])`,
+        [orderIds.map(String)],
+      );
+
+      // Fetch payment methods for all eligible orders
+      const paymentsResult = await this.databaseService.query<{
+        salesId: string;
+        method: string;
+      }>(
+        `SELECT
+           so_id::text AS "salesId",
+           method
+         FROM tblso_payments
+         WHERE so_id = ANY($1::integer[])
+           AND LOWER(COALESCE(status, 'paid')) = 'paid'
+           AND payment_type = 'sales'
+         ORDER BY so_id`,
+        [orderIds],
+      );
+
+      // Build a map of salesId → payment method (first match)
+      const paymentsByOrder = new Map<string, string>();
+      for (const row of paymentsResult.rows) {
+        const salesId = String(row.salesId ?? '');
+        if (!paymentsByOrder.has(salesId)) {
+          paymentsByOrder.set(salesId, row.method ?? '');
+        }
+      }
+
+      // Group serials by salesId → productId+capacityId
+      const serialsBySalesId = new Map<string, typeof serialsResult.rows>();
+      for (const row of serialsResult.rows) {
+        const salesId = String(row.salesId ?? '');
+        if (!serialsBySalesId.has(salesId)) {
+          serialsBySalesId.set(salesId, []);
+        }
+        serialsBySalesId.get(salesId)!.push(row);
+      }
+
+      const items = ordersResult.rows.map((order) => {
+        const serials = serialsBySalesId.get(String(order.id)) ?? [];
+
+        // Group serials by product+capacity to form product items
+        const productItemMap = new Map<
+          string,
+          {
+            productName: string;
+            capacityName: string;
+            sellPrice: number;
+            serialNumbers: { serialNumber: string; unitType: string }[];
+          }
+        >();
+
+        for (const serial of serials) {
+          const key = `${serial.productId ?? ''}_${serial.capacityId ?? ''}`;
+          if (!productItemMap.has(key)) {
+            productItemMap.set(key, {
+              productName: serial.productName ?? '',
+              capacityName: serial.capacityName ?? '',
+              sellPrice: Number(serial.sellPrice ?? 0),
+              serialNumbers: [],
+            });
+          }
+          productItemMap.get(key)!.serialNumbers.push({
+            serialNumber: serial.serialNumber ?? '',
+            unitType: (serial.unitType ?? 'set') as string,
+          });
+        }
+
+        return {
+          id: order.id,
+          soNumber: order.soNumber ?? '',
+          customerName: order.customerName ?? '',
+          customerAddress: order.customerAddress ?? '',
+          customerType: (order.customerType ?? 'regular') as 'regular' | 'sub_dealer',
+          installer: order.installer || null,
+          scheduleDate: order.scheduleDate || null,
+          paymentMethod: paymentsByOrder.get(String(order.id)) ?? null,
+          productItems: [...productItemMap.values()],
+        };
+      });
+
+      return { success: true, items };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to fetch DR-eligible orders: ${error instanceof Error ? error.message : String(error)}`,
+        items: [],
+      };
+    }
   }
 
   private async releaseReturnedMaterials(client: PoolClient, salesId: number, userId?: number) {

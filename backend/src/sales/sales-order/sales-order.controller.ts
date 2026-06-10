@@ -281,6 +281,14 @@ export class SalesOrderController {
     return this.salesOrderService.getCustomerConcerns(String(id));
   }
 
+  @Get(':orderId/dr-eligible-group')
+  getDrEligibleGroup(
+    @Param('orderId') orderId: string,
+    @Query('branchId') branchId?: string,
+  ) {
+    return this.salesOrderService.getDrEligibleGroup(orderId, branchId);
+  }
+
   @Get('customers/:id/statement-of-account')
   getCustomerStatementOfAccounts(
     @Param('id') id: string,
@@ -329,6 +337,11 @@ export class SalesOrderController {
   @Delete('branches/:id')
   deleteBranch(@Param('id') id: string) {
     return this.salesOrderService.deleteBranch(+id);
+  }
+
+  @Get('next-so-number')
+  getNextSoNumber() {
+    return this.salesOrderService.getNextSoNumber();
   }
 
   @Post(':id/statement-of-account')
