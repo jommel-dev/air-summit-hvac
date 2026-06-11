@@ -344,6 +344,19 @@ export class SalesOrderController {
     return this.salesOrderService.getNextSoNumber();
   }
 
+  @Patch('bulk/assign-installer')
+  bulkAssignInstaller(
+    @Body() body: { orderIds: number[]; installer: string },
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.salesOrderService.bulkAssignInstaller(
+      body.orderIds,
+      body.installer,
+      Number.isFinite(userId) ? userId : undefined,
+    );
+  }
+
   @Post(':id/statement-of-account')
   createStatementOfAccount(
     @Param('id') id: string,

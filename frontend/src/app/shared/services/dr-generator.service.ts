@@ -225,18 +225,13 @@ export class DrGeneratorService {
   }
 
   /** Renders the 5 signature lines in the footer - 2 rows: top 2, bottom 3 */
-  private drawSignatures(page: PDFPage, y: number, fonts: DrFonts): void {
+  private drawSignatures(page: PDFPage, _y: number, fonts: DrFonts): void {
     const topRow = ['Warehouse Supervisor', 'Warehouse Man'];
     const bottomRow = ['HR Admin', 'Checked By', 'Received By'];
 
-    // If not enough space for signatures, move up slightly
-    const signatureBlockHeight = 100;
-    const requiredHeight = signatureBlockHeight + this.MARGIN_BOTTOM;
-    if (y < requiredHeight) {
-      y = requiredHeight;
-    }
-
-    y -= this.LINE_HEIGHT * 2;
+    // Position signatures just above the payment details section (which starts at y=95)
+    // Payment section takes ~60pt, so signatures start above that
+    let y = 195;
 
     const usableWidth = this.PAGE_WIDTH - this.MARGIN_LEFT - this.MARGIN_RIGHT;
 
@@ -278,7 +273,7 @@ export class DrGeneratorService {
     }
 
     // --- Bottom row: 3 signatories ---
-    y -= 50;
+    y -= 40;
     const bottomColumnWidth = usableWidth / bottomRow.length;
     const bottomLineWidth = bottomColumnWidth - 30;
 
@@ -340,7 +335,7 @@ export class DrGeneratorService {
     ];
 
     // Position at bottom of the page
-    let y = 85;
+    let y = 95;
     const leftX = this.MARGIN_LEFT;
     const rightX = this.MARGIN_LEFT + colWidth;
 
@@ -527,29 +522,31 @@ export class DrGeneratorService {
     columns: TableColumn[],
     fonts: DrFonts,
   ): number {
-    const fontSize = this.BODY_FONT_SIZE;
-    const serialFontSize = 7.5;
+    const fontSize = 7.5;
     const font = fonts.regular;
     const lineSpacing = 10;
 
-    // Wrap text for columns that need it
+    // Wrap text for all columns that need it
+    const customerLines = this.wrapText(row.customer, columns[0].width - 4, fontSize, font);
     const addressLines = this.wrapText(row.address, columns[1].width - 4, fontSize, font);
     const descriptionLines = this.wrapText(row.description, columns[2].width - 4, fontSize, font);
     const unitPriceLines = this.wrapText(row.unitPrice, columns[5].width - 4, fontSize, font);
 
     // Calculate dynamic row height based on tallest cell
-    const maxLines = Math.max(1, addressLines.length, descriptionLines.length, unitPriceLines.length);
+    const maxLines = Math.max(1, customerLines.length, addressLines.length, descriptionLines.length, unitPriceLines.length);
     const rowHeight = Math.max(this.TABLE_ROW_HEIGHT, maxLines * lineSpacing + 6);
 
     const textY = y - lineSpacing - 1;
 
-    // Customer (single line, truncate)
-    page.drawText(this.truncateText(row.customer, columns[0].width - 4, fontSize, font), {
-      x: columns[0].x + 2,
-      y: textY,
-      size: fontSize,
-      font,
-    });
+    // Customer (wrapped)
+    for (let i = 0; i < customerLines.length; i++) {
+      page.drawText(customerLines[i], {
+        x: columns[0].x + 2,
+        y: textY - i * lineSpacing,
+        size: fontSize,
+        font,
+      });
+    }
 
     // Address (wrapped)
     for (let i = 0; i < addressLines.length; i++) {
@@ -571,19 +568,19 @@ export class DrGeneratorService {
       });
     }
 
-    // Indoor Serial (single line, smaller font)
-    page.drawText(this.truncateText(row.indoorSerial, columns[3].width - 4, serialFontSize, font), {
+    // Indoor Serial (single line)
+    page.drawText(this.truncateText(row.indoorSerial, columns[3].width - 4, fontSize, font), {
       x: columns[3].x + 2,
       y: textY,
-      size: serialFontSize,
+      size: fontSize,
       font,
     });
 
-    // Outdoor Serial (single line, smaller font)
-    page.drawText(this.truncateText(row.outdoorSerial, columns[4].width - 4, serialFontSize, font), {
+    // Outdoor Serial (single line)
+    page.drawText(this.truncateText(row.outdoorSerial, columns[4].width - 4, fontSize, font), {
       x: columns[4].x + 2,
       y: textY,
-      size: serialFontSize,
+      size: fontSize,
       font,
     });
 

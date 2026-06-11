@@ -1025,6 +1025,14 @@ export class SalesOrderService {
     const response = await apiClient.get<{ success: boolean; nextSoNumber: string }>('/sales-order/next-so-number');
     return response.data;
   }
+
+  async bulkAssignInstaller(orderIds: number[], installer: string): Promise<{ success: boolean; message?: string; updatedCount?: number }> {
+    const response = await apiClient.patch<{ success: boolean; message?: string; updatedCount?: number }>(
+      '/sales-order/bulk/assign-installer',
+      { orderIds, installer },
+    );
+    return response.data;
+  }
 }
 
 export interface DrEligibleOrderResponse {
