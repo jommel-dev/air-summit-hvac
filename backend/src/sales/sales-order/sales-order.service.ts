@@ -80,6 +80,34 @@ export class SalesOrderService {
     }
   }
 
+  async bulkAssignInstaller(orderIds: number[], installer: string, userId?: number) {
+    if (!orderIds || orderIds.length === 0) {
+      return { success: false, message: 'No orders specified' };
+    }
+    const cleanInstaller = String(installer ?? '').trim();
+    if (!cleanInstaller) {
+      return { success: false, message: 'Installer name is required' };
+    }
+
+    try {
+      // Find the installer column name
+      const columnsResult = await this.databaseService.query<{ column_name: string }>(
+        `SELECT column_name FROM information_schema.columns WHERE table_name = 'tblsales_order' AND column_name IN ('installer')`,
+        [],
+      );
+      const installerColumn = columnsResult.rows.length > 0 ? columnsResult.rows[0].column_name : 'installer';
+
+      const result = await this.databaseService.query(
+        `UPDATE tblsales_order SET "${installerColumn}" = $1 WHERE id = ANY($2::integer[])`,
+        [cleanInstaller, orderIds],
+      );
+
+      return { success: true, message: `Installer assigned to ${result.rowCount} orders`, updatedCount: result.rowCount };
+    } catch (error) {
+      return { success: false, message: `Failed to assign installer: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
   private async getSalesOrderAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
     const result = await this.findOne(id);
     if (!result.success || !result.item || typeof result.item !== 'object') {

@@ -218,6 +218,10 @@ export class SalesOrderComponent {
   }
 
   orders: SalesOrderRow[] = [];
+  selectedOrderIds = new Set<number>();
+  isAssignInstallerModalOpen = false;
+  bulkInstallerName = '';
+  isBulkAssigning = false;
   returningOrderIds = new Set<number>();
   receivingOrderIds = new Set<number>();
   printingOrderIds = new Set<number>();
@@ -253,6 +257,65 @@ export class SalesOrderComponent {
 
   closeErrorModal(): void {
     this.errorModal.isOpen = false;
+  }
+
+  toggleOrderSelection(orderId: number): void {
+    if (this.selectedOrderIds.has(orderId)) {
+      this.selectedOrderIds.delete(orderId);
+    } else {
+      this.selectedOrderIds.add(orderId);
+    }
+  }
+
+  toggleSelectAll(): void {
+    if (this.selectedOrderIds.size === this.orders.length) {
+      this.selectedOrderIds.clear();
+    } else {
+      this.selectedOrderIds = new Set(this.orders.map(o => o.id));
+    }
+  }
+
+  get isAllSelected(): boolean {
+    return this.orders.length > 0 && this.selectedOrderIds.size === this.orders.length;
+  }
+
+  openAssignInstallerModal(): void {
+    this.bulkInstallerName = '';
+    this.isAssignInstallerModalOpen = true;
+  }
+
+  closeAssignInstallerModal(): void {
+    this.isAssignInstallerModalOpen = false;
+    this.bulkInstallerName = '';
+  }
+
+  async confirmBulkAssignInstaller(): Promise<void> {
+    if (!this.bulkInstallerName.trim() || this.selectedOrderIds.size === 0) {
+      return;
+    }
+    this.isBulkAssigning = true;
+    try {
+      const result = await this.salesOrderService.bulkAssignInstaller(
+        [...this.selectedOrderIds],
+        this.bulkInstallerName.trim(),
+      );
+      if (result.success) {
+        // Update local rows
+        for (const order of this.orders) {
+          if (this.selectedOrderIds.has(order.id)) {
+            order.installer = this.bulkInstallerName.trim();
+          }
+        }
+        this.selectedOrderIds.clear();
+        this.closeAssignInstallerModal();
+      } else {
+        this.openErrorModal('Assign Error', result.message || 'Failed to assign installer');
+      }
+    } catch (error: unknown) {
+      this.openErrorModal('Assign Error', 'Failed to assign installer');
+    } finally {
+      this.isBulkAssigning = false;
+    }
   }
   isReturnModalOpen = false;
   pendingReturnOrder: SalesOrderRow | null = null;
@@ -2779,6 +2842,7 @@ export class SalesOrderComponent {
   private async loadTabData(tab: SalesTab): Promise<void> {
     if (!this.canAccessSalesTab(tab)) {
       this.orders = [];
+      this.selectedOrderIds.clear();
       this.total = 0;
       this.totalPages = 1;
       this.errorMessage = 'You do not have access to this sales tab.';
@@ -2811,6 +2875,7 @@ export class SalesOrderComponent {
       console.log('[Tab Debug] warehouseman branchId from JWT:', this.rbacService.getBranchId());
 
       this.orders = this.mapListItemsToRows(result.items);
+      this.selectedOrderIds.clear();
       this.applyMeta(result.meta);
     } catch (error: unknown) {
       console.error('[Tab Debug] loadTabData error:', error);
@@ -2822,6 +2887,7 @@ export class SalesOrderComponent {
         this.errorMessage = 'Unable to load sales orders';
       }
       this.orders = [];
+      this.selectedOrderIds.clear();
       this.total = 0;
       this.totalPages = 1;
     } finally {
