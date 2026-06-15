@@ -357,6 +357,30 @@ export class SalesOrderController {
     );
   }
 
+  @Patch('bulk/remit')
+  bulkRemit(
+    @Body() body: { orderIds: number[] },
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.salesOrderService.bulkRemitSalesOrders(
+      body.orderIds,
+      Number.isFinite(userId) ? userId : undefined,
+    );
+  }
+
+  @Get('bulk/installer-orders-today')
+  getInstallerOrdersForToday(
+    @Query('installer') installer: string,
+    @Query('branchId') branchId?: string,
+  ) {
+    const numBranchId = Number(branchId);
+    return this.salesOrderService.getInstallerOrdersForToday(
+      installer,
+      Number.isFinite(numBranchId) && numBranchId > 0 ? numBranchId : undefined,
+    );
+  }
+
   @Post(':id/statement-of-account')
   createStatementOfAccount(
     @Param('id') id: string,

@@ -108,6 +108,125 @@ export class SalesOrderService {
     }
   }
 
+  /**
+   * Get all orders for a specific installer on today's date that are eligible for remitting.
+   * Only returns orders with status = 'for-delivery' (the step before 'remitted').
+   */
+  async getInstallerOrdersForToday(installer: string, branchId?: number): Promise<{ success: boolean; orders: Array<{ id: number; soNumber: string; customerName: string; status: string }> }> {
+    const cleanInstaller = String(installer ?? '').trim();
+    if (!cleanInstaller) {
+      return { success: false, orders: [] };
+    }
+
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const params: unknown[] = [cleanInstaller, today];
+    const whereParts: string[] = [
+      `COALESCE(to_jsonb(so)->>'installer', '') = $1`,
+      `COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', '')::date = $2::date`,
+      `REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, ''))), '_', '-'), ' ', '-') = 'for-delivery'`,
+    ];
+
+    if (branchId && Number.isFinite(branchId) && branchId > 0) {
+      params.push(branchId);
+      whereParts.push(`COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '')::int = $${params.length}`);
+    }
+
+    const result = await this.databaseService.query<{
+      id: number;
+      soNumber: string;
+      customerName: string;
+      status: string;
+    }>(
+      `SELECT
+         so.id,
+         COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', '') AS "soNumber",
+         COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '') AS "customerName",
+         COALESCE(so.status, 'pending') AS status
+       FROM tblsales_order so
+       LEFT JOIN tblcustomer c
+         ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
+       WHERE ${whereParts.join(' AND ')}
+       ORDER BY so.id ASC`,
+      params,
+    );
+
+    return { success: true, orders: result.rows };
+  }
+
+  /**
+   * Bulk remit multiple sales orders by setting status to 'remitted'.
+   * Validation:
+   * - Only remits orders that are currently 'for-delivery' (not 'pending')
+   * - Orders must have at least one scanned serial number
+   */
+  async bulkRemitSalesOrders(orderIds: number[], userId?: number): Promise<{ success: boolean; message: string; updatedCount?: number; skipped?: Array<{ id: number; soNumber: string; reason: string }> }> {
+    if (!orderIds || orderIds.length === 0) {
+      return { success: false, message: 'No orders specified' };
+    }
+
+    try {
+      // Step 1: Validate — check status and serial count for each order
+      const validationResult = await this.databaseService.query<{
+        id: number;
+        so_number: string;
+        normalized_status: string;
+        serial_count: string;
+      }>(
+        `SELECT
+           so.id,
+           COALESCE(so.so_number, '') AS so_number,
+           REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, 'pending'))), '_', '-'), ' ', '-') AS normalized_status,
+           (SELECT COUNT(*)::text FROM tblserial_numbers sn
+            WHERE COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id', '')  = so.id::text
+           ) AS serial_count
+         FROM tblsales_order so
+         WHERE so.id = ANY($1::integer[])`,
+        [orderIds],
+      );
+
+      const eligible: number[] = [];
+      const skipped: Array<{ id: number; soNumber: string; reason: string }> = [];
+
+      for (const row of validationResult.rows) {
+        const serialCount = parseInt(row.serial_count ?? '0', 10);
+        const status = row.normalized_status;
+
+        if (status === 'pending') {
+          skipped.push({ id: row.id, soNumber: row.so_number, reason: 'Order is still in Pending status' });
+        } else if (status !== 'for-delivery') {
+          skipped.push({ id: row.id, soNumber: row.so_number, reason: `Order status is "${status}" (must be "for-delivery")` });
+        } else if (serialCount === 0) {
+          skipped.push({ id: row.id, soNumber: row.so_number, reason: 'No scanned serial numbers' });
+        } else {
+          eligible.push(row.id);
+        }
+      }
+
+      if (eligible.length === 0) {
+        const reasons = skipped.map((s) => `${s.soNumber}: ${s.reason}`).join('; ');
+        return { success: false, message: `No eligible orders to remit. ${reasons}`, skipped };
+      }
+
+      // Step 2: Update only eligible orders
+      const result = await this.databaseService.query(
+        `UPDATE tblsales_order
+         SET status = 'remitted'
+         WHERE id = ANY($1::integer[])`,
+        [eligible],
+      );
+
+      const updatedCount = result.rowCount ?? 0;
+      let message = `${updatedCount} order(s) remitted successfully`;
+      if (skipped.length > 0) {
+        message += `. ${skipped.length} order(s) skipped.`;
+      }
+
+      return { success: true, message, updatedCount, skipped };
+    } catch (error) {
+      return { success: false, message: `Failed to remit orders: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
   private async getSalesOrderAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
     const result = await this.findOne(id);
     if (!result.success || !result.item || typeof result.item !== 'object') {

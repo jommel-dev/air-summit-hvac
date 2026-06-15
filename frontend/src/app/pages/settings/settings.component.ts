@@ -21,8 +21,9 @@ import {
 } from '../../shared/services/audit-log.service';
 import axios from 'axios';
 import { apiClient } from '../../shared/services/api-client';
+import { BackupConfirmModalComponent, BackupConfirmMode } from './backup-confirm-modal/backup-confirm-modal.component';
 
-type SettingsTab = 'system' | 'branches' | 'print-settings' | 'rbac-configs' | 'audit-logs' | 'scan-logs';
+type SettingsTab = 'system' | 'branches' | 'print-settings' | 'rbac-configs' | 'audit-logs' | 'scan-logs' | 'database-backup';
 
 interface SettingsPermissionOption {
   key: string;
@@ -34,7 +35,7 @@ interface SettingsPermissionOption {
 @Component({
   selector: 'app-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, BackupConfirmModalComponent],
   templateUrl: './settings.component.html',
   styles: ``,
 })
@@ -106,6 +107,35 @@ export class SettingsComponent implements OnInit {
   isLoadingScanLogEntries = false;
   scanLogError = '';
   scanLogSearch = '';
+
+  // Database Backup
+  isLoadingBackupLogs = false;
+  isCreatingBackup = false;
+  backupError = '';
+  backupMessage = '';
+  selectedBackupType: 'full' | 'data_only' | 'schema_only' = 'full';
+  backupLogs: Array<{
+    id: number;
+    backupType: string;
+    fileName: string;
+    fileSizeBytes: number;
+    status: string;
+    errorMessage: string | null;
+    initiatedBy: number | null;
+    initiatedByName?: string | null;
+    startedAt: string;
+    completedAt: string | null;
+    createdAt: string;
+  }> = [];
+  backupCurrentPage = 1;
+  backupPageSize = 10;
+  backupTotal = 0;
+  backupTotalPages = 1;
+  deletingBackupId: number | null = null;
+  isBackupModalOpen = false;
+  backupModalMode: BackupConfirmMode = 'create';
+  backupModalFileName = '';
+  pendingDeleteBackupId: number | null = null;
   newPermissionForm: CreatePermissionKeyPayload = {
     key: '',
     label: '',
@@ -216,6 +246,7 @@ export class SettingsComponent implements OnInit {
     { key: 'rbac-configs', label: 'RBAC Configs' },
     { key: 'audit-logs', label: 'Audit Logs' },
     { key: 'scan-logs', label: 'Scan Logs' },
+    { key: 'database-backup', label: 'Database Backup' },
   ];
 
   get canReadSettings(): boolean {
@@ -272,6 +303,9 @@ export class SettingsComponent implements OnInit {
     }
     if (tab === 'scan-logs') {
       void this.loadScanLogFiles();
+    }
+    if (tab === 'database-backup') {
+      void this.loadBackupLogs(1);
     }
   }
 
@@ -1211,6 +1245,181 @@ export class SettingsComponent implements OnInit {
     }
 
     return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+
+  // ─── Database Backup ──────────────────────────────────────────────────────
+
+  async loadBackupLogs(page = 1): Promise<void> {
+    this.isLoadingBackupLogs = true;
+    this.backupError = '';
+
+    try {
+      const response = await apiClient.get<{
+        success: boolean;
+        data: {
+          items: Array<any>;
+          total: number;
+          totalPages: number;
+        };
+      }>('/settings/backup/logs', {
+        params: { page, pageSize: this.backupPageSize },
+      });
+
+      if (response.data.success) {
+        this.backupLogs = response.data.data.items ?? [];
+        this.backupTotal = response.data.data.total ?? 0;
+        this.backupTotalPages = response.data.data.totalPages ?? 1;
+        this.backupCurrentPage = page;
+      } else {
+        this.backupError = 'Failed to load backup logs.';
+      }
+    } catch (error: unknown) {
+      this.backupError = this.resolveErrorMessage(error, 'Failed to load backup logs.');
+    } finally {
+      this.isLoadingBackupLogs = false;
+    }
+  }
+
+  async createBackup(): Promise<void> {
+    if (!this.canUpdateSettings) {
+      this.backupError = 'You do not have permission to create backups.';
+      return;
+    }
+
+    // Open confirmation modal instead of window.confirm
+    this.backupModalMode = 'create';
+    this.backupModalFileName = '';
+    this.isBackupModalOpen = true;
+  }
+
+  async onBackupModalConfirm(): Promise<void> {
+    this.isBackupModalOpen = false;
+
+    if (this.backupModalMode === 'create') {
+      await this.executeCreateBackup();
+    } else if (this.backupModalMode === 'delete' && this.pendingDeleteBackupId !== null) {
+      await this.executeDeleteBackup(this.pendingDeleteBackupId);
+      this.pendingDeleteBackupId = null;
+    }
+  }
+
+  onBackupModalCancel(): void {
+    this.isBackupModalOpen = false;
+    this.pendingDeleteBackupId = null;
+  }
+
+  private async executeCreateBackup(): Promise<void> {
+    this.isCreatingBackup = true;
+    this.backupError = '';
+    this.backupMessage = '';
+
+    try {
+      const response = await apiClient.post<{
+        success: boolean;
+        data: any;
+        message?: string;
+      }>('/settings/backup', {
+        backupType: this.selectedBackupType,
+      });
+
+      if (response.data.success) {
+        const record = response.data.data;
+        if (record.status === 'completed') {
+          this.backupMessage = `Backup "${record.fileName}" completed successfully (${this.formatFileSize(record.fileSizeBytes)}).`;
+        } else if (record.status === 'failed') {
+          this.backupError = `Backup failed: ${record.errorMessage || 'Unknown error'}`;
+        }
+        await this.loadBackupLogs(1);
+      } else {
+        this.backupError = response.data.message ?? 'Failed to create backup.';
+      }
+    } catch (error: unknown) {
+      this.backupError = this.resolveErrorMessage(error, 'Failed to create backup.');
+    } finally {
+      this.isCreatingBackup = false;
+    }
+  }
+
+  async downloadBackupFile(fileName: string): Promise<void> {
+    try {
+      const response = await apiClient.get(`/settings/backup/download/${fileName}`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([response.data as BlobPart], { type: 'application/sql' });
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      window.URL.revokeObjectURL(url);
+    } catch (error: unknown) {
+      this.backupError = this.resolveErrorMessage(error, 'Failed to download backup file.');
+    }
+  }
+
+  async deleteBackupRecord(id: number, fileName: string): Promise<void> {
+    if (!this.canUpdateSettings) {
+      this.backupError = 'You do not have permission to delete backups.';
+      return;
+    }
+
+    // Open confirmation modal instead of window.confirm
+    this.backupModalMode = 'delete';
+    this.backupModalFileName = fileName;
+    this.pendingDeleteBackupId = id;
+    this.isBackupModalOpen = true;
+  }
+
+  private async executeDeleteBackup(id: number): Promise<void> {
+    this.deletingBackupId = id;
+    this.backupError = '';
+
+    try {
+      const response = await apiClient.delete<{ success: boolean; message?: string }>(`/settings/backup/${id}`);
+      if (response.data.success) {
+        this.backupMessage = 'Backup deleted successfully.';
+        await this.loadBackupLogs(this.backupCurrentPage);
+      } else {
+        this.backupError = response.data.message ?? 'Failed to delete backup.';
+      }
+    } catch (error: unknown) {
+      this.backupError = this.resolveErrorMessage(error, 'Failed to delete backup.');
+    } finally {
+      this.deletingBackupId = null;
+    }
+  }
+
+  getBackupTypeLabel(type: string): string {
+    switch (type) {
+      case 'full': return 'Full Backup (Data + Schema + Functions)';
+      case 'data_only': return 'Data Only';
+      case 'schema_only': return 'Schema & Functions Only';
+      default: return type;
+    }
+  }
+
+  formatFileSize(bytes: number): string {
+    if (bytes <= 0) return '0 B';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
+
+  formatBackupTimestamp(value: string | null | undefined): string {
+    const raw = String(value ?? '').trim();
+    if (!raw) return '-';
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return raw;
+    return date.toLocaleString('en-PH', {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
   }
 
   private readSelectedFile(event: Event): File | null {

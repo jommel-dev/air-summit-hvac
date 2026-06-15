@@ -1,9 +1,14 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
   Post,
   Put,
+  Query,
+  Req,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -11,11 +16,16 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { UpdateBusinessProfileDto } from './dto/update-business-profile.dto';
+import { CreateBackupDto } from './dto/create-backup.dto';
 import { SettingsService } from './settings.service';
+import { BackupService } from './backup.service';
 
 @Controller('settings')
 export class SettingsController {
-  constructor(private readonly settingsService: SettingsService) {}
+  constructor(
+    private readonly settingsService: SettingsService,
+    private readonly backupService: BackupService,
+  ) {}
 
   @Get('public/business-profile')
   getPublicBusinessProfile() {
@@ -74,5 +84,52 @@ export class SettingsController {
   @UseInterceptors(FileInterceptor('file'))
   uploadApprovedBySignature(@UploadedFile() file: any) {
     return this.settingsService.uploadBusinessAsset('printSignatureApprovedBy', file);
+  }
+
+  // ─── Database Backup Endpoints ─────────────────────────────────────────────
+
+  @Post('backup')
+  @UseGuards(JwtAuthGuard)
+  async createBackup(@Body() dto: CreateBackupDto, @Req() req: any) {
+    const userId = req.user?.sub ?? req.user?.id ?? null;
+    const record = await this.backupService.createBackup(dto.backupType, userId);
+    return { success: true, data: record };
+  }
+
+  @Get('backup/logs')
+  @UseGuards(JwtAuthGuard)
+  async getBackupLogs(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const p = Math.max(1, parseInt(page ?? '1', 10) || 1);
+    const ps = Math.max(1, Math.min(100, parseInt(pageSize ?? '15', 10) || 15));
+    const result = await this.backupService.getBackupLogs(p, ps);
+    return { success: true, data: result };
+  }
+
+  @Get('backup/download/:fileName')
+  @UseGuards(JwtAuthGuard)
+  async downloadBackup(@Param('fileName') fileName: string, @Res() res: any) {
+    // Sanitize fileName to prevent path traversal
+    const sanitizedName = fileName.replace(/[^a-zA-Z0-9._-]/g, '');
+    const { filePath, exists } = await this.backupService.downloadBackup(sanitizedName);
+
+    if (!exists) {
+      return res.status(404).json({ success: false, message: 'Backup file not found' });
+    }
+
+    res.download(filePath, sanitizedName);
+  }
+
+  @Delete('backup/:id')
+  @UseGuards(JwtAuthGuard)
+  async deleteBackup(@Param('id') id: string) {
+    const numId = parseInt(id, 10);
+    if (!Number.isFinite(numId) || numId <= 0) {
+      return { success: false, message: 'Invalid backup ID' };
+    }
+    const result = await this.backupService.deleteBackup(numId);
+    return result;
   }
 }

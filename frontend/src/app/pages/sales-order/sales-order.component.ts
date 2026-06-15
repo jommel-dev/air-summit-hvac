@@ -222,6 +222,12 @@ export class SalesOrderComponent {
   isAssignInstallerModalOpen = false;
   bulkInstallerName = '';
   isBulkAssigning = false;
+  isBulkRemitModalOpen = false;
+  isBulkRemitting = false;
+  bulkRemitInstallerName = '';
+  bulkRemitInstallerOrders: Array<{ id: number; soNumber: string; customerName: string; status: string }> = [];
+  isBulkRemitInstallerPromptOpen = false;
+  isLoadingInstallerOrders = false;
   returningOrderIds = new Set<number>();
   receivingOrderIds = new Set<number>();
   printingOrderIds = new Set<number>();
@@ -317,6 +323,132 @@ export class SalesOrderComponent {
       this.isBulkAssigning = false;
     }
   }
+
+  // ─── Bulk Remit ─────────────────────────────────────────────────────────────
+
+  openBulkRemitModal(): void {
+    if (this.selectedOrderIds.size === 0) return;
+
+    // UI-level validation: check for pending or no-serial orders
+    const selectedOrders = this.orders.filter(o => this.selectedOrderIds.has(o.id));
+    const pendingOrders = selectedOrders.filter(o => {
+      const normalized = (o.status ?? '').trim().toLowerCase().replace(/[_ ]/g, '-');
+      return normalized === 'pending';
+    });
+    const noSerialOrders = selectedOrders.filter(o => {
+      const normalized = (o.status ?? '').trim().toLowerCase().replace(/[_ ]/g, '-');
+      return normalized !== 'pending' && (o.serialCount ?? 0) === 0;
+    });
+
+    if (pendingOrders.length > 0 || noSerialOrders.length > 0) {
+      const issues: string[] = [];
+      if (pendingOrders.length > 0) {
+        const soList = pendingOrders.map(o => o.soNumber).join(', ');
+        issues.push(`The following order(s) are still in Pending status and cannot be remitted: ${soList}`);
+      }
+      if (noSerialOrders.length > 0) {
+        const soList = noSerialOrders.map(o => o.soNumber).join(', ');
+        issues.push(`The following order(s) have no scanned serial numbers: ${soList}`);
+      }
+      this.openErrorModal('Cannot Remit', issues.join('\n\n'));
+      return;
+    }
+
+    // Check if a single order is selected and it has an installer
+    if (this.selectedOrderIds.size === 1) {
+      const orderId = [...this.selectedOrderIds][0];
+      const order = this.orders.find(o => o.id === orderId);
+      if (order?.installer?.trim()) {
+        // Ask the user if they want to remit all of this installer's SOs for today
+        this.bulkRemitInstallerName = order.installer.trim();
+        this.isBulkRemitInstallerPromptOpen = true;
+        return;
+      }
+    }
+
+    // Multiple selection or no installer — go straight to confirm
+    this.isBulkRemitModalOpen = true;
+  }
+
+  closeBulkRemitModal(): void {
+    this.isBulkRemitModalOpen = false;
+  }
+
+  closeBulkRemitInstallerPrompt(): void {
+    this.isBulkRemitInstallerPromptOpen = false;
+    this.bulkRemitInstallerName = '';
+    this.bulkRemitInstallerOrders = [];
+  }
+
+  /** User said YES to "Remit All of <installer>'s SO for today?" */
+  async confirmRemitAllInstallerOrders(): Promise<void> {
+    this.isLoadingInstallerOrders = true;
+    try {
+      const result = await this.salesOrderService.getInstallerOrdersForToday(this.bulkRemitInstallerName);
+      if (result.success && result.orders.length > 0) {
+        // Auto-select all installer orders for today
+        this.bulkRemitInstallerOrders = result.orders;
+        const installerOrderIds = result.orders.map(o => o.id);
+        for (const id of installerOrderIds) {
+          this.selectedOrderIds.add(id);
+        }
+        this.isBulkRemitInstallerPromptOpen = false;
+        this.isBulkRemitModalOpen = true;
+      } else {
+        this.isBulkRemitInstallerPromptOpen = false;
+        this.openErrorModal('No Orders Found', `No "for-delivery" orders found for ${this.bulkRemitInstallerName} today.`);
+      }
+    } catch {
+      this.isBulkRemitInstallerPromptOpen = false;
+      this.openErrorModal('Error', 'Failed to fetch installer orders for today.');
+    } finally {
+      this.isLoadingInstallerOrders = false;
+    }
+  }
+
+  /** User said NO — just remit the one they selected manually */
+  declineRemitAllInstallerOrders(): void {
+    this.isBulkRemitInstallerPromptOpen = false;
+    this.bulkRemitInstallerName = '';
+    this.bulkRemitInstallerOrders = [];
+    this.isBulkRemitModalOpen = true;
+  }
+
+  async confirmBulkRemit(): Promise<void> {
+    if (this.selectedOrderIds.size === 0) return;
+    this.isBulkRemitting = true;
+    try {
+      const result = await this.salesOrderService.bulkRemit([...this.selectedOrderIds]);
+      if (result.success) {
+        // Update local rows
+        for (const order of this.orders) {
+          if (this.selectedOrderIds.has(order.id)) {
+            order.status = 'remitted';
+          }
+        }
+        this.selectedOrderIds.clear();
+        this.closeBulkRemitModal();
+        this.bulkRemitInstallerOrders = [];
+
+        // Show message with skipped info if any
+        let message = result.message || 'Orders remitted successfully';
+        if (result.skipped && result.skipped.length > 0) {
+          const skippedDetails = result.skipped.map(s => `${s.soNumber}: ${s.reason}`).join('\n');
+          this.openErrorModal('Remit Completed (with skipped)', `${message}\n\nSkipped orders:\n${skippedDetails}`);
+        }
+
+        // Reload the current tab to reflect changes
+        await this.loadTabData(this.activeTab);
+      } else {
+        this.openErrorModal('Remit Error', result.message || 'Failed to remit orders');
+      }
+    } catch (error: unknown) {
+      this.openErrorModal('Remit Error', 'Failed to remit orders');
+    } finally {
+      this.isBulkRemitting = false;
+    }
+  }
+
   isReturnModalOpen = false;
   pendingReturnOrder: SalesOrderRow | null = null;
   isReturnModalLoading = false;

@@ -109,6 +109,13 @@
         </button>
         <button
           type="button"
+          (click)="openBulkRemitModal()"
+          class="rounded-lg bg-success-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-success-600"
+        >
+          Remit
+        </button>
+        <button
+          type="button"
           (click)="selectedOrderIds.clear()"
           class="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
         >
@@ -1710,17 +1717,38 @@
     </div>
   }
 
-  <app-modal [isOpen]="errorModal.isOpen" (close)="closeErrorModal()">
-    <div class="p-6">
-      <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ errorModal.title }}</h3>
-      <p class="mt-2 text-sm text-gray-600 dark:text-gray-400">{{ errorModal.message }}</p>
-      <div class="mt-4 flex justify-end">
-        <button type="button" (click)="closeErrorModal()" class="rounded-lg bg-gray-500 px-4 py-2 text-sm font-medium text-white hover:bg-gray-600">
-          OK
-        </button>
+  @if (errorModal.isOpen) {
+    <!-- Backdrop -->
+    <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="closeErrorModal()"></div>
+
+    <!-- Modal container -->
+    <div class="fixed inset-0 z-100011 flex items-center justify-center p-4">
+      <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+
+        <!-- Header -->
+        <div class="border-b border-gray-200 bg-linear-to-r from-rose-50 via-white to-pink-50 px-6 py-5 dark:border-gray-800 dark:from-rose-500/10 dark:via-gray-900 dark:to-pink-500/10">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-rose-700 dark:text-rose-300">Error</p>
+          <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">{{ errorModal.title }}</h3>
+        </div>
+
+        <!-- Body -->
+        <div class="space-y-4 px-6 py-5">
+          <p class="whitespace-pre-line text-sm leading-6 text-gray-600 dark:text-gray-300">{{ errorModal.message }}</p>
+        </div>
+
+        <!-- Footer -->
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          <button
+            type="button"
+            (click)="closeErrorModal()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            OK
+          </button>
+        </div>
       </div>
     </div>
-  </app-modal>
+  }
 
   <app-serial-validation-modal
     [isOpen]="isValidationModalOpen"
@@ -1810,6 +1838,123 @@
         <button type="button" (click)="closeAssignInstallerModal()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Cancel</button>
         <button type="button" (click)="confirmBulkAssignInstaller()" [disabled]="!bulkInstallerName.trim() || isBulkAssigning" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-60">
           {{ isBulkAssigning ? 'Assigning...' : 'Assign' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Bulk Remit: Installer Prompt Modal ("Do you want to Remit All of <installer>'s SO?") -->
+@if (isBulkRemitInstallerPromptOpen) {
+  <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="closeBulkRemitInstallerPrompt()"></div>
+  <div class="fixed inset-0 z-100011 flex items-center justify-center p-4">
+    <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+      <!-- Header -->
+      <div class="border-b border-gray-200 bg-linear-to-r from-emerald-50 via-white to-teal-50 px-6 py-5 dark:border-gray-800 dark:from-emerald-500/10 dark:via-gray-900 dark:to-teal-500/10">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-700 dark:text-emerald-300">Bulk Remit</p>
+        <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">Remit Installer's Orders</h3>
+      </div>
+      <!-- Body -->
+      <div class="space-y-4 px-6 py-5">
+        <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">
+          Do you want to remit <strong>all</strong> of <strong class="text-emerald-700 dark:text-emerald-300">{{ bulkRemitInstallerName }}</strong>'s sales orders for today?
+        </p>
+        <div class="rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-100">
+          <div class="flex items-center gap-2">
+            <svg class="h-5 w-5 shrink-0 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+            </svg>
+            <span>This will auto-select and remit all "for-delivery" orders under this installer scheduled for today.</span>
+          </div>
+        </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400">
+          Select <strong>No</strong> if some customers have returned units and you only want to remit specific orders.
+        </p>
+      </div>
+      <!-- Footer -->
+      <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button
+          type="button"
+          (click)="declineRemitAllInstallerOrders()"
+          class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          No, Select Manually
+        </button>
+        <button
+          type="button"
+          (click)="confirmRemitAllInstallerOrders()"
+          [disabled]="isLoadingInstallerOrders"
+          class="rounded-lg border border-success-300 bg-success-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-success-600 disabled:opacity-60 dark:border-success-500/50 dark:bg-success-500 dark:hover:bg-success-600"
+        >
+          {{ isLoadingInstallerOrders ? 'Loading...' : 'Yes, Remit All' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Bulk Remit: Confirmation Modal -->
+@if (isBulkRemitModalOpen) {
+  <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="closeBulkRemitModal()"></div>
+  <div class="fixed inset-0 z-100011 flex items-center justify-center p-4">
+    <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+      <!-- Header -->
+      <div class="border-b border-gray-200 bg-linear-to-r from-emerald-50 via-white to-teal-50 px-6 py-5 dark:border-gray-800 dark:from-emerald-500/10 dark:via-gray-900 dark:to-teal-500/10">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-700 dark:text-emerald-300">Confirm Remit</p>
+        <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">Remit {{ selectedOrderIds.size }} Sales Order(s)</h3>
+      </div>
+      <!-- Body -->
+      <div class="space-y-4 px-6 py-5">
+        <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">
+          You are about to mark {{ selectedOrderIds.size }} order(s) as <strong class="text-emerald-700 dark:text-emerald-300">remitted</strong>. Only orders with status "for-delivery" will be updated.
+        </p>
+
+        @if (bulkRemitInstallerOrders.length > 0) {
+          <div class="max-h-48 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-700">
+            <table class="w-full text-left text-sm">
+              <thead class="sticky top-0 bg-gray-50 dark:bg-gray-800">
+                <tr>
+                  <th class="px-3 py-2 text-xs font-medium text-gray-500">SO Number</th>
+                  <th class="px-3 py-2 text-xs font-medium text-gray-500">Customer</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                @for (o of bulkRemitInstallerOrders; track o.id) {
+                  <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                    <td class="px-3 py-2 text-xs font-medium text-gray-800 dark:text-gray-100">{{ o.soNumber }}</td>
+                    <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">{{ o.customerName }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+        <div class="rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-100">
+          <div class="flex items-center gap-2">
+            <svg class="h-5 w-5 shrink-0 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z" />
+            </svg>
+            <span>This action will move the orders to "Sales Receivable" for payment confirmation.</span>
+          </div>
+        </div>
+      </div>
+      <!-- Footer -->
+      <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button
+          type="button"
+          (click)="closeBulkRemitModal()"
+          class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          (click)="confirmBulkRemit()"
+          [disabled]="isBulkRemitting"
+          class="rounded-lg border border-success-300 bg-success-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-success-600 disabled:opacity-60 dark:border-success-500/50 dark:bg-success-500 dark:hover:bg-success-600"
+        >
+          {{ isBulkRemitting ? 'Remitting...' : 'Confirm Remit' }}
         </button>
       </div>
     </div>
