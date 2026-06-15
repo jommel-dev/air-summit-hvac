@@ -1,0 +1,67 @@
+@if (isOpen) {
+  <!-- Backdrop -->
+  <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="onCancel()"></div>
+
+  <!-- Modal container -->
+  <div class="fixed inset-0 z-100011 flex items-center justify-center p-4">
+    <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+
+      <!-- Header -->
+      <div [class]="getHeaderGradientClasses()">
+        <p [class]="getHeaderLabelClasses()">{{ getHeaderLabel() }}</p>
+        <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">{{ getTitle() }}</h3>
+      </div>
+
+      <!-- Body -->
+      <div class="space-y-4 px-6 py-5">
+        <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">{{ getMessage() }}</p>
+
+        <!-- Create mode details -->
+        @if (mode === 'create') {
+          <div [class]="getAlertClasses()">
+            <div class="flex items-center gap-2">
+              <svg [class]="getIconClasses()" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+              </svg>
+              <span class="font-medium">{{ backupTypeLabel }}</span>
+            </div>
+            <p class="mt-2 text-xs opacity-80">The backup will be stored on the server and available for download once completed.</p>
+          </div>
+        }
+
+        <!-- Delete mode details -->
+        @if (mode === 'delete') {
+          <div [class]="getAlertClasses()">
+            <div class="flex items-center gap-2">
+              <svg [class]="getIconClasses()" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+              </svg>
+              <span class="font-medium">This action is irreversible</span>
+            </div>
+            @if (fileName) {
+              <p class="mt-1 text-xs opacity-80">File: {{ fileName }}</p>
+            }
+          </div>
+        }
+      </div>
+
+      <!-- Footer -->
+      <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button
+          type="button"
+          (click)="onCancel()"
+          class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          (click)="onConfirm()"
+          [class]="getConfirmButtonClasses()"
+        >
+          {{ getConfirmText() }}
+        </button>
+      </div>
+    </div>
+  </div>
+}

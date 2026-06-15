@@ -1033,6 +1033,26 @@ export class SalesOrderService {
     );
     return response.data;
   }
+
+  async bulkRemit(orderIds: number[]): Promise<{ success: boolean; message?: string; updatedCount?: number; skipped?: Array<{ id: number; soNumber: string; reason: string }> }> {
+    const response = await apiClient.patch<{ success: boolean; message?: string; updatedCount?: number; skipped?: Array<{ id: number; soNumber: string; reason: string }> }>(
+      '/sales-order/bulk/remit',
+      { orderIds },
+    );
+    return response.data;
+  }
+
+  async getInstallerOrdersForToday(installer: string, branchId?: number): Promise<{ success: boolean; orders: Array<{ id: number; soNumber: string; customerName: string; status: string }> }> {
+    const params: Record<string, string> = { installer };
+    if (branchId && branchId > 0) {
+      params['branchId'] = String(branchId);
+    }
+    const response = await apiClient.get<{ success: boolean; orders: Array<{ id: number; soNumber: string; customerName: string; status: string }> }>(
+      '/sales-order/bulk/installer-orders-today',
+      { params },
+    );
+    return response.data;
+  }
 }
 
 export interface DrEligibleOrderResponse {
