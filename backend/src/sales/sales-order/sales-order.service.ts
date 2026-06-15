@@ -357,6 +357,52 @@ export class SalesOrderService {
     );
   }
 
+  private async updateExistingCustomerDetails(
+    executor: { query: PoolClient['query'] },
+    customerId: string,
+    customer: { name?: string; address?: string; contact_person?: string; contact_number?: string; email?: string; tin_number?: string } | undefined,
+    customerColumns: string[],
+  ): Promise<void> {
+    if (!customerId || !customer) {
+      return;
+    }
+
+    const nameColumn = this.pickColumn(customerColumns, ['name', 'customer_name']);
+    const addressColumn = this.pickColumn(customerColumns, ['address']);
+    const contactPersonColumn = this.pickColumn(customerColumns, ['contact_person', 'contactPerson']);
+    const contactNumberColumn = this.pickColumn(customerColumns, ['contact_number', 'contactNumber']);
+    const emailColumn = this.pickColumn(customerColumns, ['email']);
+    const tinColumn = this.pickColumn(customerColumns, ['tin_number', 'tinNumber']);
+
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    const tryUpdate = (column: string | undefined, value: unknown) => {
+      if (!column) return;
+      const text = this.normalizeText(value as string);
+      if (!text) return;
+      values.push(text);
+      updates.push(`"${column}" = $${values.length}`);
+    };
+
+    tryUpdate(nameColumn, customer.name);
+    tryUpdate(addressColumn, customer.address);
+    tryUpdate(contactPersonColumn, customer.contact_person);
+    tryUpdate(contactNumberColumn, customer.contact_number);
+    tryUpdate(emailColumn, customer.email);
+    tryUpdate(tinColumn, customer.tin_number);
+
+    if (updates.length === 0) {
+      return;
+    }
+
+    values.push(customerId);
+    await executor.query(
+      `UPDATE tblcustomer SET ${updates.join(', ')} WHERE id::text = $${values.length}`,
+      values,
+    );
+  }
+
   private async upsertCustomerFromPayload(
     executor: { query: PoolClient['query'] },
     payload: Pick<CreateSalesOrderDto, 'customer_id' | 'customer'>,
@@ -381,6 +427,13 @@ export class SalesOrderService {
       );
 
       if (existingCustomer.rowCount > 0) {
+        // Update customer details if any changes are provided
+        await this.updateExistingCustomerDetails(
+          executor,
+          customerId,
+          payload.customer,
+          customerColumns,
+        );
         await this.updateCustomerTypeIfNeeded(
           executor,
           customerId,
