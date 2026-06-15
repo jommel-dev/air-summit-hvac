@@ -697,13 +697,33 @@ export class ProductsService {
           }
         }
 
+        // --- Unit Types update with cascade ---
+        let oldUnitTypes: string[] = [];
+        let newUnitTypes: string[] = [];
+
         if (unitTypesColumn && Array.isArray(updateProductDto.unitTypes)) {
-          const unitTypes = updateProductDto.unitTypes
+          newUnitTypes = updateProductDto.unitTypes
             .map((entry) => String(entry ?? '').trim())
             .filter((entry) => entry.length > 0);
 
-          if (unitTypes.length > 0) {
-            values.push(unitTypes.join(','));
+          if (newUnitTypes.length > 0) {
+            // Fetch old unit types before updating
+            const oldResult = await client.query<{ unit_types: string | null }>(
+              `SELECT COALESCE(
+                to_jsonb(p)->>'unitTypes',
+                to_jsonb(p)->>'unit_types',
+                to_jsonb(p)->>'unittypes',
+                ''
+              ) AS unit_types
+              FROM tblproducts p WHERE p.id = $1`,
+              [id],
+            );
+            oldUnitTypes = String(oldResult.rows[0]?.unit_types ?? '')
+              .split(',')
+              .map((e) => e.trim().toLowerCase())
+              .filter((e) => e.length > 0);
+
+            values.push(newUnitTypes.join(','));
             updates.push(`"${unitTypesColumn}" = $${values.length}`);
           }
         }
@@ -720,7 +740,99 @@ export class ProductsService {
           values,
         );
 
-        return { success: true, message: 'Product updated successfully' };
+        // --- Cascade unit type changes to serial numbers and transaction items ---
+        const normalizedNewTypes = newUnitTypes.map((t) => t.toLowerCase());
+        const normalizedOldTypes = oldUnitTypes;
+        const unitTypesChanged =
+          newUnitTypes.length > 0 &&
+          (normalizedOldTypes.length !== normalizedNewTypes.length ||
+            normalizedOldTypes.some((t) => !normalizedNewTypes.includes(t)));
+
+        if (unitTypesChanged || newUnitTypes.length > 0) {
+          // Determine old types that no longer exist in new types (need remapping)
+          const removedTypes = normalizedOldTypes.filter((t) => !normalizedNewTypes.includes(t));
+          // The target type is the first new unit type (primary replacement)
+          const targetType = normalizedNewTypes[0] || 'set';
+
+          // 1. Update serial numbers: change ANY unitType that is NOT in the new types to the target
+          //    This covers both: removed old types AND serials that were never updated from a prior edit
+          await client.query(
+            `UPDATE tblserial_numbers
+             SET "unitType" = $1
+             WHERE "productId" = $2
+               AND LOWER(TRIM(COALESCE("unitType", ''))) <> ALL($3::text[])
+               AND COALESCE("unitType", '') <> ''`,
+            [targetType, id, normalizedNewTypes],
+          );
+
+          // 2. Update transaction product items: remap unitTypesQty JSONB
+          // Always run this to catch stale data from prior failed cascades
+          {
+            const transItemsResult = await client.query<{ id: number; unitTypesQty: unknown }>(
+              `SELECT tpi.id,
+                      COALESCE(to_jsonb(tpi)->'unitTypesQty', to_jsonb(tpi)->'unit_types_qty', '[]'::jsonb) AS "unitTypesQty"
+               FROM tbltransaction_product_items tpi
+               WHERE COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id', '')::int = $1`,
+              [id],
+            );
+
+            // Determine the unitTypesQty column name
+            const transColumns = await this.getTableColumns(client, 'tbltransaction_product_items');
+            const uqColumn = this.pickColumn(transColumns, ['unitTypesQty', 'unit_types_qty']);
+
+            if (uqColumn && transItemsResult.rows.length > 0) {
+              for (const row of transItemsResult.rows) {
+                const entries: Array<{ label: string; value: number }> = Array.isArray(row.unitTypesQty)
+                  ? row.unitTypesQty
+                  : [];
+
+                if (entries.length === 0) continue;
+
+                // Check if this row has any labels NOT in the new valid types
+                const hasObsoleteLabels = entries.some(
+                  (e) => !normalizedNewTypes.includes(String(e.label ?? '').trim().toLowerCase()),
+                );
+                if (!hasObsoleteLabels) continue;
+
+                // Remap: keep only new valid types, merge obsolete values into target
+                const remapped = new Map<string, number>();
+                for (const entry of entries) {
+                  const label = String(entry.label ?? '').trim().toLowerCase();
+                  const value = Number(entry.value) || 0;
+
+                  if (normalizedNewTypes.includes(label)) {
+                    // Valid new type — keep its value (take max if duplicated)
+                    const current = remapped.get(label) ?? 0;
+                    remapped.set(label, Math.max(current, value));
+                  } else {
+                    // Obsolete type — merge its value into the target (use max)
+                    const current = remapped.get(targetType) ?? 0;
+                    remapped.set(targetType, Math.max(current, value));
+                  }
+                }
+
+                // Ensure all new types are represented
+                for (const nt of normalizedNewTypes) {
+                  if (!remapped.has(nt)) {
+                    remapped.set(nt, 0);
+                  }
+                }
+
+                const newEntries = [...remapped.entries()].map(([label, value]) => ({ label, value }));
+
+                await client.query(
+                  `UPDATE tbltransaction_product_items SET "${uqColumn}" = $1::jsonb WHERE id = $2`,
+                  [JSON.stringify(newEntries), row.id],
+                );
+              }
+            }
+          }
+        }
+
+        const cascadeMsg = (unitTypesChanged || newUnitTypes.length > 0)
+          ? ' Unit types cascaded to serial numbers and sales orders.'
+          : '';
+        return { success: true, message: `Product updated successfully.${cascadeMsg}` };
       });
     } catch (error) {
       return {
