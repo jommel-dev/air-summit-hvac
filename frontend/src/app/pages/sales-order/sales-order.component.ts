@@ -4056,8 +4056,8 @@ export class SalesOrderComponent {
       sellPrice: '',
       discountPrice: '',
       unitTypes: [
-        this.createUnitTypeEntry('indoor', 0, []),
-        this.createUnitTypeEntry('outdoor', 0, []),
+        this.createUnitTypeEntry('indoor', 1, []),
+        this.createUnitTypeEntry('outdoor', 1, []),
       ],
       totalSetQty: 1,
     };
