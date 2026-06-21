@@ -299,6 +299,10 @@ export class PurchaseController {
         discountPrice: body.discountPrice !== undefined ? Number(body.discountPrice) : undefined,
         totalSetQty: body.totalSetQty !== undefined ? Number(body.totalSetQty) : undefined,
         unitTypesQty: Array.isArray(body.unitTypesQty) ? body.unitTypesQty as Array<{ label: string; value: number }> : undefined,
+        scannedSerials:
+          body.scannedSerials && typeof body.scannedSerials === 'object'
+            ? (body.scannedSerials as Record<string, unknown>)
+            : undefined,
       },
       Number.isFinite(userId) ? userId : undefined,
     );
@@ -323,6 +327,10 @@ export class PurchaseController {
         discountPrice: body.discountPrice !== undefined ? Number(body.discountPrice) : undefined,
         totalSetQty: body.totalSetQty !== undefined ? Number(body.totalSetQty) : undefined,
         unitTypesQty: Array.isArray(body.unitTypesQty) ? body.unitTypesQty as Array<{ label: string; value: number }> : undefined,
+        scannedSerials:
+          body.scannedSerials && typeof body.scannedSerials === 'object'
+            ? (body.scannedSerials as Record<string, unknown>)
+            : undefined,
       },
       Number.isFinite(userId) ? userId : undefined,
     );

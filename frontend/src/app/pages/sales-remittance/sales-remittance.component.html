@@ -1,0 +1,507 @@
+<div class="space-y-6">
+  <app-page-breadcrumb pageTitle="Sales Remittance"></app-page-breadcrumb>
+
+  <!-- Search & Actions -->
+  <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <input
+      type="text"
+      [(ngModel)]="search"
+      (input)="onSearchChange()"
+      placeholder="Search SO number, customer, installer..."
+      class="w-full max-w-sm rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+    />
+  </div>
+
+  <!-- Bulk Action Bar -->
+  @if (selectedOrderIds.size > 0) {
+    <div class="flex items-center gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2 dark:border-brand-500/30 dark:bg-brand-500/10">
+      <span class="text-sm font-medium text-brand-700 dark:text-brand-300">{{ selectedOrderIds.size }} selected</span>
+      <button
+        type="button"
+        (click)="openBulkRemitModal()"
+        class="rounded-lg bg-success-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-success-600"
+      >
+        Remit
+      </button>
+      <button
+        type="button"
+        (click)="selectedOrderIds.clear()"
+        class="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+      >
+        Clear
+      </button>
+    </div>
+  }
+
+  <!-- Loading / Error -->
+  @if (isLoading) {
+    <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading sales orders...</div>
+  } @else if (errorMessage) {
+    <div class="rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+      {{ errorMessage }}
+    </div>
+  } @else {
+    <!-- Table -->
+    <div class="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
+          <tr>
+            <th class="w-10 px-3 py-3">
+              <input type="checkbox" [checked]="isAllSelected" (change)="toggleSelectAll()" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-800" />
+            </th>
+            <th class="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400">SO Number</th>
+            <th class="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400">Installer</th>
+            <th class="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400">Customer</th>
+            <th class="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400">Schedule Date</th>
+            <th class="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
+            <th class="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
+            <th class="px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400">Serial Count</th>
+            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Action</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+          @for (order of orders; track order.id) {
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+              <td class="px-3 py-3">
+                <input type="checkbox" [checked]="selectedOrderIds.has(order.id)" (change)="toggleOrderSelection(order.id)" class="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-800" />
+              </td>
+              <td class="px-4 py-3 text-sm font-medium text-gray-800 dark:text-gray-100">{{ order.soNumber }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.installer || '-' }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.customerName }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDate(order.scheduleDate) }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatCurrency(order.totalAmount) }}</td>
+              <td class="px-4 py-3">
+                <span class="rounded-full px-2 py-0.5 text-xs font-medium" [ngClass]="getStatusClasses(order.status)">
+                  {{ order.status }}
+                </span>
+              </td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ order.serialCount }}</td>
+              <td class="px-4 py-3 text-right">
+                <div class="inline-flex items-center gap-1">
+                  <button type="button" (click)="openDetailDrawer(order)" class="rounded-lg border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800" title="View Details">
+                    View
+                  </button>
+                  <button type="button" (click)="openMiscModal(order, 'material')" class="rounded-lg border border-brand-300 px-2 py-1 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10" title="Add Material / Excess">
+                    Material & Excess
+                  </button>
+                  <button type="button" (click)="openMiscModal(order, 'general')" class="rounded-lg border border-purple-300 px-2 py-1 text-xs font-medium text-purple-700 transition hover:bg-purple-50 dark:border-purple-500/40 dark:text-purple-300 dark:hover:bg-purple-500/10" title="Add Service">
+                    Service
+                  </button>
+                </div>
+              </td>
+            </tr>
+          }
+          @if (orders.length === 0) {
+            <tr>
+              <td colspan="9" class="px-4 py-10 text-center text-sm text-gray-400 dark:text-gray-500">No sales orders found.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    @if (totalPages > 1) {
+      <div class="flex items-center justify-between">
+        <p class="text-xs text-gray-500 dark:text-gray-400">Page {{ page }} of {{ totalPages }}</p>
+        <div class="flex gap-2">
+          <button type="button" [disabled]="page <= 1" (click)="goToPage(page - 1)" class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Previous</button>
+          <button type="button" [disabled]="page >= totalPages" (click)="goToPage(page + 1)" class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Next</button>
+        </div>
+      </div>
+    }
+  }
+</div>
+
+<!-- Installer Prompt Modal -->
+@if (isBulkRemitInstallerPromptOpen) {
+  <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="closeBulkRemitInstallerPrompt()"></div>
+  <div class="fixed inset-0 z-100011 flex items-center justify-center p-4">
+    <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+      <div class="border-b border-gray-200 bg-linear-to-r from-emerald-50 via-white to-teal-50 px-6 py-5 dark:border-gray-800 dark:from-emerald-500/10 dark:via-gray-900 dark:to-teal-500/10">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-700 dark:text-emerald-300">Bulk Remit</p>
+        <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">Remit Installer's Orders</h3>
+      </div>
+      <div class="space-y-4 px-6 py-5">
+        <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">
+          Do you want to remit <strong>all</strong> of <strong class="text-emerald-700 dark:text-emerald-300">{{ bulkRemitInstallerName }}</strong>'s sales orders for today?
+        </p>
+        <div class="rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-100">
+          <div class="flex items-center gap-2">
+            <svg class="h-5 w-5 shrink-0 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+            </svg>
+            <span>This will auto-select and remit all "for-delivery" orders under this installer scheduled for today.</span>
+          </div>
+        </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400">Select <strong>No</strong> if some customers have returned units.</p>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button type="button" (click)="declineRemitAllInstallerOrders()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">No, Select Manually</button>
+        <button type="button" (click)="confirmRemitAllInstallerOrders()" [disabled]="isLoadingInstallerOrders" class="rounded-lg border border-success-300 bg-success-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-success-600 disabled:opacity-60">
+          {{ isLoadingInstallerOrders ? 'Loading...' : 'Yes, Remit All' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Confirm Remit Modal -->
+@if (isBulkRemitModalOpen) {
+  <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="closeBulkRemitModal()"></div>
+  <div class="fixed inset-0 z-100011 flex items-center justify-center p-4">
+    <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+      <div class="border-b border-gray-200 bg-linear-to-r from-emerald-50 via-white to-teal-50 px-6 py-5 dark:border-gray-800 dark:from-emerald-500/10 dark:via-gray-900 dark:to-teal-500/10">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-700 dark:text-emerald-300">Confirm Remit</p>
+        <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">Remit {{ selectedOrderIds.size }} Sales Order(s)</h3>
+      </div>
+      <div class="space-y-4 px-6 py-5">
+        <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">
+          You are about to mark {{ selectedOrderIds.size }} order(s) as <strong class="text-emerald-700 dark:text-emerald-300">remitted</strong>. Only orders with status "for-delivery" will be updated.
+        </p>
+        @if (bulkRemitInstallerOrders.length > 0) {
+          <div class="max-h-48 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-700">
+            <table class="w-full text-left text-sm">
+              <thead class="sticky top-0 bg-gray-50 dark:bg-gray-800">
+                <tr>
+                  <th class="px-3 py-2 text-xs font-medium text-gray-500">SO Number</th>
+                  <th class="px-3 py-2 text-xs font-medium text-gray-500">Customer</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                @for (o of bulkRemitInstallerOrders; track o.id) {
+                  <tr>
+                    <td class="px-3 py-2 text-xs font-medium text-gray-800 dark:text-gray-100">{{ o.soNumber }}</td>
+                    <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">{{ o.customerName }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button type="button" (click)="closeBulkRemitModal()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Cancel</button>
+        <button type="button" (click)="confirmBulkRemit()" [disabled]="isBulkRemitting" class="rounded-lg border border-success-300 bg-success-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-success-600 disabled:opacity-60">
+          {{ isBulkRemitting ? 'Remitting...' : 'Confirm Remit' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Detail Drawer -->
+@if (isDetailDrawerOpen) {
+  <div class="fixed inset-0 z-100020 bg-gray-900/40" (click)="closeDetailDrawer()"></div>
+  <aside
+    class="fixed inset-y-0 right-0 z-100030 flex w-full max-w-2xl flex-col border-l border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-900"
+  >
+    <!-- Header -->
+    <div class="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-5 dark:border-gray-800">
+      <div>
+        <p class="text-xs font-semibold uppercase tracking-[0.3em] text-brand-600 dark:text-brand-300">Sales Order Details</p>
+        <h2 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">{{ detailOrder?.soNumber }}</h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ detailOrder?.customerName }} • {{ detailOrder?.installer || 'No installer' }}</p>
+      </div>
+      <button type="button" (click)="closeDetailDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+    </div>
+
+    <!-- Body -->
+    <div class="flex-1 overflow-y-auto px-6 py-5">
+      @if (isDetailLoading) {
+        <div class="py-10 text-center text-sm text-gray-500">Loading details...</div>
+      } @else if (detailData) {
+        <div class="space-y-6">
+          <!-- Order Info -->
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+              <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Status</div>
+              <div class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-100">{{ detailData.status }}</div>
+            </div>
+            <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+              <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Sales Type</div>
+              <div class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-100">{{ detailData.salesType || '-' }}</div>
+            </div>
+            <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+              <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Total Amount</div>
+              <div class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-100">{{ formatCurrency(detailData.totalAmount) }}</div>
+            </div>
+            <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+              <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Schedule Date</div>
+              <div class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-100">{{ formatDate(detailData.scheduleDate) }}</div>
+            </div>
+          </div>
+
+          <!-- Product Items -->
+          @if (detailData.productItems?.length > 0) {
+            <div>
+              <h4 class="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Product Items</h4>
+              <div class="space-y-2">
+                @for (product of detailData.productItems; track product) {
+                  <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
+                    <div class="flex items-center justify-between">
+                      <span class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ resolveProductName(product.productId) }}</span>
+                      <span class="text-xs text-gray-500">{{ resolveCapacityName(product.productId, product.capacityId) }}</span>
+                    </div>
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      @for (ut of product.unitTypesQty || []; track ut) {
+                        <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                          {{ ut.label }}: {{ ut.value }}
+                        </span>
+                      }
+                    </div>
+                    @if (product.serialNumbers) {
+                      <div class="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                        @for (entry of getSerialEntries(product.serialNumbers); track entry.label) {
+                          @if (entry.serials.length > 0) {
+                            <div class="rounded-lg border border-gray-100 bg-gray-50/50 p-2.5 dark:border-gray-700 dark:bg-gray-800/50">
+                              <div class="mb-2 flex items-center justify-between">
+                                <span class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ entry.label }}</span>
+                                <span class="rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 dark:bg-brand-900/30 dark:text-brand-300">{{ entry.serials.length }}</span>
+                              </div>
+                              <div class="flex flex-wrap gap-1">
+                                @for (serial of entry.serials; track serial) {
+                                  <span class="rounded bg-white px-1.5 py-0.5 text-[11px] font-medium text-gray-700 shadow-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:text-gray-200 dark:ring-gray-700">{{ serial }}</span>
+                                }
+                              </div>
+                            </div>
+                          }
+                        }
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          <!-- Miscellaneous Items -->
+          @if (detailMiscItems.length > 0) {
+            <div>
+              <h4 class="mb-3 text-sm font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">Materials / Excess / Services</h4>
+              <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                <table class="w-full text-left text-sm">
+                  <thead class="bg-gray-50 dark:bg-gray-800">
+                    <tr>
+                      <th class="px-3 py-2 text-xs font-medium text-gray-500">Category</th>
+                      <th class="px-3 py-2 text-xs font-medium text-gray-500">Item</th>
+                      <th class="px-3 py-2 text-xs font-medium text-gray-500">Qty</th>
+                      <th class="px-3 py-2 text-xs font-medium text-gray-500">Price</th>
+                      <th class="px-3 py-2 text-xs font-medium text-gray-500">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                    @for (item of detailMiscItems; track item.id) {
+                      <tr>
+                        <td class="px-3 py-2">
+                          <span class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                            [ngClass]="{
+                              'bg-brand-50 text-brand-700': item.category === 'material',
+                              'bg-amber-50 text-amber-700': item.category === 'excess',
+                              'bg-purple-50 text-purple-700': item.category === 'general',
+                              'bg-gray-100 text-gray-600': item.category === 'electrical'
+                            }">
+                            {{ item.category }}
+                          </span>
+                        </td>
+                        <td class="px-3 py-2 text-xs text-gray-800 dark:text-gray-100">{{ item.itemName }}</td>
+                        <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">{{ item.quantity }} {{ item.unit }}</td>
+                        <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-300">{{ item.isInclusion ? 'Inclusion' : formatCurrency(item.unitPrice) }}</td>
+                        <td class="px-3 py-2 text-xs font-medium text-gray-800 dark:text-gray-100">{{ item.isInclusion ? '-' : formatCurrency(item.totalPrice) }}</td>
+                      </tr>
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          }
+
+          <!-- Remarks -->
+          @if (detailData.remarks) {
+            <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+              <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Remarks</div>
+              <p class="mt-2 text-sm text-gray-700 dark:text-gray-300">{{ detailData.remarks }}</p>
+            </div>
+          }
+        </div>
+      }
+    </div>
+  </aside>
+}
+
+<!-- Add Material/Excess/Service Modal -->
+@if (isMiscModalOpen) {
+  <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="closeMiscModal()"></div>
+  <div class="fixed inset-0 z-100011 flex items-center justify-center p-4">
+    <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+      <div class="border-b border-gray-200 bg-linear-to-r from-brand-50 via-white to-indigo-50 px-6 py-5 dark:border-gray-800 dark:from-brand-500/10 dark:via-gray-900 dark:to-indigo-500/10">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-700 dark:text-brand-300">{{ miscModalSoNumber }}</p>
+        <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">Add {{ getMiscCategoryLabel() }}</h3>
+      </div>
+      <div class="space-y-4 px-6 py-5">
+        <!-- Category selector (for Material & Excess combined button) -->
+        @if (showCategorySelector) {
+          <div>
+            <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Category</label>
+            <div class="flex gap-2">
+              <button type="button" (click)="miscForm.category = 'material'" class="flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition"
+                [ngClass]="miscForm.category === 'material' ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300' : 'border-gray-300 text-gray-600 hover:border-gray-400 dark:border-gray-700 dark:text-gray-300'">
+                Material
+              </button>
+              <button type="button" (click)="miscForm.category = 'excess'" class="flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition"
+                [ngClass]="miscForm.category === 'excess' ? 'border-amber-500 bg-amber-50 text-amber-700 dark:border-amber-400 dark:bg-amber-500/10 dark:text-amber-300' : 'border-gray-300 text-gray-600 hover:border-gray-400 dark:border-gray-700 dark:text-gray-300'">
+                Excess
+              </button>
+            </div>
+          </div>
+        }
+
+        <!-- Item Name (with dropdown for services, material search for material/excess) -->
+        <div class="relative">
+          <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Item Name</label>
+          @if (miscModalCategory === 'general') {
+            <div class="relative">
+              <input
+                type="text"
+                [(ngModel)]="miscForm.itemName"
+                (focus)="isServiceDropdownOpen = true"
+                placeholder="Select or type a service"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              />
+              @if (isServiceDropdownOpen) {
+                <div class="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                  @for (option of serviceOptions; track option) {
+                    <button
+                      type="button"
+                      (click)="selectServiceOption(option)"
+                      class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                    >
+                      {{ option }}
+                    </button>
+                  }
+                </div>
+              }
+            </div>
+          } @else {
+            <!-- Material/Excess: searchable dropdown from material inventory -->
+            <div class="relative">
+              <input
+                type="text"
+                [ngModel]="miscForm.itemName"
+                (ngModelChange)="onMaterialSearchChange($event)"
+                (focus)="isMaterialDropdownOpen = true"
+                (blur)="closeMaterialDropdown()"
+                placeholder="Search material or type custom name"
+                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              />
+              @if (isMaterialDropdownOpen && filteredMaterials.length > 0) {
+                <div class="absolute left-0 right-0 top-full z-10 mt-1 max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-800">
+                  @for (mat of filteredMaterials; track mat.id) {
+                    <button
+                      type="button"
+                      (mousedown)="selectMaterial(mat)"
+                      class="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-700"
+                    >
+                      <span class="font-medium">{{ mat.material_name }}</span>
+                      @if (mat.material_code) {
+                        <span class="ml-2 text-xs text-gray-400">({{ mat.material_code }})</span>
+                      }
+                      <span class="ml-2 text-xs text-gray-500">• {{ mat.unit }} • ₱{{ mat.sell_price || mat.unit_price }}</span>
+                    </button>
+                  }
+                </div>
+              }
+            </div>
+          }
+        </div>
+
+        <!-- Description -->
+        <div>
+          <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Description (optional)</label>
+          <input
+            type="text"
+            [(ngModel)]="miscForm.description"
+            placeholder="Short description"
+            class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+          />
+        </div>
+
+        <!-- Qty + Unit + Price row -->
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Qty</label>
+            <input
+              type="number"
+              [(ngModel)]="miscForm.quantity"
+              min="1"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+            />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Unit</label>
+            <input
+              type="text"
+              [(ngModel)]="miscForm.unit"
+              placeholder="pcs"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+            />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Unit Price</label>
+            <input
+              type="number"
+              [(ngModel)]="miscForm.unitPrice"
+              min="0"
+              class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+            />
+          </div>
+        </div>
+
+        <!-- Inclusion toggle -->
+        <div class="flex items-center gap-3">
+          <label class="relative inline-flex cursor-pointer items-center">
+            <input type="checkbox" class="peer sr-only" [(ngModel)]="miscForm.isInclusion" />
+            <div class="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:transition-all peer-checked:bg-brand-500 peer-checked:after:translate-x-full dark:bg-gray-700"></div>
+          </label>
+          <span class="text-sm text-gray-700 dark:text-gray-200">Inclusion (no charge)</span>
+        </div>
+
+        <!-- Remarks -->
+        <div>
+          <label class="mb-1 block text-xs font-semibold text-gray-600 dark:text-gray-300">Remarks (optional)</label>
+          <input
+            type="text"
+            [(ngModel)]="miscForm.remarks"
+            placeholder="Additional notes"
+            class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+          />
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button type="button" (click)="closeMiscModal()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Cancel</button>
+        <button type="button" (click)="saveMiscItem()" [disabled]="isSavingMisc || !miscForm.itemName.trim()" class="rounded-lg border border-brand-300 bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-60">
+          {{ isSavingMisc ? 'Saving...' : 'Add Item' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+<!-- Error Modal -->
+@if (errorModal.isOpen) {
+  <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="closeErrorModal()"></div>
+  <div class="fixed inset-0 z-100011 flex items-center justify-center p-4">
+    <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+      <div class="border-b border-gray-200 bg-linear-to-r from-rose-50 via-white to-pink-50 px-6 py-5 dark:border-gray-800 dark:from-rose-500/10 dark:via-gray-900 dark:to-pink-500/10">
+        <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-rose-700 dark:text-rose-300">Error</p>
+        <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">{{ errorModal.title }}</h3>
+      </div>
+      <div class="px-6 py-5">
+        <p class="whitespace-pre-line text-sm leading-6 text-gray-600 dark:text-gray-300">{{ errorModal.message }}</p>
+      </div>
+      <div class="flex items-center justify-end border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        <button type="button" (click)="closeErrorModal()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">OK</button>
+      </div>
+    </div>
+  </div>
+}

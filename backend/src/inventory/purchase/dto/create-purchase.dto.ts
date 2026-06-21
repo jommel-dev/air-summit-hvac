@@ -36,6 +36,7 @@ export class CreatePurchaseProductItemDto {
 	discountPrice?: string | number;
 	unitTypesQty?: CreatePurchaseUnitTypeQtyDto[];
 	serialNumbers?: Record<string, unknown>;
+	scannedSerials?: Record<string, unknown>;
 	totalSetQty?: number;
 	purchaseId?: number | null;
 	salesId?: number | null;

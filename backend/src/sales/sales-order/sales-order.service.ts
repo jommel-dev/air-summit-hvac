@@ -5786,6 +5786,52 @@ export class SalesOrderService {
         materialItems = [];
       }
 
+      // Also fetch misc items (material/excess category) that don't have a material_id
+      // These are custom items added from Sales Remittance that aren't in inventory
+      let miscMaterialItems: any[] = [];
+      try {
+        const miscResult = await this.databaseService.query<{
+          id: number;
+          category: string;
+          item_name: string;
+          quantity: string;
+          unit: string;
+          unit_price: string;
+          total_price: string;
+          is_inclusion: boolean;
+          material_id: number | null;
+          created_at: string;
+        }>(
+          `SELECT id, category, item_name, quantity::text, unit, unit_price::text, total_price::text, is_inclusion, material_id, created_at::text
+           FROM tblso_miscellaneous_items
+           WHERE sales_id = $1
+             AND category IN ('material', 'excess')
+             AND material_id IS NULL`,
+          [id],
+        );
+        miscMaterialItems = miscResult.rows.map((row) => ({
+          id: row.id,
+          trans_type: 'sales',
+          material_id: null,
+          material_name: row.item_name,
+          material_code: null,
+          quantity: Number(row.quantity) || 0,
+          unit: row.unit,
+          unit_price: Number(row.unit_price) || 0,
+          sell_price: Number(row.unit_price) || 0,
+          discount_price: 0,
+          sales_id: id,
+          purchase_id: null,
+          is_inclusion: row.is_inclusion,
+          category: row.category,
+          created_at: row.created_at,
+        }));
+      } catch {
+        miscMaterialItems = [];
+      }
+
+      const allMaterialItems = [...materialItems, ...miscMaterialItems];
+
       const sales = salesResult.rows[0];
 
       return {
@@ -5892,7 +5938,7 @@ export class SalesOrderService {
             paymentMethod: expense.paymentMethod ?? '',
             referenceNo: expense.referenceNo ?? '',
           })),
-          materialItems: materialItems,
+          materialItems: allMaterialItems,
           createdAt: sales.createdAt,
         },
       };
@@ -7088,5 +7134,165 @@ export class SalesOrderService {
         { client },
       );
     }
+  }
+
+  // ─── Miscellaneous Items (Materials, Excess, Services) ──────────────────────
+
+  async addMiscellaneousItem(
+    salesId: number,
+    body: {
+      category: string;
+      itemName: string;
+      description?: string;
+      quantity?: number;
+      unit?: string;
+      unitPrice?: number;
+      isInclusion?: boolean;
+      remarks?: string;
+    },
+  ) {
+    if (!Number.isFinite(salesId) || salesId <= 0) {
+      return { success: false, message: 'Invalid sales order ID' };
+    }
+
+    const itemName = String(body.itemName ?? '').trim();
+    if (!itemName) {
+      return { success: false, message: 'Item name is required' };
+    }
+
+    const validCategories = ['excess', 'electrical', 'material', 'general'];
+    const category = validCategories.includes(body.category) ? body.category : 'general';
+    const quantity = Number(body.quantity) || 1;
+    const unitPrice = Number(body.unitPrice) || 0;
+    const totalPrice = quantity * unitPrice;
+
+    try {
+      const result = await this.databaseService.query<{ id: number }>(
+        `INSERT INTO tblso_miscellaneous_items
+           (sales_id, category, item_name, description, quantity, unit, unit_price, total_price, is_inclusion, remarks)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id`,
+        [
+          salesId,
+          category,
+          itemName,
+          body.description?.trim() || null,
+          quantity,
+          body.unit?.trim() || 'pcs',
+          unitPrice,
+          totalPrice,
+          body.isInclusion ?? false,
+          body.remarks?.trim() || null,
+        ],
+      );
+
+      // If category is material/excess and a material_id was provided, also add to material_transactions
+      const materialId = this.toOptionalNumber((body as any).materialId);
+      if ((category === 'material' || category === 'excess') && materialId && materialId > 0) {
+        try {
+          await this.materialTransactionsService.create({
+            trans_type: 'sales',
+            sales_id: salesId,
+            material_id: materialId,
+            quantity: quantity,
+            unit_price: unitPrice,
+            sell_price: unitPrice,
+            discount_price: 0,
+            purchase_id: undefined,
+          });
+        } catch {
+          // Non-critical: misc item is already saved, material transaction is supplementary
+        }
+      }
+
+      // If adding a service (category = 'general'), update salesType and insert into tblservice_details
+      if (category === 'general') {
+        const salesColumns = await this.databaseService.query<{ column_name: string }>(
+          `SELECT column_name FROM information_schema.columns
+           WHERE table_schema = 'public' AND table_name = 'tblsales_order'
+             AND column_name IN ('salesType', 'sales_type')`,
+        );
+        const salesTypeCol = salesColumns.rows[0]?.column_name ?? 'salesType';
+
+        await this.databaseService.query(
+          `UPDATE tblsales_order
+           SET "${salesTypeCol}" = 'sales and service'
+           WHERE id = $1
+             AND LOWER(TRIM(COALESCE("${salesTypeCol}", ''))) NOT IN ('service', 'sales and service')`,
+          [salesId],
+        );
+
+        // Also record in tblservice_details for cross-checking
+        await this.databaseService.query(
+          `INSERT INTO tblservice_details
+             (sales_id, service_name, service_description, service_type, service_cost, service_duration_hours, service_status, service_notes)
+           VALUES ($1, $2, $3, $4, $5, $6, 'scheduled', $7)`,
+          [
+            salesId,
+            itemName,
+            body.description?.trim() || null,
+            'installation-service',
+            totalPrice,
+            quantity,
+            body.remarks?.trim() || null,
+          ],
+        );
+      }
+
+      // Update the sales order total_amount to include this item (unless it's an inclusion)
+      if (!body.isInclusion && totalPrice > 0) {
+        await this.databaseService.query(
+          `UPDATE tblsales_order
+           SET total_amount = COALESCE(total_amount, 0) + $1
+           WHERE id = $2`,
+          [totalPrice, salesId],
+        );
+      }
+
+      return { success: true, message: 'Item added successfully', id: result.rows[0]?.id };
+    } catch (error) {
+      return { success: false, message: `Failed to add item: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  async getMiscellaneousItems(salesId: number) {
+    if (!Number.isFinite(salesId) || salesId <= 0) {
+      return [];
+    }
+
+    const result = await this.databaseService.query<{
+      id: number;
+      category: string;
+      item_name: string;
+      description: string | null;
+      quantity: string;
+      unit: string;
+      unit_price: string;
+      total_price: string;
+      is_inclusion: boolean;
+      remarks: string | null;
+      created_at: string;
+    }>(
+      `SELECT id, category, item_name, description, quantity::text, unit,
+              unit_price::text, total_price::text, is_inclusion, remarks, created_at::text
+       FROM tblso_miscellaneous_items
+       WHERE sales_id = $1
+       ORDER BY created_at ASC`,
+      [salesId],
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      category: row.category,
+      itemName: row.item_name,
+      description: row.description,
+      quantity: Number(row.quantity) || 0,
+      unit: row.unit,
+      unitPrice: Number(row.unit_price) || 0,
+      totalPrice: Number(row.total_price) || 0,
+      isInclusion: row.is_inclusion,
+      remarks: row.remarks,
+      createdAt: row.created_at,
+    }));
   }
 }
