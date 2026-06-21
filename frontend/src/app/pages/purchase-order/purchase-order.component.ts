@@ -12,6 +12,7 @@ import {
   ProductOption,
   PurchaseOrderItem,
   PurchaseOrderService,
+  UpdatePurchaseResponse,
   VendorOption,
 } from '../../shared/services/purchase-order.service';
 import { RbacService } from '../../shared/services/rbac.service';
@@ -640,27 +641,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         return;
       }
 
-      if (this.drawerMode === 'edit') {
-        const flushed = await this.flushAllQueuedSerialScans();
-        if (!flushed) {
-          this.createError = 'Pending serial scans must finish saving before updating the purchase order.';
-          return;
-        }
-
-        // Verify all scanned serials are in the database, re-insert any missing ones
-        if (this.editingPurchaseId) {
-          const verificationResult = await this.verifyAndRecoverMissingSerials();
-          if (!verificationResult) {
-            this.createError = 'Failed to verify serial numbers. Please try again.';
-            return;
-          }
-        }
-      }
-
       const payload = this.buildPurchasePayload();
       const response =
         this.drawerMode === 'edit' && this.editingPurchaseId
-          ? await this.purchaseOrderService.updatePurchase(this.editingPurchaseId, payload)
+          ? await this.persistEditedPurchaseOrder(payload)
           : await this.purchaseOrderService.createPurchase(payload);
       console.log('submitCreatePurchase response', response);
       if (!response.success) {
@@ -1698,7 +1682,26 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   async closeCreateDrawer(): Promise<void> {
-    if (this.drawerMode === 'edit') {
+    if (this.drawerMode === 'edit' && this.editingPurchaseId && this.hasDrawerFormChanges()) {
+      if (this.isCreating) {
+        return;
+      }
+
+      this.isCreating = true;
+      this.createError = '';
+
+      try {
+        const response = await this.persistEditedPurchaseOrder();
+        if (!response.success) {
+          this.createError = response.message ?? 'Failed to update purchase request';
+          return;
+        }
+
+        this.createSuccess = response.message ?? 'Purchase request updated successfully';
+      } finally {
+        this.isCreating = false;
+      }
+    } else if (this.drawerMode === 'edit') {
       const flushed = await this.flushAllQueuedSerialScans();
       if (!flushed) {
         this.createError = 'Pending serial scans must finish saving before closing the drawer.';
@@ -2518,6 +2521,46 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     return this.getDrawerStateSnapshot() !== this.drawerInitialStateSnapshot;
   }
 
+  private async persistEditedPurchaseOrder(
+    payload = this.buildPurchasePayload(),
+  ): Promise<UpdatePurchaseResponse> {
+    if (!this.editingPurchaseId) {
+      return { success: false, message: 'Invalid purchase order id for update' };
+    }
+
+    const validationError = this.validatePurchaseForm();
+    if (validationError) {
+      return { success: false, message: validationError };
+    }
+
+    const flushed = await this.flushAllQueuedSerialScans();
+    if (!flushed) {
+      return {
+        success: false,
+        message: 'Pending serial scans must finish saving before updating the purchase order.',
+      };
+    }
+
+    const verificationResult = await this.verifyAndRecoverMissingSerials();
+    if (!verificationResult) {
+      return {
+        success: false,
+        message: 'Failed to verify serial numbers. Please try again.',
+      };
+    }
+
+    const response = await this.purchaseOrderService.updatePurchase(
+      this.editingPurchaseId,
+      payload,
+    );
+
+    if (response.success) {
+      this.captureDrawerInitialSnapshot();
+    }
+
+    return response;
+  }
+
   private captureDrawerInitialSnapshot(): void {
     this.drawerInitialStateSnapshot = this.getDrawerStateSnapshot();
   }
@@ -3015,6 +3058,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         discountPrice: Number(item.discountPrice) || 0,
         totalSetQty: Number(item.totalSetQty) || 0,
         unitTypesQty,
+        scannedSerials: this.buildScannedSerialsPayload(item),
       };
 
       const isExistingItem = !!(item._originalProductId && item._originalCapacityId);
@@ -3557,7 +3601,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   onSerialScanInputChange(productIndex: number, unitLabel: string, value: string): void {
+
+    // Existing Processing Logic (with minor adjustments to fit the new queuing system)
     const item = this.createForm.productItems[productIndex];
+
     if (!item) {
       return;
     }
@@ -3586,6 +3633,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       void this.scanSerialForSelectedUnit(productIndex, false);
       delete this.serialScanTimers[timerKey];
     }, this.serialScanDebounceMs);
+
+    console.log(item)
   }
 
   private setTransientScanError(productIndex: number, unitLabel: string, message: string): void {
@@ -3854,6 +3903,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       });
 
       const results = Array.isArray(response.items) ? response.items : [];
+      const successfulProductIndexes = new Set<number>();
       batch.forEach((entry, index) => {
         const result = results[index];
         const unitEntry = this.getUnitEntry(entry.productIndex, entry.unitLabel);
@@ -3889,12 +3939,17 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           result.item?.serialNumber ?? entry.serialNumber,
         );
         this.replaceLocalSerial(unitEntry, entry.serialNumber, normalizedSavedSerial);
+        successfulProductIndexes.add(entry.productIndex);
         unitEntry.scanError = '';
         unitEntry.scanSuccess =
           response.summary && response.summary.successCount > 1
             ? `${response.summary.successCount} serial numbers saved`
             : result.message ?? 'Serial number saved successfully';
       });
+
+      if (successfulProductIndexes.size > 0) {
+        await this.persistScannedSerialSnapshots([...successfulProductIndexes]);
+      }
 
       if (!response.success && (response.summary?.failureCount ?? 0) > 0) {
         this.createError = response.message ?? 'Some serial numbers failed to save.';
@@ -4215,6 +4270,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       );
 
       unitEntry.serialInput = parsedInput.join('\n');
+      await this.persistScannedSerialSnapshots([productIndex]);
       unitEntry.scanSuccess = response.message ?? 'Serial number deleted successfully';
       unitEntry.scanError = '';
     } catch (error: unknown) {
@@ -4271,6 +4327,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           label: entry.label,
           value: Number(entry.value) || 0,
         })),
+        scannedSerials: this.buildScannedSerialsPayload(item),
         totalSetQty: Number(item.totalSetQty) || 0,
         purchaseId: null,
         salesId: null,
@@ -4420,6 +4477,59 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
       return accumulator;
     }, {});
+  }
+
+  private buildScannedSerialsPayload(
+    item: PurchaseProductFormItem,
+  ): Record<string, string[]> {
+    const serialNumbers = this.buildSerialNumbersPayload(item);
+    const scannedSerials: Record<string, string[]> = {};
+
+    for (const unitType of item.unitTypes) {
+      const label = this.normalizeUnitTypeLabel(unitType.label);
+      if (!label) {
+        continue;
+      }
+
+      scannedSerials[label] = Array.isArray(serialNumbers[label])
+        ? [...serialNumbers[label]]
+        : [];
+    }
+
+    for (const [label, values] of Object.entries(serialNumbers)) {
+      if (!Array.isArray(scannedSerials[label])) {
+        scannedSerials[label] = Array.isArray(values) ? [...values] : [];
+      }
+    }
+
+    return scannedSerials;
+  }
+
+  private async persistScannedSerialSnapshots(productIndexes: number[]): Promise<void> {
+    if (this.drawerMode !== 'edit' || !this.editingPurchaseId) {
+      return;
+    }
+
+    const uniqueIndexes = [...new Set(productIndexes)].filter((index) => {
+      const item = this.createForm.productItems[index];
+      if (!item) {
+        return false;
+      }
+
+      const productId = Number(item.productId);
+      const capacityId = Number(item.capacityId);
+      return Number.isFinite(productId) && productId > 0 && Number.isFinite(capacityId) && capacityId > 0;
+    });
+
+    await Promise.all(
+      uniqueIndexes.map(async (index) => {
+        try {
+          await this.autoSaveProductItem(index);
+        } catch {
+          // Silent — full Update PO can still resync scannedSerials later.
+        }
+      }),
+    );
   }
 
   private applyDetailToForm(detail: PurchaseOrderDetailItem, fallbackItem: PurchaseOrderItem): void {

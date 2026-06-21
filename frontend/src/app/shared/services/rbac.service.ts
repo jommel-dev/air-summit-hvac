@@ -24,7 +24,8 @@ export type MenuKey =
   | 'sales_order_materials'
   | 'user_management'
   | 'settings'
-  | 'projects';
+  | 'projects'
+  | 'sales_remittance';
 
 export type PermissionKey = 'canCreate' | 'canRead' | 'canUpdate' | 'canDelete' | 'canDoAll';
 
@@ -68,6 +69,7 @@ export class RbacService {
     'user-management': 'user_management',
     settings: 'settings',
     projects: 'projects',
+    'sales-remittance': 'sales_remittance',
   };
 
   private refreshCache(): void {

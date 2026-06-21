@@ -23,6 +23,7 @@ import {
 } from '../../shared/services/sales-order.service';
 import { MaterialTransactionItem } from '../../shared/services/sales-order-material.service';
 import axios from 'axios';
+import { apiClient } from '../../shared/services/api-client';
 import { PDFDocument, StandardFonts, rgb, PDFFont } from 'pdf-lib';
 import {
   BusinessProfileSettings,
@@ -31,7 +32,6 @@ import {
 import { RbacService } from '../../shared/services/rbac.service';
 import { UserManagementService, UserApiItem } from '../../shared/services/user-management.service';
 import { AuditLogFrontendService } from '../../shared/services/audit-log.service';
-import { ModalComponent } from '../../shared/components/ui/modal/modal.component';
 import { SerialValidationModalComponent, SerialValidationModalMode, SerialValidationDetails } from './serial-validation-modal/serial-validation-modal.component';
 import { DrGeneratorService } from '../../shared/services/dr-generator.service';
 import { DrEligibleOrder } from '../../shared/interfaces/dr-generator.interfaces';
@@ -120,7 +120,7 @@ interface SalesPaymentFormItem {
 
 @Component({
   selector: 'app-sales-order',
-  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, ModalComponent, SerialValidationModalComponent],
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, SerialValidationModalComponent],
   templateUrl: './sales-order.component.html',
   styles: ``,
 })
@@ -243,6 +243,13 @@ export class SalesOrderComponent {
   isDrawerOpen = false;
   drawerMode: 'create' | 'edit' = 'create';
   nextSoNumberPreview = '';
+
+  // View-only drawer state
+  isViewDrawerOpen = false;
+  isViewDrawerLoading = false;
+  viewDrawerOrder: SalesOrderRow | null = null;
+  viewDrawerDetail: any = null;
+  viewDrawerMiscItems: Array<{ id: number; category: string; itemName: string; quantity: number; unit: string; unitPrice: number; totalPrice: number; isInclusion: boolean }> = [];
   guardDialogMode: SalesGuardDialogMode | null = null;
   isGuardDialogOpen = false;
   pendingSerialRemoval: SalesPendingSerialRemoval | null = null;
@@ -594,6 +601,12 @@ export class SalesOrderComponent {
     const availableTabs = this.getTabs();
     if (availableTabs.length > 0) {
       this.activeTab = availableTabs[0].key;
+    }
+
+    // Check if a specific tab is requested via query param or route data
+    const requestedTab = (this.route.snapshot.queryParamMap.get('tab') || this.route.snapshot.data?.['defaultTab']) as SalesTab | null;
+    if (requestedTab && availableTabs.some((t) => t.key === requestedTab)) {
+      this.activeTab = requestedTab;
     }
 
     void this.loadTabData(this.activeTab);
@@ -2713,6 +2726,52 @@ export class SalesOrderComponent {
     await this.openEditDrawerById(order.id, order);
   }
 
+  async openViewDrawer(order: SalesOrderRow): Promise<void> {
+    this.viewDrawerOrder = order;
+    this.isViewDrawerOpen = true;
+    this.isViewDrawerLoading = true;
+    this.viewDrawerDetail = null;
+    this.viewDrawerMiscItems = [];
+
+    try {
+      const [detail, miscResponse] = await Promise.all([
+        this.salesOrderService.getSalesOrderById(order.id),
+        apiClient.get<any[]>(`/sales-order/${order.id}/misc-items`),
+      ]);
+      this.viewDrawerDetail = detail;
+      this.viewDrawerMiscItems = Array.isArray(miscResponse.data) ? miscResponse.data : [];
+    } catch {
+      this.viewDrawerDetail = null;
+    } finally {
+      this.isViewDrawerLoading = false;
+    }
+  }
+
+  closeViewDrawer(): void {
+    this.isViewDrawerOpen = false;
+    this.viewDrawerOrder = null;
+    this.viewDrawerDetail = null;
+    this.viewDrawerMiscItems = [];
+  }
+
+  viewResolveProductName(productId: string | number): string {
+    const product = this.catalogProducts.find(p => String(p.id) === String(productId));
+    return product?.name ?? `Product #${productId}`;
+  }
+
+  viewResolveCapacityName(productId: string | number, capacityId: string | number): string {
+    const product = this.catalogProducts.find(p => String(p.id) === String(productId));
+    const capacity = product?.capacities?.find(c => String(c.id) === String(capacityId));
+    return capacity?.name ?? '';
+  }
+
+  viewGetSerialEntries(serialNumbers: Record<string, string[]> | null | undefined): Array<{ label: string; serials: string[] }> {
+    if (!serialNumbers || typeof serialNumbers !== 'object') return [];
+    return Object.entries(serialNumbers)
+      .filter(([label]) => label.toLowerCase() !== 'status')
+      .map(([label, serials]) => ({ label, serials: Array.isArray(serials) ? serials : [] }));
+  }
+
   private async openEditDrawerById(orderId: number, fallbackOrder?: SalesOrderRow): Promise<void> {
     const fallback: SalesOrderRow =
       fallbackOrder ??
@@ -2809,7 +2868,7 @@ export class SalesOrderComponent {
     this.openGuardDialog('refresh-confirm');
   }
 
-  confirmGuardDialog(): void {
+  async confirmGuardDialog(): Promise<void> {
     if (!this.guardDialogMode) {
       this.closeGuardDialog();
       return;
@@ -2819,6 +2878,44 @@ export class SalesOrderComponent {
       return;
     }
     if (this.guardDialogMode === 'refresh-confirm') {
+      if (
+        this.drawerMode === 'edit' &&
+        this.editingSalesId &&
+        this.hasUnsavedDrawerChanges()
+      ) {
+        if (this.isSubmitting) {
+          return;
+        }
+
+        this.uiError = '';
+        this.uiMessage = '';
+        this.isSubmitting = true;
+
+        try {
+          const response = await this.persistEditedSalesOrder();
+          if (!response.success) {
+            this.openErrorModal(
+              'Save Error',
+              response.message ?? 'Failed to update sales order before refreshing',
+            );
+            return;
+          }
+
+          this.uiMessage = response.message ?? 'Sales order updated successfully';
+        } catch (error: unknown) {
+          const errorMessage = axios.isAxiosError(error)
+            ? (error.response?.data as { message?: string } | undefined)?.message ??
+              'Failed to update sales order before refreshing'
+            : error instanceof Error
+              ? error.message
+              : 'Failed to update sales order before refreshing';
+          this.openErrorModal('Save Error', errorMessage);
+          return;
+        } finally {
+          this.isSubmitting = false;
+        }
+      }
+
       this.closeGuardDialog();
       window.location.reload();
       return;
@@ -2828,6 +2925,46 @@ export class SalesOrderComponent {
       this.closeGuardDialog();
       return;
     }
+
+    if (
+      this.guardDialogMode === 'close-confirm' &&
+      this.drawerMode === 'edit' &&
+      this.editingSalesId &&
+      this.hasUnsavedDrawerChanges()
+    ) {
+      if (this.isSubmitting) {
+        return;
+      }
+
+      this.uiError = '';
+      this.uiMessage = '';
+      this.isSubmitting = true;
+
+      try {
+        const response = await this.persistEditedSalesOrder();
+        if (!response.success) {
+          this.openErrorModal(
+            'Save Error',
+            response.message ?? 'Failed to update sales order before closing',
+          );
+          return;
+        }
+
+        this.uiMessage = response.message ?? 'Sales order updated successfully';
+      } catch (error: unknown) {
+        const errorMessage = axios.isAxiosError(error)
+          ? (error.response?.data as { message?: string } | undefined)?.message ??
+            'Failed to update sales order before closing'
+          : error instanceof Error
+            ? error.message
+            : 'Failed to update sales order before closing';
+        this.openErrorModal('Save Error', errorMessage);
+        return;
+      } finally {
+        this.isSubmitting = false;
+      }
+    }
+
     this.closeDrawer(true);
   }
 
@@ -3676,13 +3813,7 @@ export class SalesOrderComponent {
         }
         this.uiMessage = response.message ?? 'Sales order created successfully';
       } else {
-        const targetId = Number(this.editingSalesId);
-        if (!Number.isFinite(targetId) || targetId <= 0) {
-          this.uiError = 'Invalid sales order id for update';
-          return;
-        }
-
-        const response = await this.salesOrderService.updateSalesOrder(targetId, payload);
+        const response = await this.persistEditedSalesOrder();
         if (!response.success) {
           this.openErrorModal('Submit Error', response.message ?? 'Failed to update sales order');
           return;
@@ -3711,28 +3842,12 @@ export class SalesOrderComponent {
       return;
     }
 
-    const validationError = this.validateProductSerialRequirements('remitted');
-    if (validationError) {
-      this.uiError = validationError.replace('submitting', 'remitting');
-      return;
-    }
-
-    const targetId = Number(this.editingSalesId);
-    if (!Number.isFinite(targetId) || targetId <= 0) {
-      this.uiError = 'Invalid sales order id for remittance';
-      return;
-    }
-
     this.uiError = '';
     this.uiMessage = '';
     this.isRemitting = true;
 
     try {
-      const response = await this.salesOrderService.updateSalesOrder(targetId, {
-        productItems: [],
-        status: 'remitted',
-        remarks: this.form.remarks || undefined,
-      });
+      const response = await this.persistEditedSalesOrder('remitted');
 
       if (!response.success) {
         this.openErrorModal('Remit Error', response.message ?? 'Failed to remit sales');
@@ -3761,29 +3876,12 @@ export class SalesOrderComponent {
       return;
     }
 
-    const targetId = Number(this.editingSalesId);
-    if (!Number.isFinite(targetId) || targetId <= 0) {
-      this.uiError = 'Invalid sales order id for delivery';
-      return;
-    }
-
-    this.syncMigrationDrawerQuantitiesFromSerials();
-
-    const validationError = this.validateProductSerialRequirements('for-delivery');
-    if (validationError) {
-      this.uiError = validationError;
-      return;
-    }
-
-    const payload = this.buildPayload();
-    payload.status = 'for-delivery';
-
     this.uiError = '';
     this.uiMessage = '';
     this.isSendingForDelivery = true;
 
     try {
-      const response = await this.salesOrderService.updateSalesOrder(targetId, payload);
+      const response = await this.persistEditedSalesOrder('for-delivery');
       if (!response.success) {
         this.openErrorModal('Delivery Error', response.message ?? 'Failed to send sales order for delivery');
         return;
@@ -3804,6 +3902,73 @@ export class SalesOrderComponent {
     } finally {
       this.isSendingForDelivery = false;
     }
+  }
+
+  private async persistEditedSalesOrder(targetStatus?: string): Promise<{ success: boolean; message?: string }> {
+    this.syncMigrationDrawerQuantitiesFromSerials();
+
+    const validationError = this.validateProductSerialRequirements(targetStatus);
+    if (validationError) {
+      return {
+        success: false,
+        message:
+          targetStatus === 'remitted'
+            ? validationError.replace('submitting', 'remitting')
+            : validationError,
+      };
+    }
+
+    const salesType = this.form.salesType;
+    if (salesType === 'transfer') {
+      const td = this.form.transferDetails ?? {};
+      if (!td.fromBranchId || !td.toBranchId) {
+        return {
+          success: false,
+          message: 'Please select both source and destination branches for transfer.',
+        };
+      }
+      if (td.fromBranchId === td.toBranchId) {
+        return {
+          success: false,
+          message: 'From and To branch must be different for transfer.',
+        };
+      }
+    }
+
+    if (['service', 'sales and service', 'concern'].includes(salesType)) {
+      const hasService = (this.form.serviceItems ?? []).some((item: any) =>
+        String(item.serviceName ?? '').trim().length > 0 ||
+        Number(item.unitPrice) > 0 ||
+        Number(item.qty) > 0,
+      );
+      if (!hasService) {
+        return { success: false, message: 'Add at least one service item.' };
+      }
+    }
+
+    if (salesType === 'concern') {
+      const cd = this.form.concernDetails ?? {};
+      if (!String(cd.concernDescription ?? '').trim()) {
+        return { success: false, message: 'Please provide a concern description.' };
+      }
+    }
+
+    const targetId = Number(this.editingSalesId);
+    if (!Number.isFinite(targetId) || targetId <= 0) {
+      return { success: false, message: 'Invalid sales order id for update' };
+    }
+
+    const payload = this.buildPayload();
+    if (targetStatus) {
+      payload.status = targetStatus;
+    }
+
+    const response = await this.salesOrderService.updateSalesOrder(targetId, payload);
+    if (response.success) {
+      this.captureDrawerBaselineSnapshot();
+    }
+
+    return response;
   }
 
   private buildPayload(): SalesOrderPayload {

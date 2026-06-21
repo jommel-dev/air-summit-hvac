@@ -460,4 +460,28 @@ export class SalesOrderController {
   removeMaterialItem(@Param('materialItemId') materialItemId: string) {
     return this.materialTransactionsService.remove(+materialItemId);
   }
+
+  // ─── Miscellaneous Items (Materials, Excess, Services) ──────────────
+
+  @Post(':id/misc-items')
+  async addMiscItem(
+    @Param('id') id: string,
+    @Body() body: {
+      category: string;
+      itemName: string;
+      description?: string;
+      quantity?: number;
+      unit?: string;
+      unitPrice?: number;
+      isInclusion?: boolean;
+      remarks?: string;
+    },
+  ) {
+    return this.salesOrderService.addMiscellaneousItem(+id, body);
+  }
+
+  @Get(':id/misc-items')
+  getMiscItems(@Param('id') id: string) {
+    return this.salesOrderService.getMiscellaneousItems(+id);
+  }
 }

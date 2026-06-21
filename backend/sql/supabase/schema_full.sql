@@ -237,6 +237,7 @@ CREATE TABLE IF NOT EXISTS public.tbltransaction_product_items (
   "sellPrice" DOUBLE PRECISION NULL,
   "discountPrice" DOUBLE PRECISION NULL,
   "unitTypesQty" JSONB NULL DEFAULT '[]'::jsonb,
+  "scannedSerials" JSONB NULL DEFAULT '{}'::jsonb,
   "totalSetQty" BIGINT NULL,
   "purchaseId" INTEGER NULL REFERENCES public.tblpurchase_orders(id) ON UPDATE CASCADE ON DELETE SET NULL,
   "salesId" BIGINT NULL REFERENCES public.tblsales_order(id) ON UPDATE CASCADE ON DELETE SET NULL,

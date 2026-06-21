@@ -230,6 +230,7 @@ export interface CreatePurchaseRequestPayload {
       value?: number;
     }>;
     serialNumbers?: Record<string, unknown>;
+    scannedSerials?: Record<string, string[]>;
     totalSetQty?: number;
     purchaseId?: number | null;
     salesId?: number | null;
@@ -535,6 +536,7 @@ export class PurchaseOrderService {
       discountPrice?: number;
       totalSetQty?: number;
       unitTypesQty?: Array<{ label: string; value: number }>;
+      scannedSerials?: Record<string, string[]>;
     },
   ): Promise<{ success: boolean; message?: string }> {
     const response = await apiClient.post<{ success: boolean; message?: string }>(
@@ -556,6 +558,7 @@ export class PurchaseOrderService {
       discountPrice?: number;
       totalSetQty?: number;
       unitTypesQty?: Array<{ label: string; value: number }>;
+      scannedSerials?: Record<string, string[]>;
     },
   ): Promise<{ success: boolean; message?: string }> {
     const response = await apiClient.patch<{ success: boolean; message?: string }>(

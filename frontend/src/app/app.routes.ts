@@ -48,6 +48,16 @@ export const routes: Routes = [
         title: 'Sales Order',
       },
       {
+        path: 'sales-remittance',
+        loadComponent: () => import('./pages/sales-remittance/sales-remittance.component').then(m => m.SalesRemittanceComponent),
+        canActivate: [rbacGuard],
+        data: {
+          menu: 'sales_order',
+          permission: 'canRead',
+        },
+        title: 'Sales Remittance',
+      },
+      {
         path: 'projects',
         component: ProjectsComponent,
         canActivate: [rbacGuard],

@@ -499,6 +499,55 @@ export class PurchaseService {
       .replace(/\s+/g, ' ');
   }
 
+  private normalizePurchaseProductUnitTypeKey(value: unknown): string | null {
+    const normalized = String(value ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/[\s_-]*qty$/i, '')
+      .replace(/quantity$/i, '')
+      .trim();
+
+    if (!normalized) {
+      return null;
+    }
+
+    return normalized || null;
+  }
+
+  private normalizePurchaseProductScannedSerials(
+    serialMap: Record<string, unknown> | null | undefined,
+  ): Record<string, string[]> {
+    const normalized: Record<string, string[]> = {};
+
+    if (!serialMap || typeof serialMap !== 'object') {
+      return normalized;
+    }
+
+    for (const [rawLabel, values] of Object.entries(serialMap)) {
+      const unitTypeKey = this.normalizePurchaseProductUnitTypeKey(rawLabel);
+      if (!unitTypeKey || !Array.isArray(values)) {
+        continue;
+      }
+
+      if (!Array.isArray(normalized[unitTypeKey])) {
+        normalized[unitTypeKey] = [];
+      }
+
+      for (const value of values) {
+        const serialNumber = this.normalizeSerialNumber(value);
+        if (!serialNumber || normalized[unitTypeKey].includes(serialNumber)) {
+          continue;
+        }
+
+        normalized[unitTypeKey].push(serialNumber);
+      }
+    }
+
+    return normalized;
+  }
+
   private toPurchasePaymentMethod(value: unknown): PurchasePaymentMethod {
     const normalized = String(value ?? '')
       .trim()
@@ -1302,6 +1351,10 @@ export class PurchaseService {
             'unitTypesQty',
             'unit_types_qty',
           ]);
+          const scannedSerialsColumn = this.pickColumn(transactionItemColumns, [
+            'scannedSerials',
+            'scanned_serials',
+          ]);
           const totalSetQtyColumn = this.pickColumn(transactionItemColumns, [
             'totalSetQty',
             'total_set_qty',
@@ -1366,6 +1419,13 @@ export class PurchaseService {
             }
 
             const unitTypesQty = Array.isArray(item.unitTypesQty) ? item.unitTypesQty : [];
+            const scannedSerials = this.normalizePurchaseProductScannedSerials(
+              item.scannedSerials && typeof item.scannedSerials === 'object'
+                ? (item.scannedSerials as Record<string, unknown>)
+                : item.serialNumbers && typeof item.serialNumbers === 'object'
+                  ? (item.serialNumbers as Record<string, unknown>)
+                  : undefined,
+            );
             const qtyFromList = unitTypesQty.reduce((sum, current) => {
               const parsedQty = this.toOptionalNumber(current.qty ?? current.value) ?? 0;
               return sum + (parsedQty > 0 ? parsedQty : 0);
@@ -1410,6 +1470,9 @@ export class PurchaseService {
               } else {
                 itemRecord[unitTypesQtyColumn] = JSON.stringify(normalizedUnitTypesQty);
               }
+            }
+            if (scannedSerialsColumn) {
+              itemRecord[scannedSerialsColumn] = JSON.stringify(scannedSerials);
             }
             if (totalSetQtyColumn) {
               itemRecord[totalSetQtyColumn] = totalQty;
@@ -2725,6 +2788,10 @@ export class PurchaseService {
             'unitTypesQty',
             'unit_types_qty',
           ]);
+          const scannedSerialsColumn = this.pickColumn(transactionItemColumns, [
+            'scannedSerials',
+            'scanned_serials',
+          ]);
           const totalSetQtyColumn = this.pickColumn(transactionItemColumns, [
             'totalSetQty',
             'total_set_qty',
@@ -2829,7 +2896,16 @@ export class PurchaseService {
               throw new Error(`Capacity ID ${capacityId} does not exist in tblcapacity`);
             }
 
-            const unitTypesQty = Array.isArray(payloadItem.unitTypesQty) ? payloadItem.unitTypesQty : [];
+            const unitTypesQty = Array.isArray(payloadItem.unitTypesQty)
+              ? payloadItem.unitTypesQty
+              : [];
+            const scannedSerials = this.normalizePurchaseProductScannedSerials(
+              payloadItem.scannedSerials && typeof payloadItem.scannedSerials === 'object'
+                ? (payloadItem.scannedSerials as Record<string, unknown>)
+                : payloadItem.serialNumbers && typeof payloadItem.serialNumbers === 'object'
+                  ? (payloadItem.serialNumbers as Record<string, unknown>)
+                  : undefined,
+            );
             const qtyFromList = unitTypesQty.reduce((sum, current) => {
               const parsedQty = this.toOptionalNumber(current.qty ?? current.value) ?? 0;
               return sum + (parsedQty > 0 ? parsedQty : 0);
@@ -2882,6 +2958,10 @@ export class PurchaseService {
               setClauses.push(`"${unitTypesQtyColumn}" = $${paramIndex++}`);
               setValues.push(unitTypesQtyValue);
             }
+            if (scannedSerialsColumn) {
+              setClauses.push(`"${scannedSerialsColumn}" = $${paramIndex++}`);
+              setValues.push(JSON.stringify(scannedSerials));
+            }
             if (totalSetQtyColumn) {
               setClauses.push(`"${totalSetQtyColumn}" = $${paramIndex++}`);
               setValues.push(totalQty);
@@ -2918,6 +2998,13 @@ export class PurchaseService {
             }
 
             const unitTypesQty = Array.isArray(item.unitTypesQty) ? item.unitTypesQty : [];
+            const scannedSerials = this.normalizePurchaseProductScannedSerials(
+              item.scannedSerials && typeof item.scannedSerials === 'object'
+                ? (item.scannedSerials as Record<string, unknown>)
+                : item.serialNumbers && typeof item.serialNumbers === 'object'
+                  ? (item.serialNumbers as Record<string, unknown>)
+                  : undefined,
+            );
             const qtyFromList = unitTypesQty.reduce((sum, current) => {
               const parsedQty = this.toOptionalNumber(current.qty ?? current.value) ?? 0;
               return sum + (parsedQty > 0 ? parsedQty : 0);
@@ -2962,6 +3049,10 @@ export class PurchaseService {
               } else {
                 itemRecord[unitTypesQtyColumn] = JSON.stringify(normalizedUnitTypesQty);
               }
+            }
+
+            if (scannedSerialsColumn) {
+              itemRecord[scannedSerialsColumn] = JSON.stringify(scannedSerials);
             }
 
             if (totalSetQtyColumn) {
@@ -3881,6 +3972,7 @@ export class PurchaseService {
       discountPrice?: number;
       totalSetQty?: number;
       unitTypesQty?: Array<{ label: string; value: number }>;
+      scannedSerials?: Record<string, unknown>;
     },
     userId?: number,
   ) {
@@ -3938,10 +4030,12 @@ export class PurchaseService {
         const sellPriceColumn = this.pickColumn(transactionItemColumns, ['sellPrice', 'sell_price']);
         const discountPriceColumn = this.pickColumn(transactionItemColumns, ['discountPrice', 'discount_price']);
         const unitTypesQtyColumn = this.pickColumn(transactionItemColumns, ['unitTypesQty', 'unit_types_qty']);
+        const scannedSerialsColumn = this.pickColumn(transactionItemColumns, ['scannedSerials', 'scanned_serials']);
         const totalSetQtyColumn = this.pickColumn(transactionItemColumns, ['totalSetQty', 'total_set_qty']);
         const purchaseIdColumn = this.pickColumn(transactionItemColumns, ['purchaseId', 'purchase_id', 'po_id']);
         const itemStatusColumn = this.pickColumn(transactionItemColumns, ['status']);
         const itemCreatedByColumn = this.pickColumn(transactionItemColumns, ['created_by', 'createdBy', 'createdby']);
+        const scannedSerials = this.normalizePurchaseProductScannedSerials(item.scannedSerials);
 
         // Check for existing row with same purchaseId + productId + capacityId to prevent duplicates
         if (itemProductIdColumn && itemCapacityIdColumn && purchaseIdColumn) {
@@ -3965,6 +4059,7 @@ export class PurchaseService {
             if (unitPriceColumn) { setClauses.push(`"${unitPriceColumn}" = $${pIdx++}`); setValues.push(item.unitPrice ?? 0); }
             if (sellPriceColumn) { setClauses.push(`"${sellPriceColumn}" = $${pIdx++}`); setValues.push(item.sellPrice ?? 0); }
             if (discountPriceColumn) { setClauses.push(`"${discountPriceColumn}" = $${pIdx++}`); setValues.push(item.discountPrice ?? 0); }
+            if (scannedSerialsColumn) { setClauses.push(`"${scannedSerialsColumn}" = $${pIdx++}`); setValues.push(JSON.stringify(scannedSerials)); }
             if (totalSetQtyColumn) { setClauses.push(`"${totalSetQtyColumn}" = $${pIdx++}`); setValues.push(item.totalSetQty ?? 0); }
 
             if (setClauses.length > 0) {
@@ -4005,6 +4100,9 @@ export class PurchaseService {
             record[unitTypesQtyColumn] = JSON.stringify(normalizedQty);
           }
         }
+        if (scannedSerialsColumn) {
+          record[scannedSerialsColumn] = JSON.stringify(scannedSerials);
+        }
         if (totalSetQtyColumn) record[totalSetQtyColumn] = totalQty;
         if (purchaseIdColumn) record[purchaseIdColumn] = purchaseId;
         if (itemStatusColumn) record[itemStatusColumn] = 'pending';
@@ -4040,6 +4138,7 @@ export class PurchaseService {
       discountPrice?: number;
       totalSetQty?: number;
       unitTypesQty?: Array<{ label: string; value: number }>;
+      scannedSerials?: Record<string, unknown>;
     },
     userId?: number,
   ): Promise<{ success: boolean; message?: string }> {
@@ -4106,6 +4205,7 @@ export class PurchaseService {
         const sellPriceColumn = this.pickColumn(transactionItemColumns, ['sellPrice', 'sell_price']);
         const discountPriceColumn = this.pickColumn(transactionItemColumns, ['discountPrice', 'discount_price']);
         const unitTypesQtyColumn = this.pickColumn(transactionItemColumns, ['unitTypesQty', 'unit_types_qty']);
+        const scannedSerialsColumn = this.pickColumn(transactionItemColumns, ['scannedSerials', 'scanned_serials']);
         const totalSetQtyColumn = this.pickColumn(transactionItemColumns, ['totalSetQty', 'total_set_qty']);
         const purchaseIdColumn = this.pickColumn(transactionItemColumns, ['purchaseId', 'purchase_id', 'po_id']);
 
@@ -4136,6 +4236,7 @@ export class PurchaseService {
           : null;
 
         const unitTypesQty = Array.isArray(item.unitTypesQty) ? item.unitTypesQty : [];
+  const scannedSerials = this.normalizePurchaseProductScannedSerials(item.scannedSerials);
         const qtyFromList = unitTypesQty.reduce((sum, entry) => sum + (entry.value > 0 ? entry.value : 0), 0);
         const totalQty = qtyFromList > 0 ? qtyFromList : (item.totalSetQty ?? 0);
 
@@ -4182,6 +4283,10 @@ export class PurchaseService {
           if (unitTypesQtyColumn && unitTypesQtyValue !== null) {
             setClauses.push(`"${unitTypesQtyColumn}" = $${paramIdx++}`);
             updateParams.push(unitTypesQtyValue);
+          }
+          if (scannedSerialsColumn) {
+            setClauses.push(`"${scannedSerialsColumn}" = $${paramIdx++}`);
+            updateParams.push(JSON.stringify(scannedSerials));
           }
           if (totalSetQtyColumn) {
             setClauses.push(`"${totalSetQtyColumn}" = $${paramIdx++}`);
