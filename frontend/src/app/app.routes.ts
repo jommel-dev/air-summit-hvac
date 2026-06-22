@@ -52,7 +52,7 @@ export const routes: Routes = [
         loadComponent: () => import('./pages/sales-remittance/sales-remittance.component').then(m => m.SalesRemittanceComponent),
         canActivate: [rbacGuard],
         data: {
-          menu: 'sales_order',
+          menu: 'sales_remittance',
           permission: 'canRead',
         },
         title: 'Sales Remittance',
