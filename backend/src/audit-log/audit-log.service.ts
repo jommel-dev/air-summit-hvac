@@ -103,6 +103,7 @@ export class AuditLogService {
       search?: unknown;
       action?: unknown;
       entityType?: unknown;
+      entityId?: unknown;
     },
     branchId?: number,
   ) {
@@ -112,6 +113,11 @@ export class AuditLogService {
     const search = String(query.search ?? '').trim().toLowerCase();
     const action = String(query.action ?? '').trim().toUpperCase();
     const entityType = String(query.entityType ?? '').trim().toLowerCase();
+    const entityId = String(query.entityId ?? '').trim().toLowerCase();
+    const entityTypeAliases = entityType
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
 
     const params: unknown[] = [];
     const whereParts: string[] = [];
@@ -138,9 +144,17 @@ export class AuditLogService {
       whereParts.push(`UPPER(COALESCE(al.action, '')) = $${params.length}`);
     }
 
-    if (entityType) {
-      params.push(entityType);
+    if (entityTypeAliases.length === 1) {
+      params.push(entityTypeAliases[0]);
       whereParts.push(`LOWER(COALESCE(al.entity_type, '')) = $${params.length}`);
+    } else if (entityTypeAliases.length > 1) {
+      params.push(entityTypeAliases);
+      whereParts.push(`LOWER(COALESCE(al.entity_type, '')) = ANY($${params.length}::text[])`);
+    }
+
+    if (entityId) {
+      params.push(entityId);
+      whereParts.push(`LOWER(COALESCE(al.entity_id, '')) = $${params.length}`);
     }
 
     const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
@@ -178,25 +192,56 @@ export class AuditLogService {
       listParams,
     );
 
-    return {
-      success: true,
-      items: result.rows.map((row) => {
+
+    const items = await Promise.all(
+      result.rows.map(async (row) => {
         const metadata = this.toPlainMetadata(row.metadata);
+
+        let productName = null;
+        let capacity = null;
+        let brand = null;
+
+        if (row.action === 'SERIAL_SCAN_SUCCESS' || row.action === 'SERIAL_SCAN_FAILURE') {
+          const productId = metadata?.expectedProductId;
+          if (productId) {
+            const product = await this.databaseService.query(
+              `SELECT p."productName", c."capacity", b."brandName"
+              FROM tblproducts p
+              LEFT JOIN tblcapacity c ON c."prodId" = p.id
+              LEFT JOIN tblbrands b ON b.id = p."brandId"
+              WHERE p.id = $1`,
+              [productId]
+            );
+            productName = product.rows[0]?.productName ?? null;
+            capacity = product.rows[0]?.capacityName ?? null;
+            brand = product.rows[0]?.brandName ?? null;
+          }
+        }
+
         return {
           id: Number(row.id),
-          action: String(row.action ?? '').trim(),
-          entityType: String(row.entityType ?? '').trim(),
-          entityId: String(row.entityId ?? '').trim(),
+          action: row.action,
+          entityType: row.entityType,
+          entityId: row.entityId,
           userId: row.userId ? Number(row.userId) : null,
-          username: String(row.username ?? '').trim(),
-          roleName: String(row.roleName ?? '').trim(),
+          username: row.username,
+          roleName: row.roleName,
           branchId: row.branchId ? Number(row.branchId) : null,
-          ipAddress: String(row.ipAddress ?? '').trim(),
-          description: String(metadata?.description ?? '').trim(),
+          ipAddress: row.ipAddress,
+          serialNumber: metadata?.serialNumber ?? null,
+          productName,
+          capacity,
+          brand,
           metadata,
           createdAt: row.createdAt,
         };
-      }),
+      })
+    );
+
+
+    return {
+      success: true,
+      items,
       meta: {
         page,
         limit,
@@ -204,6 +249,32 @@ export class AuditLogService {
         totalPages: Math.max(1, Math.ceil(total / limit)),
       },
     };
+    // return {
+    //   success: true,
+    //   items: result.rows.map((row) => {
+    //     const metadata = this.toPlainMetadata(row.metadata);
+    //     return {
+    //       id: Number(row.id),
+    //       action: String(row.action ?? '').trim(),
+    //       entityType: String(row.entityType ?? '').trim(),
+    //       entityId: String(row.entityId ?? '').trim(),
+    //       userId: row.userId ? Number(row.userId) : null,
+    //       username: String(row.username ?? '').trim(),
+    //       roleName: String(row.roleName ?? '').trim(),
+    //       branchId: row.branchId ? Number(row.branchId) : null,
+    //       ipAddress: String(row.ipAddress ?? '').trim(),
+    //       description: String(metadata?.description ?? '').trim(),
+    //       metadata,
+    //       createdAt: row.createdAt,
+    //     };
+    //   }),
+    //   meta: {
+    //     page,
+    //     limit,
+    //     total,
+    //     totalPages: Math.max(1, Math.ceil(total / limit)),
+    //   },
+    // };
   }
 
   async findOne(id: number, branchId?: number) {

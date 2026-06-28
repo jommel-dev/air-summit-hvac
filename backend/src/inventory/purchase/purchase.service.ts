@@ -24,6 +24,7 @@ type PurchaseRow = {
   productItems: unknown;
   createdAt: string | null;
   serialCount: number;
+  scannedSerialCount: number;
 };
 
 type PurchaseCountRow = {
@@ -3531,7 +3532,6 @@ export class PurchaseService {
     if (Number.isFinite(branchId) && branchId > 0) {
       params.push(String(branchId));
       const branchIndex = params.length;
-      // Include NULL branch_id (legacy records without branch assignment)
       whereParts.push(`(base.branch_id = $${branchIndex} OR base.branch_id IS NULL)`);
     }
 
@@ -3590,6 +3590,13 @@ export class PurchaseService {
           to_jsonb(tpi)->>'po_id'
         )
       ),
+      scanned_serial_counts AS (
+        SELECT 
+          "purchaseId"::text AS po_id,
+          COUNT(*)::int AS scanned_count
+        FROM tblserial_numbers
+        GROUP BY "purchaseId"::text
+      ),
       base AS (
         SELECT
           po.id,
@@ -3605,12 +3612,15 @@ export class PurchaseService {
           COALESCE(po.status, 'pending') AS original_status,
           po.created_at,
           COALESCE(sc.serial_count, 0)::int AS serial_count,
+          COALESCE(ssc.scanned_count, 0)::int AS scanned_serial_count,
           ${computedStatusExpression} AS computed_status
         FROM tblpurchase_orders po
         LEFT JOIN tblvendors v
           ON v.id::text = po.vendor_id::text
         LEFT JOIN serial_counts sc
           ON sc.po_id = po.id::text
+        LEFT JOIN scanned_serial_counts ssc
+          ON ssc.po_id = po.id::text
       )
     `;
 
@@ -3829,7 +3839,8 @@ export class PurchaseService {
           ) = base.id::text
         ) AS "productItems",
         base.created_at::text AS "createdAt",
-        base.serial_count::int AS "serialCount"
+        base.serial_count::int AS "serialCount",
+        base.scanned_serial_count::int AS "scannedSerialCount"
       FROM base
       LEFT JOIN tblvendors v
         ON v.id::text = base.vendor_id::text
@@ -3851,6 +3862,363 @@ export class PurchaseService {
       },
     };
   }
+
+  // private async fetchByMode(
+  //   mode: PurchaseMode,
+  //   query: ListPurchaseQueryDto,
+  // ): Promise<PurchaseListResponseDto> {
+  //   const page = this.normalizePage(query.page);
+  //   const limit = this.normalizeLimit(query.limit);
+  //   const offset = (page - 1) * limit;
+  //   const search = (query.search ?? '').trim().toLowerCase();
+  //   const branchId = Number(query.branchId);
+
+  //   const params: unknown[] = [];
+  //   const whereParts: string[] = [];
+
+  //   if (mode === 'deliveries') {
+  //     whereParts.push(`LOWER(COALESCE(base.original_status, '')) NOT IN (
+  //       'for_approval', 'for approval', 'approval', 'approved', 'completed', 'cancelled', 'rejected', 'received', 'transfer_received'
+  //     )`);
+  //   } else if (mode === 'approvals') {
+  //     whereParts.push(`LOWER(COALESCE(base.original_status, '')) IN (
+  //       'for_approval', 'for approval', 'approval', 'pending_approval', 'pending approval'
+  //     )`);
+  //   }
+
+  //   if (search) {
+  //     params.push(`%${search}%`);
+  //     const searchIndex = params.length;
+  //     whereParts.push(`(
+  //       LOWER(COALESCE(base.po_number, '')) LIKE $${searchIndex}
+  //       OR LOWER(COALESCE(base.vendor_name, '')) LIKE $${searchIndex}
+  //       OR LOWER(COALESCE(base.computed_status, '')) LIKE $${searchIndex}
+  //     )`);
+  //   }
+
+  //   if (Number.isFinite(branchId) && branchId > 0) {
+  //     params.push(String(branchId));
+  //     const branchIndex = params.length;
+  //     // Include NULL branch_id (legacy records without branch assignment)
+  //     whereParts.push(`(base.branch_id = $${branchIndex} OR base.branch_id IS NULL)`);
+  //   }
+
+  //   const vendorId = String(query.vendorId ?? '').trim();
+  //   if (vendorId) {
+  //     params.push(vendorId);
+  //     const vendorParamIdx = params.length;
+  //     whereParts.push(`base.vendor_id = $${vendorParamIdx}`);
+  //   }
+
+  //   const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+  //   const computedStatusExpression =
+  //     mode === 'deliveries'
+  //       ? `CASE
+  //            WHEN COALESCE(sc.serial_count, 0) > 0 THEN 'in-progress'
+  //            ELSE 'pending'
+  //          END`
+  //       : `COALESCE(po.status, 'pending')`;
+
+  //   const baseCte = `
+  //     WITH serial_counts AS (
+  //       SELECT
+  //         COALESCE(
+  //           to_jsonb(tpi)->>'purchaseId',
+  //           to_jsonb(tpi)->>'purchase_id',
+  //           to_jsonb(tpi)->>'po_id'
+  //         ) AS po_id,
+  //         SUM(
+  //           CASE
+  //             WHEN COALESCE(
+  //               to_jsonb(tpi)->>'totalSetQty',
+  //               to_jsonb(tpi)->>'total_set_qty',
+  //               ''
+  //             ) ~ '^-?\\d+$'
+  //               AND ABS(
+  //                 COALESCE(
+  //                   to_jsonb(tpi)->>'totalSetQty',
+  //                   to_jsonb(tpi)->>'total_set_qty',
+  //                   '0'
+  //                 )::numeric
+  //               ) <= 2147483647
+  //               THEN COALESCE(
+  //                 to_jsonb(tpi)->>'totalSetQty',
+  //                 to_jsonb(tpi)->>'total_set_qty',
+  //                 '0'
+  //               )::int
+  //             ELSE 0
+  //           END
+  //         )::int AS serial_count
+  //       FROM tbltransaction_product_items tpi
+  //       WHERE LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'
+  //       GROUP BY COALESCE(
+  //         to_jsonb(tpi)->>'purchaseId',
+  //         to_jsonb(tpi)->>'purchase_id',
+  //         to_jsonb(tpi)->>'po_id'
+  //       )
+  //     ),
+  //     base AS (
+  //       SELECT
+  //         po.id,
+  //         po.po_number,
+  //         COALESCE(
+  //           to_jsonb(po)->>'branchId',
+  //           to_jsonb(po)->>'branch_id',
+  //           ''
+  //         ) AS branch_id,
+  //         po.vendor_id::text AS vendor_id,
+  //         v.name AS vendor_name,
+  //         po.total_amount,
+  //         COALESCE(po.status, 'pending') AS original_status,
+  //         po.created_at,
+  //         COALESCE(sc.serial_count, 0)::int AS serial_count,
+  //         ${computedStatusExpression} AS computed_status
+  //       FROM tblpurchase_orders po
+  //       LEFT JOIN tblvendors v
+  //         ON v.id::text = po.vendor_id::text
+  //       LEFT JOIN serial_counts sc
+  //         ON sc.po_id = po.id::text
+  //     )
+  //   `;
+
+  //   const countSql = `
+  //     ${baseCte}
+  //     SELECT COUNT(*)::text AS total
+  //     FROM base
+  //     ${whereSql}
+  //   `;
+
+  //   const countResult = await this.databaseService.query<PurchaseCountRow>(countSql, params);
+  //   const total = Number(countResult.rows[0]?.total ?? 0);
+
+  //   params.push(limit);
+  //   params.push(offset);
+  //   const limitIndex = params.length - 1;
+  //   const offsetIndex = params.length;
+
+  //   const listSql = `
+  //     ${baseCte}
+  //     SELECT
+  //       base.id,
+  //       base.po_number AS "poNumber",
+  //       base.vendor_id AS "vendorId",
+  //       base.vendor_name AS "vendorName",
+  //       COALESCE(to_jsonb(v)->>'address', '') AS "vendorAddress",
+  //       COALESCE(
+  //         to_jsonb(v)->>'contact_person',
+  //         to_jsonb(v)->>'contactPerson',
+  //         ''
+  //       ) AS "vendorContactPerson",
+  //       COALESCE(
+  //         to_jsonb(v)->>'contact_number',
+  //         to_jsonb(v)->>'contactNumber',
+  //         ''
+  //       ) AS "vendorContactNumber",
+  //       base.total_amount::text AS "totalAmount",
+  //       base.computed_status AS status,
+  //       (
+  //         SELECT json_build_object(
+  //           'method', COALESCE(to_jsonb(pp)->>'method', null),
+  //           'amount', COALESCE(NULLIF(to_jsonb(pp)->>'amount', '')::numeric, 0),
+  //           'terms', COALESCE(to_jsonb(pp)->>'terms', null),
+  //           'termsDueDate', COALESCE(
+  //             to_jsonb(pp)->>'terms_due_date',
+  //             to_jsonb(pp)->>'termsDueDate',
+  //             null
+  //           ),
+  //           'status', COALESCE(to_jsonb(pp)->>'status', null),
+  //           'paymentDate', COALESCE(
+  //             to_jsonb(pp)->>'payment_date',
+  //             to_jsonb(pp)->>'paymentDate',
+  //             null
+  //           ),
+  //           'downPayment', COALESCE(
+  //             NULLIF(
+  //               COALESCE(
+  //                 to_jsonb(pp)->>'down_payment',
+  //                 to_jsonb(pp)->>'downPayment',
+  //                 ''
+  //               ),
+  //               ''
+  //             )::numeric,
+  //             0
+  //           )
+  //         )
+  //         FROM tblpo_payments pp
+  //         WHERE COALESCE(
+  //           to_jsonb(pp)->>'po_id',
+  //           to_jsonb(pp)->>'poId'
+  //         ) = base.id::text
+  //         ORDER BY pp.id DESC
+  //         LIMIT 1
+  //       ) AS "paymentDetails",
+  //       (
+  //         SELECT COALESCE(
+  //           json_agg(
+  //             json_build_object(
+  //               'id', tpi.id,
+  //               'transType', COALESCE(
+  //                 to_jsonb(tpi)->>'transType',
+  //                 to_jsonb(tpi)->>'trans_type',
+  //                 'purchase'
+  //               ),
+  //               'productId', COALESCE(
+  //                 to_jsonb(tpi)->>'productId',
+  //                 to_jsonb(tpi)->>'product_id'
+  //               ),
+  //               'capacityId', COALESCE(
+  //                 to_jsonb(tpi)->>'capacityId',
+  //                 to_jsonb(tpi)->>'capacity_id'
+  //               ),
+  //               'unitPrice', COALESCE(
+  //                 NULLIF(
+  //                   COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', ''),
+  //                   ''
+  //                 )::numeric,
+  //                 0
+  //               ),
+  //               'sellPrice', COALESCE(
+  //                 NULLIF(
+  //                   COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', ''),
+  //                   ''
+  //                 )::numeric,
+  //                 0
+  //               ),
+  //               'discountPrice', COALESCE(
+  //                 NULLIF(
+  //                   COALESCE(
+  //                     to_jsonb(tpi)->>'discountPrice',
+  //                     to_jsonb(tpi)->>'discount_price',
+  //                     ''
+  //                   ),
+  //                   ''
+  //                 )::numeric,
+  //                 0
+  //               ),
+  //               'unitTypesQty', COALESCE(
+  //                 to_jsonb(tpi)->'unitTypesQty',
+  //                 to_jsonb(tpi)->'unit_types_qty',
+  //                 '[]'::jsonb
+  //               ),
+  //               'totalSetQty', COALESCE(
+  //                 CASE
+  //                   WHEN COALESCE(
+  //                     to_jsonb(tpi)->>'totalSetQty',
+  //                     to_jsonb(tpi)->>'total_set_qty',
+  //                     ''
+  //                   ) ~ '^-?\\d+$'
+  //                     AND ABS(
+  //                       COALESCE(
+  //                         to_jsonb(tpi)->>'totalSetQty',
+  //                         to_jsonb(tpi)->>'total_set_qty',
+  //                         '0'
+  //                       )::numeric
+  //                     ) <= 2147483647
+  //                     THEN COALESCE(
+  //                       to_jsonb(tpi)->>'totalSetQty',
+  //                       to_jsonb(tpi)->>'total_set_qty',
+  //                       '0'
+  //                     )::int
+  //                   ELSE 0
+  //                 END,
+  //                 0
+  //               ),
+  //               'purchaseId', COALESCE(
+  //                 to_jsonb(tpi)->>'purchaseId',
+  //                 to_jsonb(tpi)->>'purchase_id',
+  //                 to_jsonb(tpi)->>'po_id'
+  //               ),
+  //               'salesId', COALESCE(
+  //                 to_jsonb(tpi)->>'salesId',
+  //                 to_jsonb(tpi)->>'sales_id'
+  //               ),
+  //               'status', COALESCE(to_jsonb(tpi)->>'status', null),
+  //               'product', CASE
+  //                 WHEN p.id IS NULL THEN NULL
+  //                 ELSE json_build_object(
+  //                   'id', p.id,
+  //                   'productName', COALESCE(
+  //                     to_jsonb(p)->>'productName',
+  //                     to_jsonb(p)->>'product_name',
+  //                     to_jsonb(p)->>'productname'
+  //                   ),
+  //                   'unit', COALESCE(to_jsonb(p)->>'unit', null),
+  //                   'productType', COALESCE(
+  //                     to_jsonb(p)->>'productType',
+  //                     to_jsonb(p)->>'product_type',
+  //                     to_jsonb(p)->>'producttype'
+  //                   )
+  //                 )
+  //               END,
+  //               'capacity', CASE
+  //                 WHEN c.id IS NULL THEN NULL
+  //                 ELSE json_build_object(
+  //                   'id', c.id,
+  //                   'capacity', COALESCE(to_jsonb(c)->>'capacity', null),
+  //                   'indoorModel', COALESCE(
+  //                     to_jsonb(c)->>'indoorModel',
+  //                     to_jsonb(c)->>'indoor_model'
+  //                   ),
+  //                   'outdoorModel', COALESCE(
+  //                     to_jsonb(c)->>'outdoorModel',
+  //                     to_jsonb(c)->>'outdoor_model'
+  //                   ),
+  //                   'srp', COALESCE(NULLIF(to_jsonb(c)->>'srp', '')::numeric, 0),
+  //                   'netPrice', COALESCE(
+  //                     NULLIF(
+  //                       COALESCE(to_jsonb(c)->>'netPrice', to_jsonb(c)->>'net_price', ''),
+  //                       ''
+  //                     )::numeric,
+  //                     0
+  //                   )
+  //                 )
+  //               END
+  //             )
+  //             ORDER BY tpi.id DESC
+  //           ),
+  //           '[]'::json
+  //         )
+  //         FROM tbltransaction_product_items tpi
+  //         LEFT JOIN tblproducts p
+  //           ON p.id::text = COALESCE(
+  //             to_jsonb(tpi)->>'productId',
+  //             to_jsonb(tpi)->>'product_id'
+  //           )
+  //         LEFT JOIN tblcapacity c
+  //           ON c.id::text = COALESCE(
+  //             to_jsonb(tpi)->>'capacityId',
+  //             to_jsonb(tpi)->>'capacity_id'
+  //           )
+  //         WHERE COALESCE(
+  //           to_jsonb(tpi)->>'purchaseId',
+  //           to_jsonb(tpi)->>'purchase_id',
+  //           to_jsonb(tpi)->>'po_id'
+  //         ) = base.id::text
+  //       ) AS "productItems",
+  //       base.created_at::text AS "createdAt",
+  //       base.serial_count::int AS "serialCount"
+  //     FROM base
+  //     LEFT JOIN tblvendors v
+  //       ON v.id::text = base.vendor_id::text
+  //     ${whereSql}
+  //     ORDER BY base.created_at DESC, base.id DESC
+  //     LIMIT $${limitIndex} OFFSET $${offsetIndex}
+  //   `;
+
+  //   const listResult = await this.databaseService.query<PurchaseRow>(listSql, params);
+
+  //   return {
+  //     success: true,
+  //     items: listResult.rows.map((row) => this.toPurchaseTabItem(row)),
+  //     meta: {
+  //       page,
+  //       limit,
+  //       total,
+  //       totalPages: Math.max(1, Math.ceil(total / limit)),
+  //     },
+  //   };
+  // }
 
   private normalizePage(value: number | undefined): number {
     const parsed = Number(value);
@@ -3896,6 +4264,7 @@ export class PurchaseService {
       productItems,
       createdAt: row.createdAt,
       serialCount: row.serialCount ?? 0,
+      scannedSerialCount: row.scannedSerialCount ?? 0,
       isTransferPO,
       originatingSalesOrder,
     };

@@ -493,7 +493,18 @@
             </div>
           }
         </div>
-        <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+        <div class="flex items-center gap-2">
+          @if (drawerMode !== 'create' && !isMigrationDrawerMode) {
+            <button
+              type="button"
+              (click)="openSalesHistoryModal()"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              History
+            </button>
+          }
+          <button type="button" (click)="requestCloseDrawer()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">Close</button>
+        </div>
       </div>
 
       <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
@@ -1477,6 +1488,54 @@
       </div>
     </form>
   </aside>
+
+  @if (isSalesHistoryModalOpen) {
+    <div class="fixed inset-0 z-100020 bg-gray-950/55 backdrop-blur-sm" (click)="closeSalesHistoryModal()"></div>
+    <div class="fixed inset-0 z-100021 flex items-center justify-center p-4" (click)="closeSalesHistoryModal()">
+      <div class="w-full max-w-3xl overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <div class="flex items-start justify-between border-b border-gray-200 px-6 py-5 dark:border-gray-800">
+          <div>
+            <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-700 dark:text-brand-300">Sales Order History</p>
+            <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">User Actions</h3>
+            <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">Shows only changes in details and scanned serials.</p>
+          </div>
+          <button type="button" (click)="closeSalesHistoryModal()" class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 dark:border-gray-700 dark:text-gray-300">Close</button>
+        </div>
+
+        <div class="max-h-[70vh] space-y-3 overflow-y-auto px-6 py-5">
+          @if (isSalesHistoryLoading) {
+            <p class="text-sm text-gray-500 dark:text-gray-400">Loading history...</p>
+          } @else if (salesHistoryError) {
+            <p class="text-sm text-error-600 dark:text-error-400">{{ salesHistoryError }}</p>
+          } @else if (salesHistoryEntries.length === 0) {
+            <p class="text-sm text-gray-500 dark:text-gray-400">No history entries yet for this SO.</p>
+          } @else {
+            @for (entry of salesHistoryEntries; track entry.id) {
+              <article class="rounded-2xl border border-gray-200 bg-gray-50/70 p-4 dark:border-gray-700 dark:bg-gray-800/40">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <p class="text-sm font-semibold text-gray-800 dark:text-gray-100">{{ entry.title }}</p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">{{ formatDate(entry.createdAt) }}</p>
+                </div>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">By: {{ entry.actor }}</p>
+
+                @if (entry.description) {
+                  <p class="mt-2 text-xs text-gray-600 dark:text-gray-300">{{ entry.description }}</p>
+                }
+
+                @if (getHistoryActionLines(entry).length > 0) {
+                  <ul class="mt-3 list-disc space-y-1 pl-5 text-sm text-gray-700 dark:text-gray-200">
+                    @for (line of getHistoryActionLines(entry); track line + '_' + $index) {
+                      <li>{{ line }}</li>
+                    }
+                  </ul>
+                }
+              </article>
+            }
+          }
+        </div>
+      </div>
+    </div>
+  }
 
   @if (isReturnModalOpen) {
     <div class="fixed inset-0 z-100006 bg-gray-950/55 backdrop-blur-sm" (click)="closeReturnModal()"></div>

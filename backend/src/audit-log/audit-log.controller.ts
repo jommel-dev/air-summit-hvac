@@ -17,6 +17,7 @@ export class AuditLogController {
       search?: string;
       action?: string;
       entityType?: string;
+      entityId?: string;
     },
     @Req() request: { user?: Record<string, unknown> },
   ) {

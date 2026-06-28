@@ -31,7 +31,10 @@ import {
 } from '../../shared/services/business-settings.service';
 import { RbacService } from '../../shared/services/rbac.service';
 import { UserManagementService, UserApiItem } from '../../shared/services/user-management.service';
-import { AuditLogFrontendService } from '../../shared/services/audit-log.service';
+import {
+  AuditLogFrontendService,
+  AuditLogListItem,
+} from '../../shared/services/audit-log.service';
 import { SerialValidationModalComponent, SerialValidationModalMode, SerialValidationDetails } from './serial-validation-modal/serial-validation-modal.component';
 import { DrGeneratorService } from '../../shared/services/dr-generator.service';
 import { DrEligibleOrder } from '../../shared/interfaces/dr-generator.interfaces';
@@ -116,6 +119,17 @@ interface SalesPaymentFormItem {
   bankAccount?: string;
   postDated?: string;
   downPayment?: number;
+}
+
+interface SalesDrawerHistoryEntry {
+  id: number;
+  action: string;
+  title: string;
+  description: string;
+  actor: string;
+  createdAt: string | null;
+  serials: string[];
+  changes: Array<{ field: string; oldValue: unknown; newValue: unknown }>;
 }
 
 @Component({
@@ -243,6 +257,10 @@ export class SalesOrderComponent {
   isDrawerOpen = false;
   drawerMode: 'create' | 'edit' = 'create';
   nextSoNumberPreview = '';
+  isSalesHistoryModalOpen = false;
+  isSalesHistoryLoading = false;
+  salesHistoryError = '';
+  salesHistoryEntries: SalesDrawerHistoryEntry[] = [];
 
   // View-only drawer state
   isViewDrawerOpen = false;
@@ -2807,6 +2825,7 @@ export class SalesOrderComponent {
       }
 
       this.applyDetailToForm(detail, fallback);
+      await this.loadSalesHistory(orderId);
       this.captureDrawerBaselineSnapshot();
     } catch (error: unknown) {
       let errorMessage = 'Failed to load sales order details';
@@ -2830,6 +2849,10 @@ export class SalesOrderComponent {
     const shouldReturnToMigrationModal = this.isMigrationDrawerMode;
     this.isDrawerOpen = false;
     this.nextSoNumberPreview = '';
+    this.isSalesHistoryModalOpen = false;
+    this.isSalesHistoryLoading = false;
+    this.salesHistoryError = '';
+    this.salesHistoryEntries = [];
     this.closeGuardDialog();
 
     if (shouldReturnToMigrationModal) {
@@ -4163,6 +4186,10 @@ export class SalesOrderComponent {
     this.selectedUnitTypeByProduct = {};
     this.serialPageByUnitType = {};
     this.pendingSerialRemoval = null;
+    this.isSalesHistoryModalOpen = false;
+    this.isSalesHistoryLoading = false;
+    this.salesHistoryError = '';
+    this.salesHistoryEntries = [];
     this.closeGuardDialog();
     this.drawerBaselineSnapshot = '';
     this.materialItems = [];
@@ -5137,6 +5164,297 @@ export class SalesOrderComponent {
       currency: 'PHP',
       minimumFractionDigits: 2,
     }).format(value ?? 0);
+  }
+
+  async openSalesHistoryModal(): Promise<void> {
+    if (this.drawerMode === 'create' || !this.editingSalesId) {
+      return;
+    }
+
+    await this.loadSalesHistory(this.editingSalesId);
+    this.isSalesHistoryModalOpen = true;
+  }
+
+  closeSalesHistoryModal(): void {
+    this.isSalesHistoryModalOpen = false;
+  }
+
+  private async loadSalesHistory(salesId: number): Promise<void> {
+    this.isSalesHistoryLoading = true;
+    this.salesHistoryError = '';
+
+    try {
+      const response = await this.auditLogService.getAuditLogs({
+        page: 1,
+        limit: 200,
+        entityType: 'sales-order,SalesOrder,salesorder',
+        entityId: salesId,
+      });
+
+      const items = Array.isArray(response.items) ? response.items : [];
+      const mapped = items.map((item) => this.mapSalesAuditToHistoryEntry(item));
+      this.salesHistoryEntries = mapped.filter((entry) => this.getHistoryActionLines(entry).length > 0);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.salesHistoryError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to load sales history';
+      } else {
+        this.salesHistoryError = 'Failed to load sales history';
+      }
+      this.salesHistoryEntries = [];
+    } finally {
+      this.isSalesHistoryLoading = false;
+    }
+  }
+
+  private mapSalesAuditToHistoryEntry(item: AuditLogListItem): SalesDrawerHistoryEntry {
+    const metadata = item.metadata ?? null;
+    const rawChanges = Array.isArray(metadata?.['changes'])
+      ? (metadata['changes'] as Array<{ field?: unknown; oldValue?: unknown; newValue?: unknown }>)
+      : [];
+    const changes = rawChanges
+      .map((entry) => {
+        const field = String(entry['field'] ?? '').trim();
+        if (!field) {
+          return null;
+        }
+
+        return {
+          field,
+          oldValue: entry['oldValue'],
+          newValue: entry['newValue'],
+        };
+      })
+      .filter((entry): entry is { field: string; oldValue: unknown; newValue: unknown } => Boolean(entry));
+
+    return {
+      id: item.id,
+      action: String(item.action ?? '').trim().toUpperCase(),
+      title: this.formatSalesHistoryTitle(item.action, item.description),
+      description: String(item.description || metadata?.description || '').trim(),
+      actor: String(item.username || item.roleName || 'System').trim() || 'System',
+      createdAt: item.createdAt,
+      serials: this.extractSalesSerialsFromMetadata(metadata),
+      changes,
+    };
+  }
+
+  private extractSalesSerialsFromMetadata(metadata: Record<string, unknown> | null): string[] {
+    if (!metadata) {
+      return [];
+    }
+
+    const serialSet = new Set<string>();
+    const pushSerial = (value: unknown): void => {
+      if (typeof value !== 'string') {
+        return;
+      }
+
+      const normalized = value.trim();
+      if (normalized.length > 0) {
+        serialSet.add(normalized);
+      }
+    };
+
+    pushSerial(metadata['serialNumber']);
+
+    const scanResult = metadata['scanResult'];
+    if (scanResult && typeof scanResult === 'object') {
+      pushSerial((scanResult as Record<string, unknown>)['serialNumber']);
+    }
+
+    const existingSerial = metadata['existingSerial'];
+    if (existingSerial && typeof existingSerial === 'object') {
+      pushSerial((existingSerial as Record<string, unknown>)['serialNumber']);
+    }
+
+    const recovered = metadata['recoveredSerials'];
+    if (Array.isArray(recovered)) {
+      recovered.forEach((value) => pushSerial(value));
+    }
+
+    return Array.from(serialSet);
+  }
+
+  getHistoryActionLines(entry: SalesDrawerHistoryEntry): string[] {
+    const lines: string[] = [];
+
+    for (const change of entry.changes) {
+      const fieldKey = String(change.field ?? '').trim();
+      const normalized = fieldKey.toLowerCase();
+      if (!fieldKey) {
+        continue;
+      }
+
+      if (normalized.includes('scannedserial')) {
+        lines.push(this.formatScannedSerialChangeLine(change.oldValue, change.newValue));
+        continue;
+      }
+
+      if (normalized.includes('productitem')) {
+        const beforeCount = this.countProductScannedSerials(change.oldValue);
+        const afterCount = this.countProductScannedSerials(change.newValue);
+        if (beforeCount !== afterCount) {
+          lines.push(`Product scanned serials changed: ${beforeCount} -> ${afterCount} serial(s)`);
+        }
+        continue;
+      }
+
+      if (!this.isReadableDetailField(normalized)) {
+        continue;
+      }
+
+      lines.push(
+        `${this.getReadableFieldLabel(fieldKey)}: ${this.stringifySalesHistoryValue(change.oldValue)} -> ${this.stringifySalesHistoryValue(change.newValue)}`,
+      );
+    }
+
+    if (lines.length === 0 && entry.action.startsWith('SERIAL_SCAN')) {
+      if (entry.serials.length > 0) {
+        lines.push(`Scanned serial: ${entry.serials.join(', ')}`);
+      } else if (entry.description) {
+        lines.push(entry.description);
+      }
+    }
+
+    return lines;
+  }
+
+  private isReadableDetailField(field: string): boolean {
+    if (!field) {
+      return false;
+    }
+
+    const blocked = [
+      'id',
+      'createdat',
+      'updatedat',
+      'branchid',
+      'userid',
+      'ipaddress',
+      'paymentdetails',
+      'productitems',
+      'serialstatus',
+      'requestbody',
+    ];
+
+    return !blocked.some((item) => field.includes(item));
+  }
+
+  private getReadableFieldLabel(field: string): string {
+    const normalized = field.replace(/_/g, ' ').trim();
+    const aliasMap: Record<string, string> = {
+      customername: 'Customer Name',
+      customeraddress: 'Customer Address',
+      contactperson: 'Contact Person',
+      contactnumber: 'Contact Number',
+      totalamount: 'Total Amount',
+      status: 'Status',
+      sonumber: 'SO Number',
+      scheduledate: 'Schedule Date',
+    };
+
+    const key = normalized.replace(/\s+/g, '').toLowerCase();
+    if (aliasMap[key]) {
+      return aliasMap[key];
+    }
+
+    return normalized
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .split(' ')
+      .filter((part) => part.length > 0)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+  }
+
+  private formatScannedSerialChangeLine(oldValue: unknown, newValue: unknown): string {
+    const beforeCount = this.countScannedSerials(oldValue);
+    const afterCount = this.countScannedSerials(newValue);
+    return `Scanned serials changed: ${beforeCount} -> ${afterCount} serial(s)`;
+  }
+
+  private countProductScannedSerials(value: unknown): number {
+    const parsed = this.parseJsonLikeValue(value);
+    if (!Array.isArray(parsed)) {
+      return 0;
+    }
+
+    return parsed.reduce((total, item) => {
+      if (!item || typeof item !== 'object') {
+        return total;
+      }
+
+      const scanned = (item as Record<string, unknown>)['scannedSerials'];
+      return total + this.countScannedSerials(scanned);
+    }, 0);
+  }
+
+  private countScannedSerials(value: unknown): number {
+    const parsed = this.parseJsonLikeValue(value);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return 0;
+    }
+
+    return Object.entries(parsed as Record<string, unknown>)
+      .filter(([key]) => key.toLowerCase() !== 'status')
+      .reduce((total, [, serials]) => total + (Array.isArray(serials) ? serials.length : 0), 0);
+  }
+
+  private stringifySalesHistoryValue(value: unknown): string {
+    const parsed = this.parseJsonLikeValue(value);
+
+    if (parsed === null || parsed === undefined || parsed === '') {
+      return '-';
+    }
+
+    if (typeof parsed === 'string') {
+      return parsed;
+    }
+
+    if (typeof parsed === 'number' || typeof parsed === 'boolean') {
+      return String(parsed);
+    }
+
+    try {
+      return JSON.stringify(parsed);
+    } catch {
+      return '[Complex value]';
+    }
+  }
+
+  private parseJsonLikeValue(value: unknown): unknown {
+    if (typeof value !== 'string') {
+      return value;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) {
+      return value;
+    }
+
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+
+  private formatSalesHistoryTitle(action: string, description: string): string {
+    const normalizedAction = String(action ?? '').trim().toUpperCase();
+    if (normalizedAction.length === 0) {
+      return 'Update';
+    }
+
+    if (normalizedAction.startsWith('SERIAL_SCAN')) {
+      return normalizedAction.replace(/_/g, ' ');
+    }
+
+    if (description?.trim()) {
+      return description;
+    }
+
+    return normalizedAction.replace(/_/g, ' ');
   }
 
   formatDate(value: string | null | undefined): string {
