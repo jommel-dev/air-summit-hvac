@@ -79,6 +79,7 @@ export class AuditLogFrontendService {
     search?: string;
     action?: string;
     entityType?: string;
+    entityId?: string | number;
   }): Promise<AuditLogListResponse> {
     const response = await apiClient.get<AuditLogListResponse>('/audit-logs', { params });
     return response.data;

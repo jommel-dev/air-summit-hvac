@@ -51,6 +51,7 @@ export class PurchaseTabItemDto {
   }>;
   createdAt!: string | null;
   serialCount!: number;
+  scannedSerialCount!: number;
 
   // Transfer PO support
   isTransferPO?: boolean;

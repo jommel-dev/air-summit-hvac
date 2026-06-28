@@ -16,7 +16,10 @@ import {
   VendorOption,
 } from '../../shared/services/purchase-order.service';
 import { RbacService } from '../../shared/services/rbac.service';
-import { AuditLogFrontendService } from '../../shared/services/audit-log.service';
+import {
+  AuditLogFrontendService,
+  AuditLogListItem,
+} from '../../shared/services/audit-log.service';
 import { ModalComponent } from '../../shared/components/ui/modal/modal.component';
 import axios from 'axios';
 
@@ -117,6 +120,20 @@ interface QueuedPurchaseSerialScan {
   capacityId: number;
 }
 
+interface DrawerHistoryEntry {
+  id: number;
+  action: string;
+  title: string;
+  description: string;
+  actor: string;
+  createdAt: string | null;
+  serials: string[];
+  productName?: string;   // NEW
+  brand?: string;         // NEW
+  capacity?: string;      // NEW
+  changes: Array<{ field: string; oldValue: unknown; newValue: unknown }>;
+}
+
 @Component({
   selector: 'app-purchase-order',
   imports: [CommonModule, FormsModule, PageBreadcrumbComponent, ModalComponent],
@@ -170,6 +187,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   createError = '';
   createSuccess = '';
   isExportingSerials = false;
+  isPurchaseHistoryLoading = false;
+  purchaseHistoryError = '';
+  purchaseHistoryEntries: DrawerHistoryEntry[] = [];
+  isPurchaseHistoryModalOpen = false;
   poGuardDialogMode: PurchaseOrderGuardDialogMode | null = null;
   csvImportDialogMode: boolean = false;
   csvImportState: CsvImportState = {
@@ -735,12 +756,434 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
   }
 
+  formatDateOnly(value: string | null | undefined): string {
+    if (!value) {
+      return '-';
+    }
+
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? value
+      : date.toLocaleDateString('en-PH', {
+          year: 'numeric',
+          month: 'short',
+          day: '2-digit',
+        });
+  }
+
   formatAmount(value: number): string {
     return new Intl.NumberFormat('en-PH', {
       style: 'currency',
       currency: 'PHP',
       minimumFractionDigits: 2,
     }).format(value ?? 0);
+  }
+
+  async openPurchaseHistoryModal(): Promise<void> {
+    if (this.drawerMode === 'create' || !this.editingPurchaseId) {
+      return;
+    }
+
+    await this.loadPurchaseHistory(this.editingPurchaseId);
+    this.isPurchaseHistoryModalOpen = true;
+  }
+
+  closePurchaseHistoryModal(): void {
+    this.isPurchaseHistoryModalOpen = false;
+  }
+
+  private async loadPurchaseHistory(purchaseId: number): Promise<void> {
+    this.isPurchaseHistoryLoading = true;
+    this.purchaseHistoryError = '';
+
+    try {
+      const response = await this.auditLogService.getAuditLogs({
+        page: 1,
+        limit: 200,
+        entityType: 'purchase-order,purchase_order,PurchaseOrder,purchaseorder',
+        entityId: purchaseId,
+      });
+
+      const items = Array.isArray(response.items) ? response.items : [];
+      const mapped = items.map((item) => this.mapAuditItemToHistoryEntry(item));
+      this.purchaseHistoryEntries = mapped.filter((entry) => this.getHistoryActionLines(entry).length > 0);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.purchaseHistoryError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Failed to load purchase history';
+      } else {
+        this.purchaseHistoryError = 'Failed to load purchase history';
+      }
+      this.purchaseHistoryEntries = [];
+    } finally {
+      this.isPurchaseHistoryLoading = false;
+    }
+  }
+
+  private mapAuditItemToHistoryEntry(item: AuditLogListItem): DrawerHistoryEntry {
+    const metadata = item.metadata ?? null;
+    const rawChanges = Array.isArray(metadata?.['changes'])
+      ? (metadata['changes'] as Array<{ field?: unknown; oldValue?: unknown; newValue?: unknown }>)
+      : [];
+    const changes = rawChanges
+      .map((entry) => {
+        const field = String(entry['field'] ?? '').trim();
+        if (!field) {
+          return null;
+        }
+
+        return {
+          field,
+          oldValue: entry['oldValue'],
+          newValue: entry['newValue'],
+        };
+      })
+      .filter((entry): entry is { field: string; oldValue: unknown; newValue: unknown } => Boolean(entry));
+
+    return {
+      id: item.id,
+      action: String(item.action ?? '').trim().toUpperCase(),
+      title: this.formatHistoryTitle(item.action, item.description),
+      description: String(item.description || metadata?.description || '').trim(),
+      actor: String(item.username || item.roleName || 'System').trim() || 'System',
+      createdAt: item.createdAt,
+      serials: this.extractSerialsFromMetadata(metadata),
+      changes,
+    };
+  }
+
+  private extractSerialsFromMetadata(metadata: Record<string, unknown> | null): string[] {
+    if (!metadata) {
+      return [];
+    }
+
+    const serialSet = new Set<string>();
+    const pushSerial = (value: unknown): void => {
+      if (typeof value !== 'string') {
+        return;
+      }
+
+      const normalized = value.trim();
+      if (normalized.length > 0) {
+        serialSet.add(normalized);
+      }
+    };
+
+    pushSerial(metadata['serialNumber']);
+
+    const scanResult = metadata['scanResult'];
+    if (scanResult && typeof scanResult === 'object') {
+      pushSerial((scanResult as Record<string, unknown>)['serialNumber']);
+    }
+
+    const recovered = metadata['recoveredSerials'];
+    if (Array.isArray(recovered)) {
+      recovered.forEach((value) => pushSerial(value));
+    }
+
+    return Array.from(serialSet);
+  }
+
+  getHistoryActionLines(entry: DrawerHistoryEntry): string[] {
+    const lines: string[] = [];
+
+    for (const change of entry.changes) {
+      const fieldKey = String(change.field ?? '').trim();
+      const normalized = fieldKey.toLowerCase();
+      if (!fieldKey) {
+        continue;
+      }
+
+      if (normalized.includes('scannedserial')) {
+        lines.push(this.formatScannedSerialChangeLine(change.oldValue, change.newValue));
+        continue;
+      }
+
+      if (normalized.includes('productitem')) {
+        const beforeCount = this.countProductScannedSerials(change.oldValue);
+        const afterCount = this.countProductScannedSerials(change.newValue);
+        if (beforeCount !== afterCount) {
+          lines.push(`Product scanned serials changed: ${beforeCount} -> ${afterCount} serial(s)`);
+        }
+        continue;
+      }
+
+      if (!this.isReadableDetailField(normalized)) {
+        continue;
+      }
+
+      lines.push(
+        `${this.getReadableFieldLabel(fieldKey)}: ${this.getHistoryPreviewValue(fieldKey, change.oldValue)} -> ${this.getHistoryPreviewValue(fieldKey, change.newValue)}`,
+      );
+    }
+
+    if (lines.length === 0 && entry.action.startsWith('SERIAL_SCAN')) {
+
+      // Add product info first
+      if (entry.productName || entry.brand || entry.capacity) {
+        lines.push(
+          `Product: ${entry.productName ?? 'N/A'} | Brand: ${entry.brand ?? 'N/A'} | Capacity: ${entry.capacity ?? 'N/A'}`
+        );
+      }
+      if (entry.serials.length > 0) {
+        lines.push(`Scanned serial: ${entry.serials.join(', ')}`);
+      } else if (entry.description) {
+        lines.push(entry.description);
+      }
+    }
+
+    return lines;
+  }
+
+  private isReadableDetailField(field: string): boolean {
+    if (!field) {
+      return false;
+    }
+
+    const blocked = [
+      'id',
+      'createdat',
+      'updatedat',
+      'branchid',
+      'userid',
+      'ipaddress',
+      'paymentdetails',
+      'productitems',
+      'serialstatus',
+      'requestbody',
+    ];
+
+    return !blocked.some((item) => field.includes(item));
+  }
+
+  private getReadableFieldLabel(field: string): string {
+    const normalized = field.replace(/_/g, ' ').trim();
+    const aliasMap: Record<string, string> = {
+      vendorname: 'Dealer Name',
+      vendoraddress: 'Dealer Address',
+      vendorcontactperson: 'Contact Person',
+      vendorcontactnumber: 'Contact Number',
+      totalamount: 'Total Amount',
+      status: 'Status',
+      ponumber: 'PO Number',
+      termsduedate: 'Terms Due Date',
+    };
+
+    const key = normalized.replace(/\s+/g, '').toLowerCase();
+    if (aliasMap[key]) {
+      return aliasMap[key];
+    }
+
+    return normalized
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .split(' ')
+      .filter((part) => part.length > 0)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+  }
+
+  private formatScannedSerialChangeLine(oldValue: unknown, newValue: unknown): string {
+    const beforeCount = this.countScannedSerials(oldValue);
+    const afterCount = this.countScannedSerials(newValue);
+    return `Scanned serials changed: ${beforeCount} -> ${afterCount} serial(s)`;
+  }
+
+  private countProductScannedSerials(value: unknown): number {
+    const parsed = this.parseJsonLikeValue(value);
+    if (!Array.isArray(parsed)) {
+      return 0;
+    }
+
+    return parsed.reduce((total, item) => {
+      if (!item || typeof item !== 'object') {
+        return total;
+      }
+
+      const scanned = (item as Record<string, unknown>)['scannedSerials'];
+      return total + this.countScannedSerials(scanned);
+    }, 0);
+  }
+
+  private countScannedSerials(value: unknown): number {
+    const parsed = this.parseJsonLikeValue(value);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return 0;
+    }
+
+    return Object.entries(parsed as Record<string, unknown>)
+      .filter(([key]) => key.toLowerCase() !== 'status')
+      .reduce((total, [, serials]) => total + (Array.isArray(serials) ? serials.length : 0), 0);
+  }
+
+  getHistoryPreviewValue(field: string, value: unknown): string {
+    return this.truncateText(this.formatHistoryValueForUser(field, value), 90);
+  }
+
+  getHistoryDetailValue(field: string, value: unknown): string {
+    return this.formatHistoryValueForUser(field, value);
+  }
+
+  private formatHistoryValueForUser(field: string, value: unknown): string {
+    const parsedValue = this.parseJsonLikeValue(value);
+    const normalizedField = String(field ?? '').trim().toLowerCase();
+
+    if (normalizedField.includes('paymentdetail')) {
+      return this.formatPaymentDetailsSummary(parsedValue);
+    }
+
+    if (normalizedField.includes('productitem')) {
+      return this.formatProductItemsSummary(parsedValue);
+    }
+
+    return this.stringifyHistoryValue(parsedValue);
+  }
+
+  private parseJsonLikeValue(value: unknown): unknown {
+    if (typeof value !== 'string') {
+      return value;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) {
+      return value;
+    }
+
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+
+  private formatPaymentDetailsSummary(value: unknown): string {
+    const list = Array.isArray(value) ? value : value ? [value] : [];
+    if (list.length === 0) {
+      return 'No payment details';
+    }
+
+    return list
+      .map((item, index) => {
+        const record = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+        const method = String(record['method'] ?? 'Payment').trim() || 'Payment';
+        const rawAmount = Number(record['payment_amount'] ?? record['amount'] ?? 0);
+        const amount = Number.isFinite(rawAmount) && rawAmount > 0 ? this.formatAmount(rawAmount) : 'No amount';
+        const terms = Number(record['terms'] ?? 0);
+        const status = String(record['status'] ?? '').trim();
+        const dueDate = String(record['termsDueDate'] ?? record['terms_due_date'] ?? '').trim();
+
+        const extraParts = [
+          terms > 0 ? `${terms} day terms` : '',
+          status ? `status ${status}` : '',
+          dueDate ? `due ${this.formatDateOnly(dueDate)}` : '',
+        ].filter((entry) => entry.length > 0);
+
+        return `Payment ${index + 1}: ${method}, ${amount}${extraParts.length ? ` (${extraParts.join(', ')})` : ''}`;
+      })
+      .join(' | ');
+  }
+
+  private formatProductItemsSummary(value: unknown): string {
+    const list = Array.isArray(value) ? value : value ? [value] : [];
+    if (list.length === 0) {
+      return 'No product items';
+    }
+
+    return list
+      .map((item, index) => {
+        const record = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+        const productId = String(record['productId'] ?? '-');
+        const capacityId = String(record['capacityId'] ?? '-');
+        const setQty = Number(record['totalSetQty'] ?? 0);
+        const units = Array.isArray(record['unitTypesQty'])
+          ? (record['unitTypesQty'] as unknown[])
+              .map((entry) => {
+                const unit = entry && typeof entry === 'object' ? (entry as Record<string, unknown>) : {};
+                const label = String(unit['label'] ?? '').trim();
+                const qty = Number(unit['value'] ?? 0);
+                if (!label) {
+                  return '';
+                }
+
+                return `${label}: ${qty}`;
+              })
+              .filter((entry) => entry.length > 0)
+          : [];
+
+        const scannedSerials = record['scannedSerials'];
+        const serialCounts =
+          scannedSerials && typeof scannedSerials === 'object' && !Array.isArray(scannedSerials)
+            ? Object.entries(scannedSerials as Record<string, unknown>)
+                .filter(([label]) => label.toLowerCase() !== 'status')
+                .map(([label, serials]) => `${label}: ${Array.isArray(serials) ? serials.length : 0}`)
+            : [];
+
+        const unitSummary = units.length > 0 ? units.join(', ') : 'No unit split';
+        const serialSummary = serialCounts.length > 0 ? serialCounts.join(', ') : 'No scanned serials';
+
+        return `Item ${index + 1}: Product ${productId}, Capacity ${capacityId}, Set Qty ${setQty}. Units: ${unitSummary}. Serials: ${serialSummary}.`;
+      })
+      .join(' | ');
+  }
+
+  private truncateText(value: string, maxLength: number): string {
+    if (value.length <= maxLength) {
+      return value;
+    }
+
+    return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+  }
+
+  private stringifyHistoryValue(value: unknown): string {
+    if (value === null || value === undefined || value === '') {
+      return '-';
+    }
+
+    if (typeof value === 'string') {
+      return value;
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return 'None';
+      }
+
+      const primitiveValues = value.filter(
+        (entry) => typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean',
+      );
+      if (primitiveValues.length === value.length) {
+        return primitiveValues.map((entry) => String(entry)).join(', ');
+      }
+
+      return `${value.length} item(s)`;
+    }
+
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '[Complex value]';
+    }
+  }
+
+  private formatHistoryTitle(action: string, description: string): string {
+    const normalizedAction = String(action ?? '').trim().toUpperCase();
+    if (normalizedAction.length === 0) {
+      return 'Update';
+    }
+
+    if (normalizedAction.startsWith('SERIAL_SCAN')) {
+      return normalizedAction.replace(/_/g, ' ');
+    }
+
+    if (description?.trim()) {
+      return description;
+    }
+
+    return normalizedAction.replace(/_/g, ' ');
   }
 
   getPurchaseTableProductLabels(item: PurchaseOrderItem): string[] {
@@ -1389,6 +1832,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       this.applyDetailToForm(detail, item);
       this.editingPoNumber = String(detail.poNumber ?? item.poNumber ?? '').trim();
       this.editingPurchaseStatus = String(detail.status ?? item.status ?? '').trim();
+      await this.loadPurchaseHistory(item.id);
       this.captureDrawerInitialSnapshot();
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
@@ -2465,6 +2909,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.activeProductTabIndex = 0;
     this.selectedUnitTypeByProduct = {};
     this.scannedSerialTablePageByKey = {};
+    this.isPurchaseHistoryLoading = false;
+    this.purchaseHistoryError = '';
+    this.purchaseHistoryEntries = [];
+    this.isPurchaseHistoryModalOpen = false;
     this.manualSerialDialogState = null;
     this.manualSerialInput = '';
     this.manualSerialError = '';
@@ -2484,6 +2932,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.manualSerialInput = '';
     this.manualSerialError = '';
     this.serialStatusByNumber = {};
+    this.isPurchaseHistoryLoading = false;
+    this.purchaseHistoryError = '';
+    this.purchaseHistoryEntries = [];
+    this.isPurchaseHistoryModalOpen = false;
     this.unresolvedLinkedSerialNumbersByUnitType = {};
     this.poLinkedSerialNumbersByUnitType = {};
     this.queuedSerialScans = [];

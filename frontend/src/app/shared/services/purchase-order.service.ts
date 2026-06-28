@@ -10,6 +10,7 @@ export interface PurchaseOrderItem {
   status: string;
   createdAt: string | null;
   serialCount: number;
+  scannedSerialCount: number;
   productItems?: Array<{
     id: string | number | null;
     productId: string | null;
