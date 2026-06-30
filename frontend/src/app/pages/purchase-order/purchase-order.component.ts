@@ -134,6 +134,16 @@ interface DrawerHistoryEntry {
   changes: Array<{ field: string; oldValue: unknown; newValue: unknown }>;
 }
 
+interface ReviewSerialScan {
+  serialNumber: string;
+  productIndex: number;
+  productId: number;
+  capacityId: number;
+  unitLabel: string;
+  status: 'pending' | 'success' | 'failed';
+  errorMessage?: string;
+}
+
 @Component({
   selector: 'app-purchase-order',
   imports: [CommonModule, FormsModule, PageBreadcrumbComponent, ModalComponent],
@@ -141,6 +151,12 @@ interface DrawerHistoryEntry {
   styles: ``,
 })
 export class PurchaseOrderComponent implements OnInit, OnDestroy {
+  // Review Queued Serial Scans
+  reviewSerialScans: ReviewSerialScan[] = [];
+  showSerialReviewSummary: boolean = false;
+  isBatchSyncingSerials: boolean = false;
+
+
   activeTab: PurchaseTab = 'deliveries';
   poType: PurchaseOrderType = 'regular';
   readonly replacementUnitTypeOptions: string[] = ['indoor', 'outdoor', 'window', 'panel'];
@@ -4071,6 +4087,34 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       capacityId,
     });
     this.focusSerialScanInput(productIndex, unitLabel);
+  }
+
+  handleSerialScan(productIndex: number, unitType: any, inputElement: HTMLInputElement): void {
+    // 1. Extract the full scanned string at once
+    const serial = unitType.scanInput?.trim();
+
+    if (!serial) {
+      // If empty and Enter is pressed, trigger your standard validation/error alert layout
+      this.scanSerialForSelectedUnit(productIndex, true);
+      return;
+    }
+
+    // 2. Clear active micro-debounce timers from previous rapid scanner keystrokes
+    const timerKey = `${productIndex}::${unitType.label}`;
+    if (this.serialScanTimers[timerKey]) {
+      clearTimeout(this.serialScanTimers[timerKey]);
+      delete this.serialScanTimers[timerKey];
+    }
+
+    // 3. Direct Online Route: Delegate instantly to your live API verification flow
+    this.scanSerialForSelectedUnit(productIndex, false);
+
+    // 4. Combined Cleanup: Dual-wipe both the Angular model binding and raw DOM element value
+    unitType.scanInput = '';
+    inputElement.value = '';
+
+    // 5. Keep input focus alive for immediate consecutive scanning
+    this.focusSerialScanInput(productIndex, unitType.label);
   }
 
   onSerialScanInputChange(productIndex: number, unitLabel: string, value: string): void {

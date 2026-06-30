@@ -494,7 +494,7 @@
                         <div class="space-y-3">
                           @if (!isMasterDataDrawerMode() && !isTransferPOViewOnly) {
                             <div class="flex gap-2">
-                              <input
+                              <!-- <input
                                 type="text"
                                 [(ngModel)]="unitType.scanInput"
                                 [id]="'scanInput_' + activeProductTabIndex + '_' + unitType.label"
@@ -503,6 +503,17 @@
                                 (keydown.enter)="$event.preventDefault(); scanSerialForSelectedUnit(activeProductTabIndex, true)"
                                 placeholder="Scan or type serial number"
                                 class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                              /> -->
+                              <input
+                                type="text"
+                                #scanInput
+                                [(ngModel)]="unitType.scanInput"
+                                [id]="'scanInput_' + activeProductTabIndex + '_' + unitType.label"
+                                [name]="'scanInput_' + activeProductTabIndex + '_' + unitType.label"
+                                (ngModelChange)="unitType.scanError = ''; unitType.scanSuccess = ''; this.createError = ''"
+                                (keydown.enter)="$event.preventDefault(); handleSerialScan(activeProductTabIndex, unitType, scanInput)"
+                                placeholder="Scan or type serial number"
+                                class="w-full rounded-lg border border-gray-300 scanner-disabled-look bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
                               />
                               <button
                                 type="button"
