@@ -3496,6 +3496,13 @@ export class PurchaseService {
     }
   }
 
+  private buildBranchVisibilityClause(branchParamIndex: number): string {
+    return `(
+      base.branch_id = $${branchParamIndex}
+      OR NULLIF(COALESCE(base.branch_id, ''), '') IS NULL
+    )`;
+  }
+
   private async fetchByMode(
     mode: PurchaseMode,
     query: ListPurchaseQueryDto,
@@ -3530,9 +3537,9 @@ export class PurchaseService {
     }
 
     if (Number.isFinite(branchId) && branchId > 0) {
+      const branchIndex = params.length + 1;
       params.push(String(branchId));
-      const branchIndex = params.length;
-      whereParts.push(`(base.branch_id = $${branchIndex} OR base.branch_id IS NULL)`);
+      whereParts.push(this.buildBranchVisibilityClause(branchIndex));
     }
 
     const vendorId = String(query.vendorId ?? '').trim();
