@@ -23,4 +23,11 @@ describe('PurchaseService', () => {
   it('should be defined', () => {
     expect(service).toBeDefined();
   });
+
+  it('builds a branch visibility clause that includes unassigned legacy records', () => {
+    const clause = (service as any).buildBranchVisibilityClause(3);
+
+    expect(clause).toContain('base.branch_id = $3');
+    expect(clause).toContain("NULLIF(COALESCE(base.branch_id, ''), '') IS NULL");
+  });
 });
