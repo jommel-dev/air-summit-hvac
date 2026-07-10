@@ -801,23 +801,40 @@
                     </div>
                     <div>
                       <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Status</label>
-                      <div class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800">
-                        <span
-                          class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold"
-                          [ngClass]="{
-                            'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-400': (payment.status || '').toLowerCase() === 'paid',
-                            'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400': (payment.status || '').toLowerCase() === 'overdue',
-                            'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400': (payment.status || '').toLowerCase() === 'unpaid',
-                            'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300': !['paid', 'unpaid', 'overdue'].includes((payment.status || '').toLowerCase())
-                          }"
-                        >
-                          {{ (payment.status || 'unpaid') | uppercase }}
-                        </span>
-                      </div>
+                      @if (canEditPaymentDetails) {
+                        <select [(ngModel)]="payment.status" [name]="'payment_status_' + pIndex" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+                          <option value="paid">Paid</option>
+                          <option value="unpaid">Unpaid</option>
+                          <option value="overdue">Overdue</option>
+                        </select>
+                      } @else {
+                        <div class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800">
+                          <span
+                            class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold"
+                            [ngClass]="{
+                              'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-400': (payment.status || '').toLowerCase() === 'paid',
+                              'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400': (payment.status || '').toLowerCase() === 'overdue',
+                              'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400': (payment.status || '').toLowerCase() === 'unpaid',
+                              'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300': !['paid', 'unpaid', 'overdue'].includes((payment.status || '').toLowerCase())
+                            }"
+                          >
+                            {{ (payment.status || 'unpaid') | uppercase }}
+                          </span>
+                        </div>
+                      }
                     </div>
                     <div>
                       <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Amount</label>
-                      <input type="number" [(ngModel)]="payment.amount" [name]="'payment_amount_' + pIndex" placeholder="0.00" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
+                      <input
+                        type="number"
+                        [(ngModel)]="payment.amount"
+                        [name]="'payment_amount_' + pIndex"
+                        (input)="onPaymentAmountChange(pIndex)"
+                        placeholder="0.00"
+                        [readonly]="!canEditPaymentDetails"
+                        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                        [ngClass]="canEditPaymentDetails ? 'bg-white' : 'bg-gray-50'"
+                      />
                     </div>
                     @if (shouldShowPaymentField(payment.method, 'terms')) {
                       <div>
@@ -1144,8 +1161,8 @@
           }
 
           <div class="mt-3">
-            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total Amount</label>
-            <input type="number" [(ngModel)]="form.totalAmount" name="computedTotalAmount" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Product Items Total</label>
+            <input type="number" [(ngModel)]="form.productTotalAmount" name="computedTotalAmount" readonly class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800" />
           </div>
         </section>
         }
@@ -1388,7 +1405,7 @@
                     <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Service Name</label>
                     <select
                       [(ngModel)]="activeItem.serviceName"
-                      (ngModelChange)="recalculateTotalAmount()"
+                      (ngModelChange)="onServiceFieldChange()"
                       name="serviceName_{{activeServiceTabIndex}}"
                       class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
                     >
@@ -1403,7 +1420,7 @@
                     <input
                       type="number"
                       [(ngModel)]="activeItem.unitPrice"
-                      (ngModelChange)="recalculateTotalAmount()"
+                      (ngModelChange)="onServiceFieldChange()"
                       name="serviceUnitPrice_{{activeServiceTabIndex}}"
                       class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
                     />
@@ -1413,7 +1430,7 @@
                     <input
                       type="number"
                       [(ngModel)]="activeItem.qty"
-                      (ngModelChange)="recalculateTotalAmount()"
+                      (ngModelChange)="onServiceFieldChange()"
                       name="serviceQty_{{activeServiceTabIndex}}"
                       class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
                     />
@@ -1422,7 +1439,7 @@
                     <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total</label>
                     <input
                       type="number"
-                      [value]="((+activeItem.unitPrice || 0) * (+activeItem.qty || 0))"
+                      [value]="activeItem.total || 0"
                       readonly
                       class="w-full rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
                     />
