@@ -3331,7 +3331,11 @@ export class SalesOrderService {
                   this.deriveTermsDueDate(paymentPayload, method) ?? null;
               }
               if (paymentStatusColumn) {
-                paymentRecord[paymentStatusColumn] = this.getAutoPaymentStatus(method);
+                const explicitStatus = String(paymentPayload.status ?? '').trim().toLowerCase();
+                const normalizedStatus = ['paid', 'unpaid', 'overdue'].includes(explicitStatus)
+                  ? explicitStatus
+                  : this.getAutoPaymentStatus(method);
+                paymentRecord[paymentStatusColumn] = normalizedStatus;
               }
               if (referenceNoColumn && paymentPayload.referenceNo) {
                 paymentRecord[referenceNoColumn] = String(paymentPayload.referenceNo).trim();
@@ -6217,7 +6221,13 @@ export class SalesOrderService {
               if (termsDueDateColumn) {
                 paymentRecord[termsDueDateColumn] = this.deriveTermsDueDate(paymentPayload, method);
               }
-              if (paymentStatusColumn) paymentRecord[paymentStatusColumn] = this.getAutoPaymentStatus(method);
+              if (paymentStatusColumn) {
+                const explicitStatus = String(paymentPayload.status ?? '').trim().toLowerCase();
+                const normalizedStatus = ['paid', 'unpaid', 'overdue'].includes(explicitStatus)
+                  ? explicitStatus
+                  : this.getAutoPaymentStatus(method);
+                paymentRecord[paymentStatusColumn] = normalizedStatus;
+              }
               if (referenceNoColumn && paymentPayload.referenceNo) paymentRecord[referenceNoColumn] = String(paymentPayload.referenceNo).trim();
               if (paymentDateColumn) paymentRecord[paymentDateColumn] = this.toIsoDateOrNull(paymentPayload.paymentDate);
               if (issuedByColumn && paymentPayload.issuedBy) paymentRecord[issuedByColumn] = String(paymentPayload.issuedBy).trim();

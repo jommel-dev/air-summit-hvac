@@ -119,6 +119,7 @@ interface SalesPaymentFormItem {
   bankAccount?: string;
   postDated?: string;
   downPayment?: number;
+  isAmountManual?: boolean;
 }
 
 interface SalesDrawerHistoryEntry {
@@ -229,6 +230,15 @@ export class SalesOrderComponent {
 
   get pendingSerialScanCount(): number {
     return this.queuedSerialScans.length + this.activeSerialFlushCount;
+  }
+
+  get canEditPaymentDetails(): boolean {
+    const roleName = String(this.rbacService.getPayload()?.roleName ?? '').trim().toLowerCase();
+    if (this.rbacService.isAdminOrSuperAdmin()) {
+      return true;
+    }
+
+    return /sales[\s_-]?staff|sales[\s_-]?person/.test(roleName);
   }
 
   orders: SalesOrderRow[] = [];
@@ -566,6 +576,7 @@ export class SalesOrderComponent {
     customer_id: '',
     projectId: undefined as number | undefined,
     totalAmount: 0,
+    productTotalAmount: 0,
     scheduleDate: '',
     salesType: 'sales',
     projectName: '',
@@ -3209,6 +3220,7 @@ export class SalesOrderComponent {
   addServiceItem(): void {
     this.form.serviceItems = [...this.form.serviceItems, this.createEmptyServiceItem()];
     this.activeServiceTabIndex = this.form.serviceItems.length - 1;
+    this.recalculateTotalAmount();
   }
 
   removeProductItem(index: number): void {
@@ -3237,6 +3249,7 @@ export class SalesOrderComponent {
       0,
       Math.min(this.activeServiceTabIndex, this.form.serviceItems.length - 1),
     );
+    this.recalculateTotalAmount();
   }
 
   addTransferExpenseItem(): void {
@@ -3296,7 +3309,9 @@ export class SalesOrderComponent {
       return;
     }
 
-    payment.status = this.getAutoPaymentStatus(payment.method);
+    if (!String(payment.status ?? '').trim()) {
+      payment.status = this.getAutoPaymentStatus(payment.method);
+    }
 
     if (payment.method !== 'Terms' && payment.method !== 'Terms with DP' && payment.method !== 'Installment') {
       payment.terms = '';
@@ -3352,6 +3367,15 @@ export class SalesOrderComponent {
   isAutoTermsDueDate(index: number): boolean {
     const payment = this.form.paymentDetails[index];
     return payment?.autoTermsDueDate ?? true;
+  }
+
+  onPaymentAmountChange(index: number): void {
+    const payment = this.form.paymentDetails[index];
+    if (!payment) {
+      return;
+    }
+
+    payment.isAmountManual = true;
   }
 
   onTermsChanged(index: number): void {
@@ -3557,6 +3581,10 @@ export class SalesOrderComponent {
     this.recalculateTotalAmount();
   }
 
+  onServiceFieldChange(): void {
+    this.recalculateTotalAmount();
+  }
+
   recalculateTotalAmount(): void {
     const productTotal = this.form.productItems.reduce((sum: number, item: SalesProductFormItem) => {
       const unitPrice = Number(item.unitPrice) || 0;
@@ -3579,7 +3607,14 @@ export class SalesOrderComponent {
       };
     });
 
-    this.form.totalAmount = productTotal + serviceTotal;
+    const materialTotal = (this.materialItems ?? []).reduce((sum: number, item: MaterialTransactionItem) => {
+      const unitPrice = Number(item.sell_price ?? item.unit_price ?? 0) || 0;
+      const qty = Math.max(0, Math.floor(Number(item.quantity) || 0));
+      return sum + unitPrice * qty;
+    }, 0);
+
+    this.form.productTotalAmount = productTotal;
+    this.form.totalAmount = productTotal + serviceTotal + materialTotal;
     this.syncPaymentAmounts();
   }
 
@@ -4137,6 +4172,7 @@ export class SalesOrderComponent {
     this.form = {
       customer_id: '',
       totalAmount: 0,
+      productTotalAmount: 0,
       scheduleDate: '',
       salesType: this.getSalesTypeFromActiveTab(),
       projectName: '',
@@ -4208,6 +4244,7 @@ export class SalesOrderComponent {
       referenceNo: '',
       paymentDate: '',
       issuedBy: '',
+      isAmountManual: false,
       ccCharge: '',
       checkNo: '',
       bankName: '',
@@ -4449,6 +4486,7 @@ export class SalesOrderComponent {
             termsDueDate: this.toDateInputValue(payment.termsDueDate),
             autoTermsDueDate: true,
             status: payment.status ?? 'paid',
+            isAmountManual: false,
             referenceNo: payment.referenceNo ?? '',
             paymentDate: this.toDateInputValue(payment.paymentDate),
             issuedBy: payment.issuedBy ?? '',
@@ -4509,6 +4547,7 @@ export class SalesOrderComponent {
     this.form = {
       customer_id: detail.customerId ?? '',
       totalAmount: Number(detail.totalAmount) || Number(fallbackItem.totalAmount) || 0,
+      productTotalAmount: Number(detail.totalAmount) || Number(fallbackItem.totalAmount) || 0,
       scheduleDate: this.toDateInputValue(detail.scheduleDate),
       salesType: detail.salesType || this.getSalesTypeFromActiveTab(),
       projectId: detail.projectId || undefined,
@@ -4605,6 +4644,11 @@ export class SalesOrderComponent {
   }
 
   private getDisplayPaymentStatus(payment: SalesPaymentFormItem): string {
+    const explicitStatus = String(payment.status ?? '').trim().toLowerCase();
+    if (['paid', 'unpaid', 'overdue'].includes(explicitStatus)) {
+      return explicitStatus;
+    }
+
     const autoStatus = this.getAutoPaymentStatus(payment.method);
     if (autoStatus === 'paid') {
       return 'paid';
@@ -4641,14 +4685,18 @@ export class SalesOrderComponent {
   private syncPaymentAmounts(): void {
     const computedAmount = Number(this.form.totalAmount) || 0;
     this.form.paymentDetails = this.form.paymentDetails.map((payment: SalesPaymentFormItem) => {
+      const shouldUseComputedAmount = !payment.isAmountManual;
       const nextPayment: SalesPaymentFormItem = {
         ...payment,
-        amount: computedAmount,
+        amount: shouldUseComputedAmount ? computedAmount : Number(payment.amount) || 0,
       };
+
+      const explicitStatus = String(payment.status ?? '').trim().toLowerCase();
+      const normalizedStatus = ['paid', 'unpaid', 'overdue'].includes(explicitStatus) ? explicitStatus : '';
 
       return {
         ...nextPayment,
-        status: this.getDisplayPaymentStatus(nextPayment),
+        status: normalizedStatus || this.getDisplayPaymentStatus(nextPayment),
       };
     });
   }
