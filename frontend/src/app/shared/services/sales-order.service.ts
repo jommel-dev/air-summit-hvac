@@ -197,6 +197,8 @@ export interface SalesOrderListItem {
   customerId: string | null;
   customerName: string;
   totalAmount: number;
+  paidAmount?: number;
+  paymentCount?: number;
   paymentMethod: string;
   status: string;
   salesType?: string;
@@ -216,6 +218,8 @@ export interface SalesOrderRow {
   customerId?: string | null;
   installer?: string;
   totalAmount: number;
+  paidAmount?: number;
+  paymentCount?: number;
   paymentMethod: string;
   status: string;
   salesType?: string;
@@ -535,6 +539,7 @@ export interface SalesQueryParams {
 
 interface SalesOrderListApiResponse {
   success: boolean;
+  message?: string;
   items: SalesOrderListItem[];
   meta: SalesListMeta;
 }
@@ -599,75 +604,62 @@ export class SalesOrderService {
     return response.data;
   }
 
-  async getDeliveries(params: SalesQueryParams): Promise<{ items: SalesOrderListItem[]; meta: SalesListMeta }> {
+  async getDeliveries(params: SalesQueryParams): Promise<{ success: boolean; message?: string; items: SalesOrderListItem[]; meta: SalesListMeta }> {
     const response = await apiClient.get<SalesOrderListApiResponse>('/sales-order/deliveries', { params });
-    return {
-      items: response.data.items ?? [],
-      meta: response.data.meta,
-    };
+    return this.mapSalesOrderListResponse(response.data);
   }
 
-  async getApprovals(params: SalesQueryParams): Promise<{ items: SalesOrderListItem[]; meta: SalesListMeta }> {
+  async getApprovals(params: SalesQueryParams): Promise<{ success: boolean; message?: string; items: SalesOrderListItem[]; meta: SalesListMeta }> {
     const response = await apiClient.get<SalesOrderListApiResponse>('/sales-order/approvals', { params });
-    return {
-      items: response.data.items ?? [],
-      meta: response.data.meta,
-    };
+    return this.mapSalesOrderListResponse(response.data);
   }
 
-  async getMasterData(params: SalesQueryParams): Promise<{ items: SalesOrderListItem[]; meta: SalesListMeta }> {
+  async getMasterData(params: SalesQueryParams): Promise<{ success: boolean; message?: string; items: SalesOrderListItem[]; meta: SalesListMeta }> {
     const response = await apiClient.get<SalesOrderListApiResponse>('/sales-order/master-data', { params });
-    return {
-      items: response.data.items ?? [],
-      meta: response.data.meta,
-    };
+    return this.mapSalesOrderListResponse(response.data);
   }
 
-  async getSchedules(params: SalesQueryParams): Promise<{ items: SalesOrderListItem[]; meta: SalesListMeta }> {
+  async getSchedules(params: SalesQueryParams): Promise<{ success: boolean; message?: string; items: SalesOrderListItem[]; meta: SalesListMeta }> {
     const response = await apiClient.get<SalesOrderListApiResponse>('/sales-order/schedules', { params });
-    return {
-      items: response.data.items ?? [],
-      meta: response.data.meta,
-    };
+    return this.mapSalesOrderListResponse(response.data);
   }
 
-  async getServices(params: SalesQueryParams): Promise<{ items: SalesOrderListItem[]; meta: SalesListMeta }> {
+  async getServices(params: SalesQueryParams): Promise<{ success: boolean; message?: string; items: SalesOrderListItem[]; meta: SalesListMeta }> {
     const response = await apiClient.get<SalesOrderListApiResponse>('/sales-order/services', { params });
-    return {
-      items: response.data.items ?? [],
-      meta: response.data.meta,
-    };
+    return this.mapSalesOrderListResponse(response.data);
   }
 
-  async getProjects(params: SalesQueryParams): Promise<{ items: SalesOrderListItem[]; meta: SalesListMeta }> {
+  async getProjects(params: SalesQueryParams): Promise<{ success: boolean; message?: string; items: SalesOrderListItem[]; meta: SalesListMeta }> {
     const response = await apiClient.get<SalesOrderListApiResponse>('/sales-order/projects', { params });
-    return {
-      items: response.data.items ?? [],
-      meta: response.data.meta,
-    };
+    return this.mapSalesOrderListResponse(response.data);
   }
 
-  async getDistribution(params: SalesQueryParams): Promise<{ items: SalesOrderListItem[]; meta: SalesListMeta }> {
+  async getDistribution(params: SalesQueryParams): Promise<{ success: boolean; message?: string; items: SalesOrderListItem[]; meta: SalesListMeta }> {
     const response = await apiClient.get<SalesOrderListApiResponse>('/sales-order/distribution', { params });
-    return {
-      items: response.data.items ?? [],
-      meta: response.data.meta,
-    };
+    return this.mapSalesOrderListResponse(response.data);
   }
 
-  async getSalesReceivable(params: SalesQueryParams): Promise<{ items: SalesOrderListItem[]; meta: SalesListMeta }> {
+  async getSalesReceivable(params: SalesQueryParams): Promise<{ success: boolean; message?: string; items: SalesOrderListItem[]; meta: SalesListMeta }> {
     const response = await apiClient.get<SalesOrderListApiResponse>('/sales-order/sales-receivable', { params });
-    return {
-      items: response.data.items ?? [],
-      meta: response.data.meta,
-    };
+    return this.mapSalesOrderListResponse(response.data);
   }
 
-  async getRemittedSales(params: SalesQueryParams): Promise<{ items: SalesOrderListItem[]; meta: SalesListMeta }> {
+  async getRemittedSales(params: SalesQueryParams): Promise<{ success: boolean; message?: string; items: SalesOrderListItem[]; meta: SalesListMeta }> {
     const response = await apiClient.get<SalesOrderListApiResponse>('/sales-order/remitted-sales', { params });
+    return this.mapSalesOrderListResponse(response.data);
+  }
+
+  private mapSalesOrderListResponse(data: SalesOrderListApiResponse): {
+    success: boolean;
+    message?: string;
+    items: SalesOrderListItem[];
+    meta: SalesListMeta;
+  } {
     return {
-      items: response.data.items ?? [],
-      meta: response.data.meta,
+      success: data.success ?? true,
+      message: data.message,
+      items: data.items ?? [],
+      meta: data.meta,
     };
   }
 

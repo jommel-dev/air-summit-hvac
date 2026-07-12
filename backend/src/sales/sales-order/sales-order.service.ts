@@ -2939,8 +2939,9 @@ export class SalesOrderService {
     const search = String(query.search ?? '').trim().toLowerCase();
     const branchId = Number(query.branchId);
 
-    const params: unknown[] = [];
-    const whereParts: string[] = [];
+    try {
+      const params: unknown[] = [];
+      const whereParts: string[] = [];
 
     // --- 1. Mode Specific Filtering ---
     if (mode === 'deliveries') {
@@ -3024,6 +3025,7 @@ export class SalesOrderService {
       payment_totals AS (
         SELECT 
           COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
+          COUNT(*)::int AS payment_count,
           COALESCE(STRING_AGG(DISTINCT NULLIF(COALESCE(to_jsonb(sp)->>'method', ''), ''), ', '), '-') AS payment_method,
           SUM(COALESCE(NULLIF(to_jsonb(sp)->>'amount', '')::numeric, 0)) AS paid_amount
         FROM tblso_payments sp
@@ -3048,6 +3050,7 @@ export class SalesOrderService {
           COALESCE(sc.serial_count, 0)::int AS serial_count,
           COALESCE(pt.payment_method, '-') AS payment_method,
           COALESCE(pt.paid_amount, 0) AS paid_amount,
+          COALESCE(pt.payment_count, 0)::int AS payment_count,
           COALESCE(cd.concern_status, '') AS concern_status,
           ${computedStatusExpression} AS computed_status
         FROM tblsales_order so
@@ -3072,7 +3075,8 @@ export class SalesOrderService {
       ${baseCte}
       SELECT
         id, so_number AS "soNumber", customer_id AS "customerId", customer_name AS "customerName",
-        total_amount::numeric AS "totalAmount", computed_status AS status, sales_type AS "salesType",
+        total_amount::numeric AS "totalAmount", paid_amount::numeric AS "paidAmount",
+        payment_count AS "paymentCount", computed_status AS status, sales_type AS "salesType",
         project_name AS "projectName", project_code AS "projectCode", payment_method AS "paymentMethod",
         schedule_date AS "scheduleDate", created_at AS "createdAt", serial_count AS "serialCount",
         concern_status AS "concernStatus", installer
@@ -3090,6 +3094,8 @@ export class SalesOrderService {
       items: listResult.rows.map((row) => ({
         ...row,
         totalAmount: Number(row.totalAmount ?? 0),
+        paidAmount: Number(row.paidAmount ?? 0),
+        paymentCount: Number(row.paymentCount ?? 0),
         serialCount: Number(row.serialCount ?? 0),
       })),
       meta: {
@@ -3099,6 +3105,19 @@ export class SalesOrderService {
         totalPages: Math.max(1, Math.ceil(total / limit)),
       },
     };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to load sales orders: ${error instanceof Error ? error.message : String(error)}`,
+        items: [],
+        meta: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 1,
+        },
+      };
+    }
   }
 
 
@@ -7250,7 +7269,8 @@ export class SalesOrderService {
       }
 
       // Update the sales order total_amount to include this item (unless it's an inclusion)
-      if (!body.isInclusion && totalPrice > 0) {
+      const skipTotalAmountUpdate = Boolean((body as { skipTotalAmountUpdate?: boolean }).skipTotalAmountUpdate);
+      if (!skipTotalAmountUpdate && !body.isInclusion && totalPrice > 0) {
         await this.databaseService.query(
           `UPDATE tblsales_order
            SET total_amount = COALESCE(total_amount, 0) + $1
@@ -7265,12 +7285,69 @@ export class SalesOrderService {
     }
   }
 
+  async removeMiscellaneousItem(
+    salesId: number,
+    itemId: number,
+    options?: { skipTotalAmountUpdate?: boolean },
+  ) {
+    if (!Number.isFinite(salesId) || salesId <= 0) {
+      return { success: false, message: 'Invalid sales order ID' };
+    }
+
+    if (!Number.isFinite(itemId) || itemId <= 0) {
+      return { success: false, message: 'Invalid miscellaneous item ID' };
+    }
+
+    try {
+      const existing = await this.databaseService.query<{
+        id: number;
+        total_price: string;
+        is_inclusion: boolean;
+      }>(
+        `SELECT id, total_price::text, is_inclusion
+         FROM tblso_miscellaneous_items
+         WHERE id = $1 AND sales_id = $2
+         LIMIT 1`,
+        [itemId, salesId],
+      );
+
+      if (existing.rowCount === 0) {
+        return { success: false, message: 'Miscellaneous item not found' };
+      }
+
+      const row = existing.rows[0];
+      const totalPrice = Number(row.total_price) || 0;
+
+      await this.databaseService.query(
+        `DELETE FROM tblso_miscellaneous_items WHERE id = $1 AND sales_id = $2`,
+        [itemId, salesId],
+      );
+
+      if (!options?.skipTotalAmountUpdate && !row.is_inclusion && totalPrice > 0) {
+        await this.databaseService.query(
+          `UPDATE tblsales_order
+           SET total_amount = GREATEST(COALESCE(total_amount, 0) - $1, 0)
+           WHERE id = $2`,
+          [totalPrice, salesId],
+        );
+      }
+
+      return { success: true, message: 'Item removed successfully' };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to remove item: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
   async getMiscellaneousItems(salesId: number) {
     if (!Number.isFinite(salesId) || salesId <= 0) {
       return [];
     }
 
-    const result = await this.databaseService.query<{
+    try {
+      const result = await this.databaseService.query<{
       id: number;
       category: string;
       item_name: string;
@@ -7304,5 +7381,8 @@ export class SalesOrderService {
       remarks: row.remarks,
       createdAt: row.created_at,
     }));
+    } catch {
+      return [];
+    }
   }
 }

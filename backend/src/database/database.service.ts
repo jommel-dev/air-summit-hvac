@@ -35,6 +35,10 @@ export class DatabaseService implements OnModuleDestroy {
             ssl,
           });
 
+      this.pool.on('error', (error) => {
+        console.error('⚠️ Database pool connection error (will retry on next query):', error.message);
+      });
+
       console.log('✅ Database pool created successfully');
     } catch (error) {
       console.error('❌ Failed to create database pool:', error);

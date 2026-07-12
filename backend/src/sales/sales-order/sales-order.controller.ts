@@ -484,4 +484,15 @@ export class SalesOrderController {
   getMiscItems(@Param('id') id: string) {
     return this.salesOrderService.getMiscellaneousItems(+id);
   }
+
+  @Delete(':id/misc-items/:itemId')
+  removeMiscItem(
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Query('skipTotalAmountUpdate') skipTotalAmountUpdate?: string,
+  ) {
+    return this.salesOrderService.removeMiscellaneousItem(+id, +itemId, {
+      skipTotalAmountUpdate: String(skipTotalAmountUpdate ?? '').toLowerCase() === 'true',
+    });
+  }
 }
