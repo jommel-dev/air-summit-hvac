@@ -13,6 +13,7 @@ import {
   SalesOrderMigrationPreviewItem,
   SalesCustomerOption,
   SalesOrderDetailItem,
+  SalesOrderDetailPayment,
   SalesOrderDetailProductItem,
   SalesOrderDetailUnitType,
   SalesOrderListItem,
@@ -120,6 +121,16 @@ interface SalesPaymentFormItem {
   postDated?: string;
   downPayment?: number;
   isAmountManual?: boolean;
+}
+
+interface AdditionalExcessFormItem {
+  id?: number;
+  itemName: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  isInclusion: boolean;
 }
 
 interface SalesDrawerHistoryEntry {
@@ -277,7 +288,7 @@ export class SalesOrderComponent {
   isViewDrawerLoading = false;
   viewDrawerOrder: SalesOrderRow | null = null;
   viewDrawerDetail: any = null;
-  viewDrawerMiscItems: Array<{ id: number; category: string; itemName: string; quantity: number; unit: string; unitPrice: number; totalPrice: number; isInclusion: boolean }> = [];
+  viewDrawerMiscItems: Array<{ id: number; category: string; itemName: string; description?: string | null; quantity: number; unit: string; unitPrice: number; totalPrice: number; isInclusion: boolean }> = [];
   guardDialogMode: SalesGuardDialogMode | null = null;
   isGuardDialogOpen = false;
   pendingSerialRemoval: SalesPendingSerialRemoval | null = null;
@@ -552,6 +563,10 @@ export class SalesOrderComponent {
   selectedUnitTypeByProduct: Record<number, string> = {};
   private drawerBaselineSnapshot = '';
   materialItems: MaterialTransactionItem[] = [];
+  additionalExcessItems: AdditionalExcessFormItem[] = [];
+  private additionalExcessBaselineIds: number[] = [];
+  private paymentAmountEditedByUser = false;
+  private isInitializingDrawer = false;
   branchOptions: Array<{ id: number; branchName: string }> = [];
   activeExpenseTabIndex = 0;
 
@@ -2835,7 +2850,11 @@ export class SalesOrderComponent {
         return;
       }
 
+      this.isInitializingDrawer = true;
       this.applyDetailToForm(detail, fallback);
+      await this.loadAdditionalExcessItems(orderId);
+      this.recalculateTotalAmount();
+      this.isInitializingDrawer = false;
       await this.loadSalesHistory(orderId);
       this.captureDrawerBaselineSnapshot();
     } catch (error: unknown) {
@@ -3095,6 +3114,7 @@ export class SalesOrderComponent {
       selectedUnitTypeByProduct: this.selectedUnitTypeByProduct,
       form: this.form,
       materialItems: this.materialItems,
+      additionalExcessItems: this.additionalExcessItems,
     });
   }
 
@@ -3117,6 +3137,8 @@ export class SalesOrderComponent {
       customerId: item.customerId ?? null,
       installer: item.installer ?? '',
       totalAmount: Number(item.totalAmount ?? 0),
+      paidAmount: Number(item.paidAmount ?? 0),
+      paymentCount: Number(item.paymentCount ?? 0),
       paymentMethod: item.paymentMethod ?? '-',
       status: item.status ?? 'pending',
       salesType: item.salesType ?? '',
@@ -3173,6 +3195,15 @@ export class SalesOrderComponent {
                 : tab === 'sales-receivable'
                   ? await this.salesOrderService.getSalesReceivable(query)
                   : await this.salesOrderService.getRemittedSales(query);
+
+      if (result.success === false) {
+        this.errorMessage = result.message ?? 'Unable to load sales orders';
+        this.orders = [];
+        this.selectedOrderIds.clear();
+        this.total = 0;
+        this.totalPages = 1;
+        return;
+      }
 
       console.log('[Tab Debug] tab:', tab, '| items:', result.items?.length, '| meta:', result.meta);
       console.log('[Tab Debug] warehouseman branchId from JWT:', this.rbacService.getBranchId());
@@ -3274,11 +3305,34 @@ export class SalesOrderComponent {
     nextItems[index] = {
       ...nextItems[index],
       capacityId: '',
-      sellPrice: '',
+      sellPrice: this.isTransferSalesType() ? 0 : '',
       unitPrice: 0,
+      discountPrice: this.isTransferSalesType() ? '' : nextItems[index].discountPrice,
     };
     this.form.productItems = nextItems;
     this.recalculateTotalAmount();
+  }
+
+  onSalesTypeChange(): void {
+    this.normalizeProductPricesForSalesType();
+    this.recalculateTotalAmount();
+  }
+
+  isTransferSalesType(): boolean {
+    return String(this.form.salesType ?? '').trim().toLowerCase() === 'transfer';
+  }
+
+  private normalizeProductPricesForSalesType(): void {
+    if (!this.isTransferSalesType()) {
+      return;
+    }
+
+    this.form.productItems = this.form.productItems.map((item: SalesProductFormItem) => ({
+      ...item,
+      unitPrice: 0,
+      sellPrice: 0,
+      discountPrice: '',
+    }));
   }
 
   onCapacityChanged(index: number): void {
@@ -3292,14 +3346,23 @@ export class SalesOrderComponent {
     );
 
     if (!capacity) {
-      item.sellPrice = '';
+      item.sellPrice = this.isTransferSalesType() ? 0 : '';
       item.unitPrice = 0;
+      if (this.isTransferSalesType()) {
+        item.discountPrice = '';
+      }
       this.recalculateTotalAmount();
       return;
     }
 
-    item.sellPrice = Number(capacity.sellPrice ?? 0) || 0;
-    item.unitPrice = Number(capacity.unitPrice ?? 0) || 0;
+    if (this.isTransferSalesType()) {
+      item.sellPrice = 0;
+      item.unitPrice = 0;
+      item.discountPrice = '';
+    } else {
+      item.sellPrice = Number(capacity.sellPrice ?? 0) || 0;
+      item.unitPrice = Number(capacity.unitPrice ?? 0) || 0;
+    }
     this.recalculateTotalAmount();
   }
 
@@ -3375,6 +3438,7 @@ export class SalesOrderComponent {
       return;
     }
 
+    this.paymentAmountEditedByUser = true;
     payment.isAmountManual = true;
   }
 
@@ -3607,15 +3671,131 @@ export class SalesOrderComponent {
       };
     });
 
-    const materialTotal = (this.materialItems ?? []).reduce((sum: number, item: MaterialTransactionItem) => {
-      const unitPrice = Number(item.sell_price ?? item.unit_price ?? 0) || 0;
-      const qty = Math.max(0, Math.floor(Number(item.quantity) || 0));
-      return sum + unitPrice * qty;
-    }, 0);
+    const additionalExcessTotal = this.getAdditionalExcessTotal();
 
     this.form.productTotalAmount = productTotal;
-    this.form.totalAmount = productTotal + serviceTotal + materialTotal;
-    this.syncPaymentAmounts();
+    this.form.totalAmount = productTotal + serviceTotal + additionalExcessTotal;
+    if (!this.isInitializingDrawer) {
+      this.syncPaymentAmounts();
+    }
+  }
+
+  getAdditionalExcessTotal(): number {
+    return (this.additionalExcessItems ?? []).reduce((sum: number, item: AdditionalExcessFormItem) => {
+      if (item.isInclusion) {
+        return sum;
+      }
+
+      const qty = Math.max(0, Number(item.quantity) || 0);
+      const unitPrice = Number(item.unitPrice) || 0;
+      return sum + qty * unitPrice;
+    }, 0);
+  }
+
+  getAdditionalExcessLineTotal(item: AdditionalExcessFormItem): number {
+    if (item.isInclusion) {
+      return 0;
+    }
+
+    const qty = Math.max(0, Number(item.quantity) || 0);
+    const unitPrice = Number(item.unitPrice) || 0;
+    return qty * unitPrice;
+  }
+
+  addAdditionalExcessItem(): void {
+    this.additionalExcessItems = [...this.additionalExcessItems, this.createEmptyAdditionalExcessItem()];
+    this.recalculateTotalAmount();
+  }
+
+  removeAdditionalExcessItem(index: number): void {
+    this.additionalExcessItems = this.additionalExcessItems.filter((_: AdditionalExcessFormItem, itemIndex: number) => itemIndex !== index);
+    if (this.additionalExcessItems.length === 0) {
+      this.additionalExcessItems = [this.createEmptyAdditionalExcessItem()];
+    }
+    this.recalculateTotalAmount();
+  }
+
+  onAdditionalExcessChange(): void {
+    this.recalculateTotalAmount();
+  }
+
+  private createEmptyAdditionalExcessItem(): AdditionalExcessFormItem {
+    return {
+      itemName: '',
+      description: '',
+      quantity: 1,
+      unit: 'pcs',
+      unitPrice: 0,
+      isInclusion: false,
+    };
+  }
+
+  private async loadAdditionalExcessItems(salesId: number): Promise<void> {
+    try {
+      const response = await apiClient.get<Array<{
+        id: number;
+        category: string;
+        itemName: string;
+        description?: string | null;
+        quantity: number;
+        unit: string;
+        unitPrice: number;
+        isInclusion: boolean;
+      }>>(`/sales-order/${salesId}/misc-items`);
+      const items = (Array.isArray(response.data) ? response.data : []).filter((item) => item.category === 'excess');
+
+      this.additionalExcessItems =
+        items.length > 0
+          ? items.map((item) => ({
+              id: item.id,
+              itemName: item.itemName ?? '',
+              description: item.description ?? '',
+              quantity: Number(item.quantity) || 1,
+              unit: item.unit ?? 'pcs',
+              unitPrice: Number(item.unitPrice) || 0,
+              isInclusion: Boolean(item.isInclusion),
+            }))
+          : [this.createEmptyAdditionalExcessItem()];
+      this.additionalExcessBaselineIds = items
+        .map((item) => Number(item.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+    } catch {
+      this.additionalExcessItems = [this.createEmptyAdditionalExcessItem()];
+      this.additionalExcessBaselineIds = [];
+    }
+  }
+
+  private getPersistableAdditionalExcessItems(): AdditionalExcessFormItem[] {
+    return (this.additionalExcessItems ?? []).filter((item) => String(item.itemName ?? '').trim().length > 0);
+  }
+
+  private async persistAdditionalExcessItems(salesId: number): Promise<void> {
+    const persistableItems = this.getPersistableAdditionalExcessItems();
+
+    try {
+      for (const itemId of this.additionalExcessBaselineIds) {
+        await apiClient.delete(`/sales-order/${salesId}/misc-items/${itemId}`, {
+          params: { skipTotalAmountUpdate: true },
+        });
+      }
+
+      for (const item of persistableItems) {
+        await apiClient.post(`/sales-order/${salesId}/misc-items`, {
+          category: 'excess',
+          itemName: String(item.itemName).trim(),
+          description: item.description?.trim() || undefined,
+          quantity: Number(item.quantity) || 1,
+          unit: item.unit?.trim() || 'pcs',
+          unitPrice: Number(item.unitPrice) || 0,
+          isInclusion: item.isInclusion ?? false,
+          skipTotalAmountUpdate: true,
+        });
+      }
+
+      this.additionalExcessBaselineIds = [];
+    } catch (error) {
+      console.error('[Additional Excess] Failed to persist items:', error);
+    }
   }
 
   onSerialScanInputChange(productIndex: number, unitLabel: string, value: string): void {
@@ -3869,6 +4049,12 @@ export class SalesOrderComponent {
           this.openErrorModal('Submit Error', response.message ?? 'Failed to create sales order');
           return;
         }
+
+        const createdSalesId = Number(response.data?.salesOrderId);
+        if (Number.isFinite(createdSalesId) && createdSalesId > 0) {
+          await this.persistAdditionalExcessItems(createdSalesId);
+        }
+
         this.uiMessage = response.message ?? 'Sales order created successfully';
       } else {
         const response = await this.persistEditedSalesOrder();
@@ -3876,6 +4062,7 @@ export class SalesOrderComponent {
           this.openErrorModal('Submit Error', response.message ?? 'Failed to update sales order');
           return;
         }
+
         this.uiMessage = response.message ?? 'Sales order updated successfully';
       }
 
@@ -4023,6 +4210,7 @@ export class SalesOrderComponent {
 
     const response = await this.salesOrderService.updateSalesOrder(targetId, payload);
     if (response.success) {
+      await this.persistAdditionalExcessItems(targetId);
       this.captureDrawerBaselineSnapshot();
     }
 
@@ -4229,6 +4417,10 @@ export class SalesOrderComponent {
     this.closeGuardDialog();
     this.drawerBaselineSnapshot = '';
     this.materialItems = [];
+    this.additionalExcessItems = [this.createEmptyAdditionalExcessItem()];
+    this.additionalExcessBaselineIds = [];
+    this.paymentAmountEditedByUser = false;
+    this.isInitializingDrawer = false;
     this.ensureSelectedUnitType(0);
     this.syncPaymentAmounts();
   }
@@ -4592,6 +4784,7 @@ export class SalesOrderComponent {
     this.syncProductSearchQuery();
     this.selectedUnitTypeByProduct = {};
     this.form.productItems.forEach((_: unknown, index: number) => this.ensureSelectedUnitType(index));
+    this.normalizeProductPricesForSalesType();
     this.recalculateTotalAmount();
 
     // Load project details if projectId exists
@@ -4685,7 +4878,7 @@ export class SalesOrderComponent {
   private syncPaymentAmounts(): void {
     const computedAmount = Number(this.form.totalAmount) || 0;
     this.form.paymentDetails = this.form.paymentDetails.map((payment: SalesPaymentFormItem) => {
-      const shouldUseComputedAmount = !payment.isAmountManual;
+      const shouldUseComputedAmount = !this.paymentAmountEditedByUser;
       const nextPayment: SalesPaymentFormItem = {
         ...payment,
         amount: shouldUseComputedAmount ? computedAmount : Number(payment.amount) || 0,
@@ -5212,6 +5405,62 @@ export class SalesOrderComponent {
       currency: 'PHP',
       minimumFractionDigits: 2,
     }).format(value ?? 0);
+  }
+
+  getOrderListAmount(order: SalesOrderRow): number {
+    if ((order.paymentCount ?? 0) > 0) {
+      return Number(order.paidAmount ?? 0);
+    }
+
+    return Number(order.totalAmount ?? 0);
+  }
+
+  getViewPaymentTotal(): number {
+    const payments: SalesOrderDetailPayment[] = this.viewDrawerDetail?.paymentDetails ?? [];
+    if (payments.length === 0) {
+      return Number(this.viewDrawerDetail?.totalAmount ?? 0);
+    }
+
+    return payments.reduce(
+      (sum: number, payment: SalesOrderDetailPayment) => sum + (Number(payment.amount) || 0),
+      0,
+    );
+  }
+
+  getViewAdditionalExcessItems(): Array<{
+    id: number;
+    itemName: string;
+    description?: string | null;
+    quantity: number;
+    unit: string;
+    unitPrice: number;
+    totalPrice: number;
+    isInclusion: boolean;
+  }> {
+    return this.viewDrawerMiscItems.filter((item) => item.category === 'excess');
+  }
+
+  getViewNonExcessMiscItems(): Array<{
+    id: number;
+    category: string;
+    itemName: string;
+    quantity: number;
+    unit: string;
+    unitPrice: number;
+    totalPrice: number;
+    isInclusion: boolean;
+  }> {
+    return this.viewDrawerMiscItems.filter((item) => item.category !== 'excess');
+  }
+
+  getViewAdditionalExcessTotal(): number {
+    return this.getViewAdditionalExcessItems().reduce((sum: number, item) => {
+      if (item.isInclusion) {
+        return sum;
+      }
+
+      return sum + (Number(item.totalPrice) || 0);
+    }, 0);
   }
 
   async openSalesHistoryModal(): Promise<void> {
