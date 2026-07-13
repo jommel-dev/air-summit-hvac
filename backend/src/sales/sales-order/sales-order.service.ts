@@ -23,6 +23,7 @@ type SalesMode =
   | 'schedules'
   | 'services'
   | 'projects'
+  | 'sub-dealers'
   | 'distribution'
   | 'sales-receivable'
   | 'remitted-sales';
@@ -2957,8 +2958,13 @@ export class SalesOrderService {
         'pending', 'for-delivery', 'to-remit'
       )`);
       whereParts.push(`LOWER(COALESCE(base.sales_type, '')) IN (
-        'sales', 'sub-dealer', 'sales and service', 'sales & service', 'sales-and-service', 'sales_and_service'
+        'sales', 'sales and service', 'sales & service', 'sales-and-service', 'sales_and_service'
       )`);
+    } else if (mode === 'sub-dealers') {
+      whereParts.push(`REPLACE(REPLACE(LOWER(BTRIM(COALESCE(base.original_status, ''))), '_', '-'), ' ', '-') IN (
+        'pending', 'for-delivery', 'to-remit'
+      )`);
+      whereParts.push(`LOWER(COALESCE(base.sales_type, '')) IN ('sub-dealer', 'sub dealer', 'sub_dealer')`);
     } else if (mode === 'services') {
       whereParts.push(`(
         LOWER(COALESCE(base.sales_type, '')) IN (
@@ -4007,6 +4013,10 @@ export class SalesOrderService {
 
   getProjects(query: ListSalesOrderQueryDto) {
     return this.fetchByMode('projects', query);
+  }
+
+  getSubDealers(query: ListSalesOrderQueryDto) {
+    return this.fetchByMode('sub-dealers', query);
   }
 
   getDistribution(query: ListSalesOrderQueryDto) {

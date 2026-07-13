@@ -235,6 +235,7 @@ export type SalesTab =
   | 'schedules'
   | 'services'
   | 'projects'
+  | 'sub-dealers'
   | 'distribution'
   | 'sales-receivable'
   | 'remitted-sales';
@@ -631,6 +632,11 @@ export class SalesOrderService {
 
   async getProjects(params: SalesQueryParams): Promise<{ success: boolean; message?: string; items: SalesOrderListItem[]; meta: SalesListMeta }> {
     const response = await apiClient.get<SalesOrderListApiResponse>('/sales-order/projects', { params });
+    return this.mapSalesOrderListResponse(response.data);
+  }
+
+  async getSubDealers(params: SalesQueryParams): Promise<{ success: boolean; message?: string; items: SalesOrderListItem[]; meta: SalesListMeta }> {
+    const response = await apiClient.get<SalesOrderListApiResponse>('/sales-order/sub-dealers', { params });
     return this.mapSalesOrderListResponse(response.data);
   }
 

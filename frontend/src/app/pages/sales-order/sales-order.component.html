@@ -223,7 +223,7 @@
                         Print DR
                       </button>
                     }
-                    @if (activeTab === 'schedules' && canEditSalesOrder()) {
+                    @if ((activeTab === 'schedules' || activeTab === 'sub-dealers') && canEditSalesOrder()) {
                       <button
                         type="button"
                         (click)="openCancelModal(order)"
@@ -1457,17 +1457,41 @@
                 <div class="grid gap-3 md:grid-cols-2">
                   <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Service Name</label>
-                    <select
-                      [(ngModel)]="activeItem.serviceName"
-                      (ngModelChange)="onServiceFieldChange()"
-                      name="serviceName_{{activeServiceTabIndex}}"
-                      class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-                    >
-                      <option value="">Select service</option>
-                      @for (serviceName of serviceNameOptions; track serviceName) {
-                        <option [value]="serviceName">{{ serviceName }}</option>
+                    <div class="relative">
+                      <input
+                        type="text"
+                        [ngModel]="serviceNameSearchQuery"
+                        (ngModelChange)="onServiceNameSearchChange($event)"
+                        [name]="'serviceNameSearch_' + activeServiceTabIndex"
+                        placeholder="Search or type service name..."
+                        autocomplete="off"
+                        (focus)="onServiceNameSearchFocus()"
+                        (blur)="onServiceNameSearchBlur()"
+                        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                      />
+                      <input type="hidden" [(ngModel)]="activeItem.serviceName" [name]="'serviceName_' + activeServiceTabIndex" />
+
+                      @if (isServiceNameDropdownOpen) {
+                        <div class="absolute z-40 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                          @if (getFilteredServiceNameOptions().length === 0) {
+                            <p class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                              No preset services found. Your typed name will be used.
+                            </p>
+                          } @else {
+                            @for (serviceName of getFilteredServiceNameOptions(); track serviceName) {
+                              <button
+                                type="button"
+                                (mousedown)="$event.preventDefault()"
+                                (click)="selectServiceNameFromSearch(serviceName, activeServiceTabIndex)"
+                                class="flex w-full items-center px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-800"
+                              >
+                                <span>{{ serviceName }}</span>
+                              </button>
+                            }
+                          }
+                        </div>
                       }
-                    </select>
+                    </div>
                   </div>
                   <div>
                     <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Unit Price</label>
