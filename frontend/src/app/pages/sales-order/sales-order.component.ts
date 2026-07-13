@@ -556,6 +556,8 @@ export class SalesOrderComponent {
   catalogProducts: ProductOption[] = [];
   productSearchQuery = '';
   isProductDropdownOpen = false;
+  serviceNameSearchQuery = '';
+  isServiceNameDropdownOpen = false;
   activeProductTabIndex = 0;
   activeServiceTabIndex = 0;
   readonly serialsPerPage = 10;
@@ -636,6 +638,7 @@ export class SalesOrderComponent {
     schedules: 'sales-order.tab.schedules',
     services: 'sales-order.tab.services',
     projects: 'sales-order.tab.projects',
+    'sub-dealers': 'sales-order.tab.sub-dealers',
     distribution: 'sales-order.tab.distribution',
     'sales-receivable': 'sales-order.tab.sales-receivable',
     'remitted-sales': 'sales-order.tab.remitted-sales',
@@ -909,6 +912,7 @@ export class SalesOrderComponent {
     this.activeProductTabIndex = 0;
     this.syncProductSearchQuery();
     this.activeServiceTabIndex = 0;
+    this.syncServiceNameSearchQuery();
     this.selectedUnitTypeByProduct = {};
     this.form.productItems.forEach((_: unknown, index: number) => this.ensureSelectedUnitType(index));
     this.recalculateTotalAmount();
@@ -1124,6 +1128,7 @@ export class SalesOrderComponent {
   getTabs(): Array<{ key: SalesTab; label: string }> {
     const allTabs: Array<{ key: SalesTab; label: string }> = [
       { key: 'schedules', label: 'Schedules' },
+      { key: 'sub-dealers', label: 'Sub Dealers' },
       { key: 'services', label: 'Services' },
       { key: 'projects', label: 'Projects' },
       { key: 'distribution', label: 'Distribution' },
@@ -1378,6 +1383,55 @@ export class SalesOrderComponent {
       const brand = String(p.brandName ?? '').toLowerCase();
       return name.includes(q) || brand.includes(q) || `${name} (${brand})`.includes(q);
     });
+  }
+
+  syncServiceNameSearchQuery(): void {
+    const item = this.form.serviceItems[this.activeServiceTabIndex];
+    this.serviceNameSearchQuery = String(item?.serviceName ?? '');
+  }
+
+  onServiceNameSearchFocus(): void {
+    this.isServiceNameDropdownOpen = true;
+  }
+
+  onServiceNameSearchBlur(): void {
+    setTimeout(() => {
+      this.isServiceNameDropdownOpen = false;
+    }, 150);
+  }
+
+  onServiceNameSearchChange(value: string): void {
+    this.serviceNameSearchQuery = value;
+    this.isServiceNameDropdownOpen = true;
+    const index = this.activeServiceTabIndex;
+    const nextItems = [...this.form.serviceItems];
+    nextItems[index] = {
+      ...nextItems[index],
+      serviceName: value,
+    };
+    this.form.serviceItems = nextItems;
+    this.onServiceFieldChange();
+  }
+
+  selectServiceNameFromSearch(serviceName: string, index: number): void {
+    const nextItems = [...this.form.serviceItems];
+    nextItems[index] = {
+      ...nextItems[index],
+      serviceName,
+    };
+    this.form.serviceItems = nextItems;
+    this.serviceNameSearchQuery = serviceName;
+    this.isServiceNameDropdownOpen = false;
+    this.onServiceFieldChange();
+  }
+
+  getFilteredServiceNameOptions(): string[] {
+    const q = String(this.serviceNameSearchQuery ?? '').trim().toLowerCase();
+    if (!q) {
+      return [...this.serviceNameOptions];
+    }
+
+    return this.serviceNameOptions.filter((name) => String(name).toLowerCase().includes(q));
   }
 
   getRowActionLabel(): 'Edit' {
@@ -3186,6 +3240,8 @@ export class SalesOrderComponent {
       const result =
         tab === 'schedules'
           ? await this.salesOrderService.getSchedules(query)
+          : tab === 'sub-dealers'
+            ? await this.salesOrderService.getSubDealers(query)
           : tab === 'services'
             ? await this.salesOrderService.getServices(query)
             : tab === 'projects'
@@ -3251,6 +3307,7 @@ export class SalesOrderComponent {
   addServiceItem(): void {
     this.form.serviceItems = [...this.form.serviceItems, this.createEmptyServiceItem()];
     this.activeServiceTabIndex = this.form.serviceItems.length - 1;
+    this.syncServiceNameSearchQuery();
     this.recalculateTotalAmount();
   }
 
@@ -3280,6 +3337,7 @@ export class SalesOrderComponent {
       0,
       Math.min(this.activeServiceTabIndex, this.form.serviceItems.length - 1),
     );
+    this.syncServiceNameSearchQuery();
     this.recalculateTotalAmount();
   }
 
@@ -3504,6 +3562,7 @@ export class SalesOrderComponent {
 
   setActiveServiceTab(index: number): void {
     this.activeServiceTabIndex = index;
+    this.syncServiceNameSearchQuery();
   }
 
   getActiveProductItem(): SalesProductFormItem | null {
@@ -4407,6 +4466,10 @@ export class SalesOrderComponent {
     this.customerSearch = '';
     this.activeProductTabIndex = 0;
     this.activeServiceTabIndex = 0;
+    this.productSearchQuery = '';
+    this.isProductDropdownOpen = false;
+    this.serviceNameSearchQuery = '';
+    this.isServiceNameDropdownOpen = false;
     this.selectedUnitTypeByProduct = {};
     this.serialPageByUnitType = {};
     this.pendingSerialRemoval = null;
@@ -4782,6 +4845,8 @@ export class SalesOrderComponent {
 
     this.activeProductTabIndex = 0;
     this.syncProductSearchQuery();
+    this.activeServiceTabIndex = 0;
+    this.syncServiceNameSearchQuery();
     this.selectedUnitTypeByProduct = {};
     this.form.productItems.forEach((_: unknown, index: number) => this.ensureSelectedUnitType(index));
     this.normalizeProductPricesForSalesType();
@@ -4935,9 +5000,10 @@ export class SalesOrderComponent {
 
   private getSalesTypeFromActiveTab(): string {
     if (this.activeTab === 'schedules') return 'sales';
+    if (this.activeTab === 'sub-dealers') return 'sub-dealer';
     if (this.activeTab === 'services') return 'service';
     if (this.activeTab === 'projects') return 'project';
-    if (this.activeTab === 'distribution') return 'sub-dealer';
+    if (this.activeTab === 'distribution') return 'transfer';
     if (this.activeTab === 'sales-receivable') return 'sales';
     if (this.activeTab === 'remitted-sales') return 'sales';
     return 'sales';

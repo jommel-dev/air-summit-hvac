@@ -169,6 +169,14 @@ export class SalesOrderController {
     return this.salesOrderService.getProjects(this.withEffectiveBranchScope(query, request));
   }
 
+  @Get('sub-dealers')
+  getSubDealers(
+    @Query() query: ListSalesOrderQueryDto,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    return this.salesOrderService.getSubDealers(this.withEffectiveBranchScope(query, request));
+  }
+
   @Get('distribution')
   getDistribution(
     @Query() query: ListSalesOrderQueryDto,
