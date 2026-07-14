@@ -1086,6 +1086,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     try {
       const results = await Promise.allSettled([
         this.salesOrderService.getSchedules({ page: 1, limit: 200 }),
+        this.salesOrderService.getSubDealers({ page: 1, limit: 200 }),
         this.salesOrderService.getDistribution({ page: 1, limit: 200 }),
         this.salesOrderService.getProjects({ page: 1, limit: 200 }),
       ]);
