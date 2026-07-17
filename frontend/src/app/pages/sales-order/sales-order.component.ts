@@ -282,6 +282,16 @@ export class SalesOrderComponent {
   isSalesHistoryLoading = false;
   salesHistoryError = '';
   salesHistoryEntries: SalesDrawerHistoryEntry[] = [];
+  isAllSoHistoryModalOpen = false;
+  isAllSoHistoryLoading = false;
+  allSoHistoryError = '';
+  allSoHistorySearch = '';
+  allSoHistoryOrders: SalesOrderRow[] = [];
+  allSoHistoryPage = 1;
+  allSoHistoryLimit = 20;
+  allSoHistoryTotal = 0;
+  allSoHistoryTotalPages = 1;
+  private allSoHistorySearchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   // View-only drawer state
   isViewDrawerOpen = false;
@@ -676,6 +686,11 @@ export class SalesOrderComponent {
     if (this.searchDebounceTimer) {
       clearTimeout(this.searchDebounceTimer);
       this.searchDebounceTimer = null;
+    }
+
+    if (this.allSoHistorySearchDebounceTimer) {
+      clearTimeout(this.allSoHistorySearchDebounceTimer);
+      this.allSoHistorySearchDebounceTimer = null;
     }
 
     if (this.customerDebounceTimer) {
@@ -1711,7 +1726,9 @@ export class SalesOrderComponent {
         this.cancelModalError = response.message ?? 'Failed to cancel order.';
         return;
       }
-      this.uiMessage = `Sales order ${order.soNumber || order.id} has been cancelled.`;
+      this.uiMessage = this.activeTab === 'sales-receivable'
+        ? `Sales order ${order.soNumber || order.id} has been cancelled and linked serials were returned to in-stock.`
+        : `Sales order ${order.soNumber || order.id} has been cancelled.`;
       this.closeCancelModal();
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
@@ -5536,6 +5553,95 @@ export class SalesOrderComponent {
 
     await this.loadSalesHistory(this.editingSalesId);
     this.isSalesHistoryModalOpen = true;
+  }
+
+  openAllSoHistoryModal(): void {
+    this.isAllSoHistoryModalOpen = true;
+    this.allSoHistorySearch = '';
+    this.allSoHistoryPage = 1;
+    void this.loadAllSoHistory();
+  }
+
+  closeAllSoHistoryModal(): void {
+    this.isAllSoHistoryModalOpen = false;
+    this.allSoHistoryError = '';
+    this.allSoHistoryOrders = [];
+    if (this.allSoHistorySearchDebounceTimer) {
+      clearTimeout(this.allSoHistorySearchDebounceTimer);
+      this.allSoHistorySearchDebounceTimer = null;
+    }
+  }
+
+  onAllSoHistorySearchChange(value: string): void {
+    this.allSoHistorySearch = value;
+    this.allSoHistoryPage = 1;
+    if (this.allSoHistorySearchDebounceTimer) {
+      clearTimeout(this.allSoHistorySearchDebounceTimer);
+    }
+    this.allSoHistorySearchDebounceTimer = setTimeout(() => {
+      void this.loadAllSoHistory();
+      this.allSoHistorySearchDebounceTimer = null;
+    }, this.searchDebounceMs);
+  }
+
+  onAllSoHistoryPageChange(nextPage: number): void {
+    if (
+      nextPage < 1 ||
+      nextPage > this.allSoHistoryTotalPages ||
+      nextPage === this.allSoHistoryPage ||
+      this.isAllSoHistoryLoading
+    ) {
+      return;
+    }
+
+    this.allSoHistoryPage = nextPage;
+    void this.loadAllSoHistory();
+  }
+
+  async openAllSoHistoryView(order: SalesOrderRow): Promise<void> {
+    this.closeAllSoHistoryModal();
+    await this.openViewDrawer(order);
+  }
+
+  private async loadAllSoHistory(): Promise<void> {
+    this.isAllSoHistoryLoading = true;
+    this.allSoHistoryError = '';
+
+    try {
+      const result = await this.salesOrderService.getMasterData({
+        page: this.allSoHistoryPage,
+        limit: this.allSoHistoryLimit,
+        search: this.allSoHistorySearch.trim() || undefined,
+      });
+
+      if (result.success === false) {
+        this.allSoHistoryError = result.message ?? 'Unable to load sales order history';
+        this.allSoHistoryOrders = [];
+        this.allSoHistoryTotal = 0;
+        this.allSoHistoryTotalPages = 1;
+        return;
+      }
+
+      this.allSoHistoryOrders = this.mapListItemsToRows(result.items);
+      const meta = result.meta;
+      this.allSoHistoryPage = meta?.page ?? this.allSoHistoryPage;
+      this.allSoHistoryLimit = meta?.limit ?? this.allSoHistoryLimit;
+      this.allSoHistoryTotal = meta?.total ?? this.allSoHistoryOrders.length;
+      this.allSoHistoryTotalPages = Math.max(1, meta?.totalPages ?? 1);
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.allSoHistoryError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Unable to load sales order history';
+      } else {
+        this.allSoHistoryError = 'Unable to load sales order history';
+      }
+      this.allSoHistoryOrders = [];
+      this.allSoHistoryTotal = 0;
+      this.allSoHistoryTotalPages = 1;
+    } finally {
+      this.isAllSoHistoryLoading = false;
+    }
   }
 
   closeSalesHistoryModal(): void {

@@ -277,6 +277,13 @@ export class SalesOrderService {
       };
     }
 
+    if (afterStatus === 'cancelled' && beforeStatus !== 'cancelled') {
+      return {
+        action: 'SALES_ORDER_CANCEL',
+        description: `Cancelled sales order ${salesLabel} and released linked serials to in-stock`,
+      };
+    }
+
     if (
       ['remitted', 'complete', 'completed'].includes(afterStatus) &&
       beforeStatus !== afterStatus
@@ -6736,10 +6743,12 @@ export class SalesOrderService {
           normalizedStatus === 'pending' &&
           normalizedPreviousStatus === 'for-delivery' &&
           normalizedRemarks.startsWith('returned units:');
+        const shouldReleaseCancelledSerials = normalizedStatus === 'cancelled';
         const shouldReleaseReturnedSerials =
           normalizedStatus === 'returned' ||
           normalizedStatus === 'return' ||
-          isReturnedToPendingFlow;
+          isReturnedToPendingFlow ||
+          shouldReleaseCancelledSerials;
 
         if (shouldReleaseReturnedSerials) {
           const serialColumns = await this.getTableColumns(client, 'tblserial_numbers');
@@ -6805,7 +6814,7 @@ export class SalesOrderService {
           }
 
           if (serialIsReturnedColumn) {
-            serialResetParams.push(true);
+            serialResetParams.push(shouldReleaseCancelledSerials ? false : true);
             serialResetSet.push(`"${serialIsReturnedColumn}" = $${serialResetParams.length}`);
           }
 
