@@ -8,6 +8,7 @@ export type ScanSalesOrderValidationStatus =
   | 'warning_defective'
   | 'warning_mismatch'
   | 'warning_reassignment'
+  | 'error_unit_type_mismatch'
   | 'info_scanned_status';
 
 /**
@@ -27,6 +28,10 @@ export interface ScanSalesOrderResponseDetails {
   /** For scanned-status info */
   previousPoNumber?: string;
   previousPurchaseId?: number;
+  /** For unit type mismatch errors */
+  expectedUnitType?: string;
+  actualUnitType?: string;
+  serialNumber?: string;
 }
 
 /**

@@ -1,5 +1,6 @@
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { formatReadableUnitTypeLabel } from '../../../shared/utils/serial-scan-errors';
 
 /**
  * The four modal modes corresponding to validation warning types.
@@ -8,7 +9,8 @@ export type SerialValidationModalMode =
   | 'mismatch-warning'
   | 'defective-warning'
   | 'reassignment-warning'
-  | 'force-insert-prompt';
+  | 'force-insert-prompt'
+  | 'unit-type-mismatch';
 
 /**
  * Contextual details displayed in the modal, populated from the backend response.
@@ -23,6 +25,9 @@ export interface SerialValidationDetails {
   currentCustomerName?: string;
   currentSoNumber?: string;
   currentSalesId?: number;
+  /** For unit type mismatch */
+  expectedUnitType?: string;
+  actualUnitType?: string;
   /** Generic */
   serialNumber?: string;
 }
@@ -71,6 +76,8 @@ export class SerialValidationModalComponent {
         return 'Serial Already Assigned';
       case 'force-insert-prompt':
         return 'Serial Not Found';
+      case 'unit-type-mismatch':
+        return 'Wrong Unit Type Scanned';
       default:
         return 'Validation Warning';
     }
@@ -86,6 +93,8 @@ export class SerialValidationModalComponent {
         return 'Reassignment Warning';
       case 'force-insert-prompt':
         return 'Force Insert';
+      case 'unit-type-mismatch':
+        return 'Unit Type Mismatch';
       default:
         return 'Serial Validation';
     }
@@ -101,6 +110,8 @@ export class SerialValidationModalComponent {
         return 'This serial is currently assigned to another customer/sales order. Force reassigning will remove it from the other order.';
       case 'force-insert-prompt':
         return 'This serial number does not exist in the database. You can create a new record and assign it to the current sales order.';
+      case 'unit-type-mismatch':
+        return this.getUnitTypeMismatchMessage();
       default:
         return '';
     }
@@ -116,16 +127,33 @@ export class SerialValidationModalComponent {
         return 'Force Reassign';
       case 'force-insert-prompt':
         return 'Create & Assign';
+      case 'unit-type-mismatch':
+        return 'Correct Unit Type';
       default:
         return 'Confirm';
     }
   }
 
   getCancelText(): string {
-    if (this.validationStatus === 'mismatch-warning') {
+    if (this.validationStatus === 'mismatch-warning' || this.validationStatus === 'unit-type-mismatch') {
       return 'Dismiss';
     }
     return 'Cancel';
+  }
+
+  formatUnitTypeLabel(value: string | undefined): string {
+    return formatReadableUnitTypeLabel(value);
+  }
+
+  private getUnitTypeMismatchMessage(): string {
+    const expectedLabel = formatReadableUnitTypeLabel(this.details.expectedUnitType);
+    const actualLabel = formatReadableUnitTypeLabel(this.details.actualUnitType);
+    const serialPart = this.details.serialNumber ? ` "${this.details.serialNumber}"` : '';
+
+    return (
+      `You are scanning on the ${expectedLabel} field, but serial${serialPart} is registered as an ${actualLabel} unit. ` +
+      `You can update the serial record to ${expectedLabel}, or dismiss and scan the correct serial instead.`
+    );
   }
 
   getConfirmButtonClasses(): string {
@@ -145,6 +173,8 @@ export class SerialValidationModalComponent {
         return 'rounded-2xl border border-rose-200 bg-rose-50/80 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100';
       case 'force-insert-prompt':
         return 'rounded-2xl border border-sky-200 bg-sky-50/80 px-4 py-3 text-sm text-sky-800 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-100';
+      case 'unit-type-mismatch':
+        return 'rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100';
       default:
         return 'rounded-2xl border border-gray-200 bg-gray-50/80 px-4 py-3 text-sm text-gray-800 dark:border-gray-500/20 dark:bg-gray-500/10 dark:text-gray-100';
     }
@@ -160,6 +190,8 @@ export class SerialValidationModalComponent {
         return 'border-b border-gray-200 bg-linear-to-r from-rose-50 via-white to-amber-50 px-6 py-5 dark:border-gray-800 dark:from-rose-500/10 dark:via-gray-900 dark:to-amber-500/10';
       case 'force-insert-prompt':
         return 'border-b border-gray-200 bg-linear-to-r from-sky-50 via-white to-indigo-50 px-6 py-5 dark:border-gray-800 dark:from-sky-500/10 dark:via-gray-900 dark:to-indigo-500/10';
+      case 'unit-type-mismatch':
+        return 'border-b border-gray-200 bg-linear-to-r from-amber-50 via-white to-orange-50 px-6 py-5 dark:border-gray-800 dark:from-amber-500/10 dark:via-gray-900 dark:to-orange-500/10';
       default:
         return 'border-b border-gray-200 bg-linear-to-r from-amber-50 via-white to-sky-50 px-6 py-5 dark:border-gray-800 dark:from-amber-500/10 dark:via-gray-900 dark:to-sky-500/10';
     }
@@ -175,6 +207,8 @@ export class SerialValidationModalComponent {
         return 'text-[11px] font-semibold uppercase tracking-[0.22em] text-rose-700 dark:text-rose-300';
       case 'force-insert-prompt':
         return 'text-[11px] font-semibold uppercase tracking-[0.22em] text-sky-700 dark:text-sky-300';
+      case 'unit-type-mismatch':
+        return 'text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300';
       default:
         return 'text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300';
     }

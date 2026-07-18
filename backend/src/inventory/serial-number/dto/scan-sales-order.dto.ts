@@ -11,4 +11,6 @@ export class ScanSalesOrderDto {
   forceInsert?: boolean;
   /** Reassign from another SO */
   forceReassign?: boolean;
+  /** Update serial unit type to match the active scan field */
+  forceCorrectUnitType?: boolean;
 }

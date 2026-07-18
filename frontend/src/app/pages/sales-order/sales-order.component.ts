@@ -39,6 +39,7 @@ import {
 import { SerialValidationModalComponent, SerialValidationModalMode, SerialValidationDetails } from './serial-validation-modal/serial-validation-modal.component';
 import { DrGeneratorService } from '../../shared/services/dr-generator.service';
 import { DrEligibleOrder } from '../../shared/interfaces/dr-generator.interfaces';
+import { buildSerialUnitTypeMismatchMessage } from '../../shared/utils/serial-scan-errors';
 
 type SalesOrderErrorDialog = {
   title: string;
@@ -5107,7 +5108,13 @@ export class SalesOrderComponent {
       });
 
       const results = Array.isArray(response.items) ? response.items : [];
-      const warningStatuses = ['not_found', 'warning_defective', 'warning_mismatch', 'warning_reassignment'];
+      const validationPromptStatuses = [
+        'not_found',
+        'warning_defective',
+        'warning_mismatch',
+        'warning_reassignment',
+        'error_unit_type_mismatch',
+      ];
 
       batch.forEach((entry, index) => {
         const result = results[index];
@@ -5117,7 +5124,7 @@ export class SalesOrderComponent {
         }
 
         // Check if this item has a validation warning that requires user confirmation
-        if (!result?.success && result?.validationStatus && warningStatuses.includes(result.validationStatus)) {
+        if (!result?.success && result?.validationStatus && validationPromptStatuses.includes(result.validationStatus)) {
           // Remove the optimistic local serial; it will be re-added if user confirms
           this.removeLocalSerial(unitEntry, entry.serialNumber);
           unitEntry.scanError = '';
@@ -5306,6 +5313,8 @@ export class SalesOrderComponent {
       expectedCapacityName: warning.details['expectedCapacityName'] as string | undefined,
       actualProductName: warning.details['actualProductName'] as string | undefined,
       actualCapacityName: warning.details['actualCapacityName'] as string | undefined,
+      expectedUnitType: warning.details['expectedUnitType'] as string | undefined,
+      actualUnitType: warning.details['actualUnitType'] as string | undefined,
       currentCustomerName: warning.details['currentCustomerName'] as string | undefined,
       currentSoNumber: warning.details['currentSoNumber'] as string | undefined,
       currentSalesId: warning.details['currentSalesId'] as number | undefined,
@@ -5326,6 +5335,8 @@ export class SalesOrderComponent {
         return 'reassignment-warning';
       case 'not_found':
         return 'force-insert-prompt';
+      case 'error_unit_type_mismatch':
+        return 'unit-type-mismatch';
       default:
         return 'mismatch-warning';
     }
@@ -5334,7 +5345,12 @@ export class SalesOrderComponent {
   /**
    * Determines which force flag to set based on the current validation warning status.
    */
-  private getForceFlags(status: string): { forceAssign?: boolean; forceInsert?: boolean; forceReassign?: boolean } {
+  private getForceFlags(status: string): {
+    forceAssign?: boolean;
+    forceInsert?: boolean;
+    forceReassign?: boolean;
+    forceCorrectUnitType?: boolean;
+  } {
     switch (status) {
       case 'warning_mismatch':
       case 'warning_defective':
@@ -5343,6 +5359,8 @@ export class SalesOrderComponent {
         return { forceInsert: true };
       case 'warning_reassignment':
         return { forceReassign: true };
+      case 'error_unit_type_mismatch':
+        return { forceCorrectUnitType: true };
       default:
         return {};
     }
@@ -5396,6 +5414,22 @@ export class SalesOrderComponent {
     this.isValidationModalOpen = false;
     this.currentValidationWarning = null;
 
+    if (warning.validationStatus === 'error_unit_type_mismatch') {
+      const unitEntry = this.getUnitEntryForBatch(warning.productIndex, warning.unitLabel);
+      const expectedUnitType = String(warning.details['expectedUnitType'] ?? warning.unitLabel ?? '');
+      const actualUnitType = String(warning.details['actualUnitType'] ?? '');
+      const mismatchPrompt = buildSerialUnitTypeMismatchMessage(
+        expectedUnitType,
+        actualUnitType,
+        warning.serialNumber,
+      );
+      if (unitEntry) {
+        unitEntry.scanError = mismatchPrompt.inlineError;
+        unitEntry.scanSuccess = '';
+        unitEntry.scanInfo = '';
+      }
+    }
+
     // Refocus the scan input for the relevant product/unit type
     this.focusSerialScanInput(warning.productIndex, warning.unitLabel);
 
@@ -5410,7 +5444,12 @@ export class SalesOrderComponent {
    */
   private async resendSerialWithForce(
     warning: PendingValidationWarning,
-    forceFlags: { forceAssign?: boolean; forceInsert?: boolean; forceReassign?: boolean },
+    forceFlags: {
+      forceAssign?: boolean;
+      forceInsert?: boolean;
+      forceReassign?: boolean;
+      forceCorrectUnitType?: boolean;
+    },
   ): Promise<void> {
     const unitEntry = this.getUnitEntryForBatch(warning.productIndex, warning.unitLabel);
 

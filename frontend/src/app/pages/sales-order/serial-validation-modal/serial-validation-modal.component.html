@@ -93,6 +93,27 @@
             }
           </div>
         }
+
+        @if (validationStatus === 'unit-type-mismatch') {
+          <div [class]="getAlertClasses()">
+            <div class="space-y-2">
+              @if (details.serialNumber) {
+                <div class="flex items-center justify-between gap-3">
+                  <span class="font-medium">Serial Number:</span>
+                  <span>{{ details.serialNumber }}</span>
+                </div>
+              }
+              <div class="flex items-center justify-between gap-3">
+                <span class="font-medium">You Are Scanning On:</span>
+                <span>{{ formatUnitTypeLabel(details.expectedUnitType) }}</span>
+              </div>
+              <div class="flex items-center justify-between gap-3">
+                <span class="font-medium">Serial Is Registered As:</span>
+                <span>{{ formatUnitTypeLabel(details.actualUnitType) }}</span>
+              </div>
+            </div>
+          </div>
+        }
       </div>
 
       <!-- Footer -->
