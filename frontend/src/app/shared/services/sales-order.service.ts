@@ -949,6 +949,7 @@ export class SalesOrderService {
       forceAssign?: boolean;
       forceInsert?: boolean;
       forceReassign?: boolean;
+      forceCorrectUnitType?: boolean;
     }>;
   }): Promise<ScanSalesSerialBatchResponse> {
     const response = await apiClient.post<ScanSalesSerialBatchResponse>(

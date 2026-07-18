@@ -2316,6 +2316,7 @@ export class SerialNumberService {
         : Number(dto.expectedCapacityId);
     const expectedUnitType = this.normalizeUnitType(dto.expectedUnitType);
     const userId = actor?.userId ?? undefined;
+    let unitTypeCorrectedFrom: string | null = null;
 
     const auditMetadata = {
       branchId,
@@ -2608,7 +2609,65 @@ export class SerialNumberService {
     if (expectedUnitType) {
       const scannedUnitType = this.normalizeUnitType(serial.unitType);
       if (scannedUnitType && scannedUnitType !== expectedUnitType) {
-        return auditFailure(`Serial number unit type mismatch. Expected ${expectedUnitType}`);
+        if (!dto.forceCorrectUnitType) {
+          const message = `This serial is registered as ${scannedUnitType}, but you are scanning on ${expectedUnitType}.`;
+
+          await this.logSerialScanAudit(
+            'SERIAL_SCAN_FAILURE',
+            'SalesOrder',
+            salesId,
+            serialNumber,
+            message,
+            {
+              ...auditMetadata,
+              actualUnitType: scannedUnitType,
+            },
+            actor,
+          );
+
+          return {
+            success: false,
+            message,
+            validationStatus: 'error_unit_type_mismatch' as ScanSalesOrderValidationStatus,
+            details: {
+              expectedUnitType,
+              actualUnitType: scannedUnitType,
+              serialNumber,
+            },
+            item: undefined,
+          };
+        }
+
+        const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+        if (!serialUnitTypeColumn) {
+          return auditFailure('Unit type column is not configured in tblserial_numbers');
+        }
+
+        const unitTypeUpdateResult = await this.runUpdateById('tblserial_numbers', serial.id, {
+          [serialUnitTypeColumn]: expectedUnitType,
+        });
+
+        if (unitTypeUpdateResult.rowCount === 0) {
+          return auditFailure('Unable to update serial unit type');
+        }
+
+        unitTypeCorrectedFrom = scannedUnitType;
+        serial.unitType = expectedUnitType;
+
+        await this.serialEventLogService.logEvent({
+          serialId: serial.id,
+          serialNumber: serial.serialNumber ?? serialNumber,
+          eventType: 'UNIT_TYPE_CORRECTED',
+          previousStatus: serial.status,
+          newStatus: serial.status,
+          previousSalesId: Number.isFinite(currentSalesId) && currentSalesId > 0 ? currentSalesId : null,
+          newSalesId: salesId,
+          previousBranchId: serial.branchId ? Number(serial.branchId) : null,
+          newBranchId: branchId,
+          performedBy: actor?.userId ?? null,
+          performedByUsername: actor?.username ?? null,
+          ipAddress: actor?.ipAddress ?? null,
+        });
       }
     }
 
@@ -2828,11 +2887,14 @@ export class SerialNumberService {
 
     return auditSuccess({
       success: true,
-      message: 'Serial number scanned successfully',
+      message: unitTypeCorrectedFrom
+        ? `Serial unit type corrected from ${unitTypeCorrectedFrom} to ${expectedUnitType} and assigned to this sales order`
+        : 'Serial number scanned successfully',
       item: {
         ...serial,
         salesId: String(salesId),
         status: 'reserved',
+        unitType: expectedUnitType || serial.unitType,
         branchId: branchId !== null ? String(branchId) : serial.branchId,
       },
     });
@@ -2879,6 +2941,7 @@ export class SerialNumberService {
         ...(entry.forceAssign ? { forceAssign: true } : {}),
         ...(entry.forceInsert ? { forceInsert: true } : {}),
         ...(entry.forceReassign ? { forceReassign: true } : {}),
+        ...(entry.forceCorrectUnitType ? { forceCorrectUnitType: true } : {}),
       };
 
       try {
@@ -2945,7 +3008,9 @@ export class SerialNumberService {
       (entry) =>
         !entry.success &&
         entry.validationStatus &&
-        (entry.validationStatus.startsWith('warning_') || entry.validationStatus === 'not_found'),
+        (entry.validationStatus.startsWith('warning_') ||
+          entry.validationStatus === 'not_found' ||
+          entry.validationStatus === 'error_unit_type_mismatch'),
     ).length;
     // failureCount excludes validation warnings (those are handled by frontend modals)
     const failureCount = results.length - successCount - warningCount;

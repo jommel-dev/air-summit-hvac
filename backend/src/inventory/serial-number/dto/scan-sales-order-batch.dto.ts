@@ -11,6 +11,8 @@ export class ScanSalesOrderBatchItemDto {
   forceInsert?: boolean;
   /** Reassign from another SO */
   forceReassign?: boolean;
+  /** Update serial unit type to match the active scan field */
+  forceCorrectUnitType?: boolean;
 }
 
 export class ScanSalesOrderBatchDto {

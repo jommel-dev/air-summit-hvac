@@ -17,6 +17,7 @@ import {
   SerialValidationModalMode,
   SerialValidationDetails,
 } from '../sales-order/serial-validation-modal/serial-validation-modal.component';
+import { buildSerialUnitTypeMismatchMessage } from '../../shared/utils/serial-scan-errors';
 import axios from 'axios';
 
 interface PendingValidationWarning {
@@ -1354,7 +1355,13 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       });
 
       const results = Array.isArray(response.items) ? response.items : [];
-      const warningStatuses = ['not_found', 'warning_defective', 'warning_mismatch', 'warning_reassignment'];
+      const validationPromptStatuses = [
+        'not_found',
+        'warning_defective',
+        'warning_mismatch',
+        'warning_reassignment',
+        'error_unit_type_mismatch',
+      ];
 
       batch.forEach((entry, index) => {
         const result = results[index];
@@ -1364,7 +1371,7 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
         }
 
         // Check if this result is a validation warning that needs user confirmation
-        if (!result?.success && result?.validationStatus && warningStatuses.includes(result.validationStatus)) {
+        if (!result?.success && result?.validationStatus && validationPromptStatuses.includes(result.validationStatus)) {
           this.removeLocalSerial(unitEntry, entry.serialNumber);
           unitEntry.scanError = '';
           unitEntry.scanSuccess = '';
@@ -1610,14 +1617,33 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
   }
 
   onValidationModalCancel(): void {
+    const warning = this.currentValidationWarning;
+
     // Discard the serial from the queue
     this.pendingValidationWarnings.shift();
     this.currentValidationWarning = null;
     this.isValidationModalOpen = false;
 
-    // Refocus scan input
-    const unitLabel = this.getSelectedUnitTypeLabel(this.activeProductTabIndex);
-    this.focusSerialScanInput(this.activeProductTabIndex, unitLabel);
+    if (warning?.validationStatus === 'error_unit_type_mismatch') {
+      const unitEntry = this.getUnitEntry(warning.productIndex, warning.unitLabel);
+      const expectedUnitType = String(warning.details['expectedUnitType'] ?? warning.unitLabel ?? '');
+      const actualUnitType = String(warning.details['actualUnitType'] ?? '');
+      const mismatchPrompt = buildSerialUnitTypeMismatchMessage(
+        expectedUnitType,
+        actualUnitType,
+        warning.serialNumber,
+      );
+      if (unitEntry) {
+        unitEntry.scanError = mismatchPrompt.inlineError;
+        unitEntry.scanSuccess = '';
+        unitEntry.scanInfo = '';
+      }
+      this.focusSerialScanInput(warning.productIndex, warning.unitLabel);
+    } else {
+      // Refocus scan input
+      const unitLabel = this.getSelectedUnitTypeLabel(this.activeProductTabIndex);
+      this.focusSerialScanInput(this.activeProductTabIndex, unitLabel);
+    }
 
     // Process next warning in queue
     this.processNextValidationWarning();
@@ -1633,6 +1659,8 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
         return 'reassignment-warning';
       case 'not_found':
         return 'force-insert-prompt';
+      case 'error_unit_type_mismatch':
+        return 'unit-type-mismatch';
       default:
         return 'mismatch-warning';
     }
@@ -1647,8 +1675,10 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
         return { forceInsert: true };
       case 'warning_reassignment':
         return { forceReassign: true };
+      case 'error_unit_type_mismatch':
+        return { forceCorrectUnitType: true };
       default:
-        return { forceAssign: true };
+        return {};
     }
   }
 
