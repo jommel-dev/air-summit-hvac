@@ -1856,11 +1856,65 @@ export class SalesOrderComponent {
 
   /**
    * Checks if a given order status is eligible for DR generation.
-   * DR-eligible statuses: 'for-delivery', 'remitted', 'complete', 'released'
+   * DR-eligible statuses: 'for-delivery', 'remitted', 'complete', 'released', 'to-remit'
    */
   isDrEligibleStatus(status: string): boolean {
     const normalized = String(status ?? '').trim().toLowerCase().replace(/[\s_]/g, '-');
-    return ['for-delivery', 'remitted', 'complete', 'released'].includes(normalized);
+    return ['for-delivery', 'remitted', 'complete', 'completed', 'released', 'to-remit'].includes(normalized);
+  }
+
+  private isScheduleEarlyDrStatus(status: string): boolean {
+    const normalized = String(status ?? '').trim().toLowerCase().replace(/[\s_]/g, '-');
+    return ['pending', 'in-progress'].includes(normalized);
+  }
+
+  canPrintDrForOrder(order: SalesOrderRow): boolean {
+    if (this.activeTab === 'sales-receivable') {
+      return false;
+    }
+
+    if (this.activeTab === 'schedules') {
+      if ((order.serialCount ?? 0) <= 0) {
+        return false;
+      }
+
+      return this.isDrEligibleStatus(order.status) || this.isScheduleEarlyDrStatus(order.status);
+    }
+
+    return this.isDrEligibleStatus(order.status);
+  }
+
+  getDrawerSerialCount(): number {
+    let count = 0;
+
+    for (const item of this.form.productItems ?? []) {
+      const serialNumbers = (item as { serialNumbers?: Record<string, string[]> }).serialNumbers ?? {};
+      for (const serials of Object.values(serialNumbers)) {
+        if (!Array.isArray(serials)) {
+          continue;
+        }
+
+        count += serials.filter((serial) => String(serial ?? '').trim()).length;
+      }
+    }
+
+    return count;
+  }
+
+  canPrintDrFromDrawer(): boolean {
+    if (!this.editingSalesId || !this.form.customer_id) {
+      return false;
+    }
+
+    if (this.activeTab === 'schedules') {
+      if (this.getDrawerSerialCount() <= 0) {
+        return false;
+      }
+
+      return this.isDrEligibleStatus(this.form.status) || this.isScheduleEarlyDrStatus(this.form.status);
+    }
+
+    return this.isDrEligibleStatus(this.form.status);
   }
 
   /**
@@ -1880,20 +1934,22 @@ export class SalesOrderComponent {
     try {
       const result = await this.salesOrderService.getDrEligibleOrders(orderId);
       if (!result.success || !result.items || result.items.length === 0) {
-        const msg = (result as { message?: string }).message || 'No DR-eligible orders found for this installer + delivery date.';
+        const msg = (result as { message?: string }).message || 'No DR-eligible orders found for this delivery date.';
         this.openErrorModal('Print Error', msg);
         return;
       }
 
       const businessProfile = await this.loadBusinessProfileSettings();
 
-      // Map API response to DrEligibleOrder interface for the generator
       const drOrders: DrEligibleOrder[] = result.items.map((item) => ({
         id: item.id,
         soNumber: item.soNumber,
         customerName: item.customerName,
         customerAddress: item.customerAddress,
+        customerContactPerson: item.customerContactPerson,
+        customerContactNumber: item.customerContactNumber,
         customerType: item.customerType,
+        salesType: item.salesType,
         installer: item.installer,
         scheduleDate: item.scheduleDate,
         paymentMethod: item.paymentMethod,
@@ -1913,7 +1969,18 @@ export class SalesOrderComponent {
       blobSafeBytes.set(pdfBytes);
       const blob = new Blob([blobSafeBytes], { type: 'application/pdf' });
       const blobUrl = URL.createObjectURL(blob);
-      this.openDrPreview(blobUrl, `DR-${drOrders[0]?.installer || 'Unknown'}.pdf`);
+      const firstOrder = drOrders[0];
+      const isSubDealer =
+        firstOrder?.customerType === 'sub_dealer' ||
+        String(firstOrder?.salesType ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/[\s_]+/g, '-')
+          .includes('sub-dealer');
+      const fileLabel = isSubDealer
+        ? firstOrder?.customerName || 'Customer'
+        : firstOrder?.installer || 'Unknown';
+      this.openDrPreview(blobUrl, `DR-${fileLabel}.pdf`);
     } catch (error: unknown) {
       let errorMessage = 'Failed to generate new Delivery Receipt';
       if (axios.isAxiosError(error)) {

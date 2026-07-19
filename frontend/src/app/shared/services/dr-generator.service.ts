@@ -132,7 +132,7 @@ export class DrGeneratorService {
     return y;
   }
 
-  /** Renders the details section (date, installer, SOs) - installer-centric grouping */
+  /** Renders the details section (date, installer or customer, SOs) */
   private drawDetails(
     page: PDFPage,
     orders: DrEligibleOrder[],
@@ -168,13 +168,72 @@ export class DrGeneratorService {
     });
     y -= this.LINE_HEIGHT;
 
-    // Installer (the main grouping key)
-    const installer = firstOrder.installer ?? 'N/A';
-    page.drawText('Installer:', { x: labelX, y, size: this.BODY_FONT_SIZE, font: fonts.bold });
-    page.drawText(installer, { x: valueX, y, size: this.BODY_FONT_SIZE, font: fonts.regular });
-    y -= this.LINE_HEIGHT * 2;
+    if (this.isSubDealerOrder(firstOrder)) {
+      page.drawText('Customer:', { x: labelX, y, size: this.BODY_FONT_SIZE, font: fonts.bold });
+      page.drawText(firstOrder.customerName || 'N/A', {
+        x: valueX,
+        y,
+        size: this.BODY_FONT_SIZE,
+        font: fonts.regular,
+        maxWidth: this.PAGE_WIDTH - valueX - this.MARGIN_RIGHT,
+      });
+      y -= this.LINE_HEIGHT;
 
+      if (firstOrder.customerAddress) {
+        page.drawText('Address:', { x: labelX, y, size: this.BODY_FONT_SIZE, font: fonts.bold });
+        page.drawText(firstOrder.customerAddress, {
+          x: valueX,
+          y,
+          size: this.BODY_FONT_SIZE,
+          font: fonts.regular,
+          maxWidth: this.PAGE_WIDTH - valueX - this.MARGIN_RIGHT,
+        });
+        y -= this.LINE_HEIGHT;
+      }
+
+      if (firstOrder.customerContactPerson) {
+        page.drawText('Contact Person:', { x: labelX, y, size: this.BODY_FONT_SIZE, font: fonts.bold });
+        page.drawText(firstOrder.customerContactPerson, {
+          x: valueX,
+          y,
+          size: this.BODY_FONT_SIZE,
+          font: fonts.regular,
+          maxWidth: this.PAGE_WIDTH - valueX - this.MARGIN_RIGHT,
+        });
+        y -= this.LINE_HEIGHT;
+      }
+
+      if (firstOrder.customerContactNumber) {
+        page.drawText('Contact No.:', { x: labelX, y, size: this.BODY_FONT_SIZE, font: fonts.bold });
+        page.drawText(firstOrder.customerContactNumber, {
+          x: valueX,
+          y,
+          size: this.BODY_FONT_SIZE,
+          font: fonts.regular,
+        });
+        y -= this.LINE_HEIGHT;
+      }
+    } else {
+      const installer = firstOrder.installer ?? 'N/A';
+      page.drawText('Installer:', { x: labelX, y, size: this.BODY_FONT_SIZE, font: fonts.bold });
+      page.drawText(installer, { x: valueX, y, size: this.BODY_FONT_SIZE, font: fonts.regular });
+      y -= this.LINE_HEIGHT;
+    }
+
+    y -= this.LINE_HEIGHT;
     return y;
+  }
+
+  private isSubDealerOrder(order: DrEligibleOrder): boolean {
+    if (order.customerType === 'sub_dealer') {
+      return true;
+    }
+
+    return String(order.salesType ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_]+/g, '-')
+      .includes('sub-dealer');
   }
 
   /**
