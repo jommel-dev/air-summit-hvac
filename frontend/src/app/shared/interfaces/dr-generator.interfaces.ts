@@ -7,7 +7,10 @@ export interface DrEligibleOrder {
   soNumber: string;
   customerName: string;
   customerAddress: string;
+  customerContactPerson?: string;
+  customerContactNumber?: string;
   customerType: 'regular' | 'sub_dealer';
+  salesType?: string;
   installer: string | null;
   scheduleDate: string | null;
   paymentMethod: string | null;

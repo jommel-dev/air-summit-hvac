@@ -6957,16 +6957,49 @@ export class SalesOrderService {
       return { success: false, message: 'Invalid order id', items: [] };
     }
 
+    const normalizedStatusSql = `REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, ''))), '_', '-'), ' ', '-')`;
+    const drEligibleStatusSql = `(
+      ${normalizedStatusSql} IN ('for-delivery', 'remitted', 'complete', 'completed', 'released', 'to-remit')
+      OR (
+        ${normalizedStatusSql} IN ('pending', 'in-progress')
+        AND EXISTS (
+          SELECT 1
+          FROM tblserial_numbers sn_dr
+          WHERE COALESCE(to_jsonb(sn_dr)->>'salesId', to_jsonb(sn_dr)->>'sales_id') = so.id::text
+        )
+      )
+    )`;
+    const scheduleDateSql = `COALESCE(NULLIF(to_jsonb(so)->>'scheduleDate', ''), NULLIF(to_jsonb(so)->>'schedule_date', ''))`;
+    const scheduleDateDaySql = `LEFT(${scheduleDateSql}, 10)`;
+    const salesTypeSql = `LOWER(REPLACE(REPLACE(COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', ''), '_', '-'), ' ', '-'))`;
+    const customerIdSql = `COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')`;
+    const customerTypeSql = `LOWER(REPLACE(COALESCE(to_jsonb(c)->>'customer_type', to_jsonb(c)->>'customerType', 'regular'), '_', '-'))`;
+
     try {
-      // Step 1: Look up the given order to get its installer and scheduleDate
       const sourceResult = await this.databaseService.query<{
         installer: string | null;
         scheduleDate: string | null;
+        salesType: string | null;
+        customerId: string | null;
+        customerName: string | null;
+        customerAddress: string | null;
+        customerContactPerson: string | null;
+        customerContactNumber: string | null;
+        customerType: string | null;
       }>(
         `SELECT
            COALESCE(to_jsonb(so)->>'installer', '') AS installer,
-           COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', null) AS "scheduleDate"
+           ${scheduleDateSql} AS "scheduleDate",
+           COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '') AS "salesType",
+           ${customerIdSql} AS "customerId",
+           COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '') AS "customerName",
+           COALESCE(to_jsonb(c)->>'address', '') AS "customerAddress",
+           COALESCE(to_jsonb(c)->>'contact_person', to_jsonb(c)->>'contactPerson', '') AS "customerContactPerson",
+           COALESCE(to_jsonb(c)->>'contact_number', to_jsonb(c)->>'contactNumber', '') AS "customerContactNumber",
+           COALESCE(to_jsonb(c)->>'customer_type', to_jsonb(c)->>'customerType', 'regular') AS "customerType"
          FROM tblsales_order so
+         LEFT JOIN tblcustomer c
+           ON c.id::text = ${customerIdSql}
          WHERE so.id = $1`,
         [id],
       );
@@ -6978,20 +7011,59 @@ export class SalesOrderService {
       const sourceOrder = sourceResult.rows[0];
       const installer = (sourceOrder.installer ?? '').trim();
       const scheduleDate = (sourceOrder.scheduleDate ?? '').trim();
+      const scheduleDateDay = scheduleDate.slice(0, 10);
+      const customerId = (sourceOrder.customerId ?? '').trim();
+      const normalizedSalesType = String(sourceOrder.salesType ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_]+/g, '-');
+      const normalizedCustomerType = String(sourceOrder.customerType ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_]+/g, '-');
+      const isSubDealerOrder =
+        normalizedSalesType.includes('sub-dealer') || normalizedCustomerType === 'sub-dealer';
 
-      if (!installer) {
-        return { success: false, message: 'Order has no installer assigned. Cannot group for DR.', items: [] };
-      }
-      if (!scheduleDate) {
-        return { success: false, message: 'Order has no delivery date (scheduleDate). Cannot group for DR.', items: [] };
+      if (!scheduleDateDay) {
+        return {
+          success: false,
+          message: 'Order has no delivery date (scheduleDate). Cannot group for DR.',
+          items: [],
+        };
       }
 
-      // Step 2: Find all DR-eligible orders with same installer + same scheduleDate
-      const params: unknown[] = [installer, scheduleDate];
+      if (isSubDealerOrder) {
+        if (!customerId) {
+          return {
+            success: false,
+            message: 'Sub-dealer order has no customer assigned. Cannot generate DR.',
+            items: [],
+          };
+        }
+      } else if (!installer) {
+        return {
+          success: false,
+          message: 'Order has no installer assigned. Cannot group for DR.',
+          items: [],
+        };
+      }
+
+      const params: unknown[] = isSubDealerOrder ? [customerId, scheduleDateDay] : [installer, scheduleDateDay];
       const whereParts: string[] = [
-        `COALESCE(to_jsonb(so)->>'installer', '') = $1`,
-        `COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', '') = $2`,
-        `REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, ''))), '_', '-'), ' ', '-') IN ('for-delivery', 'remitted', 'complete', 'released')`,
+        isSubDealerOrder
+          ? `${customerIdSql} = $1`
+          : `COALESCE(to_jsonb(so)->>'installer', '') = $1`,
+        `${scheduleDateDaySql} = LEFT($2, 10)`,
+        drEligibleStatusSql,
+        isSubDealerOrder
+          ? `(
+              ${salesTypeSql} LIKE '%sub-dealer%'
+              OR ${customerTypeSql} IN ('sub-dealer', 'sub_dealer')
+            )`
+          : `(
+              ${salesTypeSql} NOT LIKE '%sub-dealer%'
+              AND ${customerTypeSql} NOT IN ('sub-dealer', 'sub_dealer')
+            )`,
       ];
 
       if (branchId && Number.isFinite(Number(branchId)) && Number(branchId) > 0) {
@@ -7008,7 +7080,10 @@ export class SalesOrderService {
         soNumber: string | null;
         customerName: string | null;
         customerAddress: string | null;
+        customerContactPerson: string | null;
+        customerContactNumber: string | null;
         customerType: string | null;
+        salesType: string | null;
         installer: string | null;
         scheduleDate: string | null;
       }>(
@@ -7017,19 +7092,28 @@ export class SalesOrderService {
            COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', '') AS "soNumber",
            COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '') AS "customerName",
            COALESCE(to_jsonb(c)->>'address', '') AS "customerAddress",
+           COALESCE(to_jsonb(c)->>'contact_person', to_jsonb(c)->>'contactPerson', '') AS "customerContactPerson",
+           COALESCE(to_jsonb(c)->>'contact_number', to_jsonb(c)->>'contactNumber', '') AS "customerContactNumber",
            COALESCE(to_jsonb(c)->>'customer_type', to_jsonb(c)->>'customerType', 'regular') AS "customerType",
+           COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '') AS "salesType",
            COALESCE(to_jsonb(so)->>'installer', '') AS installer,
-           COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', null) AS "scheduleDate"
+           ${scheduleDateSql} AS "scheduleDate"
          FROM tblsales_order so
          LEFT JOIN tblcustomer c
-           ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId')
+           ON c.id::text = ${customerIdSql}
          WHERE ${whereSql}
          ORDER BY so.id ASC`,
         params,
       );
 
       if (ordersResult.rowCount === 0) {
-        return { success: true, items: [] };
+        return {
+          success: false,
+          message: isSubDealerOrder
+            ? 'No DR-eligible sub-dealer orders found for this customer and delivery date.'
+            : 'No DR-eligible orders found for this installer and delivery date.',
+          items: [],
+        };
       }
 
       const orderIds = ordersResult.rows.map((row) => row.id);
@@ -7068,29 +7152,31 @@ export class SalesOrderService {
         [orderIds.map(String)],
       );
 
-      // Fetch payment methods for all eligible orders
-      const paymentsResult = await this.databaseService.query<{
-        salesId: string;
-        method: string;
-      }>(
-        `SELECT
-           so_id::text AS "salesId",
-           method
-         FROM tblso_payments
-         WHERE so_id = ANY($1::integer[])
-           AND LOWER(COALESCE(status, 'paid')) = 'paid'
-           AND payment_type = 'sales'
-         ORDER BY so_id`,
-        [orderIds],
-      );
+      let paymentsByOrder = new Map<string, string>();
+      try {
+        const paymentsResult = await this.databaseService.query<{
+          salesId: string;
+          method: string;
+        }>(
+          `SELECT
+             so_id::text AS "salesId",
+             method
+           FROM tblso_payments
+           WHERE so_id = ANY($1::integer[])
+             AND LOWER(COALESCE(status, 'paid')) = 'paid'
+             AND payment_type = 'sales'
+           ORDER BY so_id`,
+          [orderIds],
+        );
 
-      // Build a map of salesId → payment method (first match)
-      const paymentsByOrder = new Map<string, string>();
-      for (const row of paymentsResult.rows) {
-        const salesId = String(row.salesId ?? '');
-        if (!paymentsByOrder.has(salesId)) {
-          paymentsByOrder.set(salesId, row.method ?? '');
+        for (const row of paymentsResult.rows) {
+          const salesId = String(row.salesId ?? '');
+          if (!paymentsByOrder.has(salesId)) {
+            paymentsByOrder.set(salesId, row.method ?? '');
+          }
         }
+      } catch {
+        paymentsByOrder = new Map<string, string>();
       }
 
       // Group serials by salesId → productId+capacityId
@@ -7133,13 +7219,28 @@ export class SalesOrderService {
           });
         }
 
+        const normalizedOrderCustomerType = String(order.customerType ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/[\s_]+/g, '-');
+        const normalizedOrderSalesType = String(order.salesType ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/[\s_]+/g, '-');
+        const orderIsSubDealer =
+          normalizedOrderSalesType.includes('sub-dealer') ||
+          normalizedOrderCustomerType === 'sub-dealer';
+
         return {
           id: order.id,
           soNumber: order.soNumber ?? '',
           customerName: order.customerName ?? '',
           customerAddress: order.customerAddress ?? '',
-          customerType: (order.customerType ?? 'regular') as 'regular' | 'sub_dealer',
-          installer: order.installer || null,
+          customerContactPerson: order.customerContactPerson ?? '',
+          customerContactNumber: order.customerContactNumber ?? '',
+          customerType: (orderIsSubDealer ? 'sub_dealer' : 'regular') as 'regular' | 'sub_dealer',
+          salesType: order.salesType ?? '',
+          installer: orderIsSubDealer ? (order.customerName || null) : (order.installer || null),
           scheduleDate: order.scheduleDate || null,
           paymentMethod: paymentsByOrder.get(String(order.id)) ?? null,
           productItems: [...productItemMap.values()],
