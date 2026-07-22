@@ -157,8 +157,8 @@ export class SalesOrderService {
   /**
    * Bulk remit multiple sales orders by setting status to 'remitted'.
    * Validation:
-   * - Only remits orders that are currently 'for-delivery' (not 'pending')
-   * - Orders must have at least one scanned serial number
+   * - Regular orders: must be 'for-delivery' and have scanned serial numbers
+   * - Service-only orders: can remit directly from workflow statuses (e.g. after-sales)
    */
   async bulkRemitSalesOrders(orderIds: number[], userId?: number): Promise<{ success: boolean; message: string; updatedCount?: number; skipped?: Array<{ id: number; soNumber: string; reason: string }> }> {
     if (!orderIds || orderIds.length === 0) {
@@ -172,11 +172,13 @@ export class SalesOrderService {
         so_number: string;
         normalized_status: string;
         serial_count: string;
+        sales_type: string | null;
       }>(
         `SELECT
            so.id,
            COALESCE(so.so_number, '') AS so_number,
            REPLACE(REPLACE(LOWER(TRIM(COALESCE(so.status, 'pending'))), '_', '-'), ' ', '-') AS normalized_status,
+           COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '') AS sales_type,
            (SELECT COUNT(*)::text FROM tblserial_numbers sn
             WHERE COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id', '')  = so.id::text
            ) AS serial_count
@@ -191,6 +193,26 @@ export class SalesOrderService {
       for (const row of validationResult.rows) {
         const serialCount = parseInt(row.serial_count ?? '0', 10);
         const status = row.normalized_status;
+        const normalizedSalesType = String(row.sales_type ?? '')
+          .trim()
+          .toLowerCase()
+          .replace(/[\s_&]+/g, '-')
+          .replace(/-+/g, '-');
+        const isServiceOnly = normalizedSalesType === 'service' || normalizedSalesType === 'services';
+        const nonRemittableStatuses = ['remitted', 'complete', 'completed', 'cancelled', 'rejected'];
+
+        if (isServiceOnly) {
+          if (nonRemittableStatuses.includes(status)) {
+            skipped.push({
+              id: row.id,
+              soNumber: row.so_number,
+              reason: `Order status is "${status}" and cannot be remitted again`,
+            });
+          } else {
+            eligible.push(row.id);
+          }
+          continue;
+        }
 
         if (status === 'pending') {
           skipped.push({ id: row.id, soNumber: row.so_number, reason: 'Order is still in Pending status' });
