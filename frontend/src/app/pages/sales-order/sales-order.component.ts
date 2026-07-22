@@ -389,10 +389,16 @@ export class SalesOrderComponent {
     // UI-level validation: check for pending or no-serial orders
     const selectedOrders = this.orders.filter(o => this.selectedOrderIds.has(o.id));
     const pendingOrders = selectedOrders.filter(o => {
+      if (this.isServiceOnlySalesType(o.salesType)) {
+        return false;
+      }
       const normalized = (o.status ?? '').trim().toLowerCase().replace(/[_ ]/g, '-');
       return normalized === 'pending';
     });
     const noSerialOrders = selectedOrders.filter(o => {
+      if (this.isServiceOnlySalesType(o.salesType)) {
+        return false;
+      }
       const normalized = (o.status ?? '').trim().toLowerCase().replace(/[_ ]/g, '-');
       return normalized !== 'pending' && (o.serialCount ?? 0) === 0;
     });
@@ -415,7 +421,7 @@ export class SalesOrderComponent {
     if (this.selectedOrderIds.size === 1) {
       const orderId = [...this.selectedOrderIds][0];
       const order = this.orders.find(o => o.id === orderId);
-      if (order?.installer?.trim()) {
+      if (order?.installer?.trim() && !this.isServiceOnlySalesType(order.salesType)) {
         // Ask the user if they want to remit all of this installer's SOs for today
         this.bulkRemitInstallerName = order.installer.trim();
         this.isBulkRemitInstallerPromptOpen = true;
@@ -1636,12 +1642,37 @@ export class SalesOrderComponent {
     return !['for-delivery', 'for delivery', 'for_delivery', 'remitted', 'complete', 'completed'].includes(normalizedStatus);
   }
 
+  private isServiceOnlySalesType(salesType?: string): boolean {
+    const normalized = String(salesType ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_&]+/g, '-')
+      .replace(/-+/g, '-');
+    return normalized === 'service' || normalized === 'services';
+  }
+
+  private canDirectRemitOrder(order: SalesOrderRow): boolean {
+    if (!this.isServiceOnlySalesType(order.salesType)) {
+      return false;
+    }
+
+    const normalized = String(order.status ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_]/g, '-');
+    return !['remitted', 'complete', 'completed', 'cancelled', 'rejected'].includes(normalized);
+  }
+
   private validateProductSerialRequirements(targetStatus?: string): string | null {
     const salesType = this.form.salesType;
     const status = String(targetStatus ?? this.form.status ?? '').toLowerCase();
 
     // Skip serial validation during creation mode - allow saving draft first
     if (this.drawerMode === 'create') {
+      return null;
+    }
+
+    if (this.isServiceOnlySalesType(salesType)) {
       return null;
     }
 
