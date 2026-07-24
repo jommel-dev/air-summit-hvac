@@ -1272,6 +1272,7 @@
           <div class="space-y-5 px-6 py-5">
             <div class="rounded-xl border border-brand-200 bg-brand-50 p-4 dark:border-brand-500/30 dark:bg-brand-500/10">
               <p class="text-sm font-medium text-brand-800 dark:text-brand-200">Step 1: Download the CSV template, fill it in, then upload below.</p>
+              <p class="mt-2 text-xs text-brand-700/90 dark:text-brand-200/80">Capacity is optional when this PO has only one product item. If you have multiple product items, include capacity so serials go to the correct item.</p>
               <button
                 type="button"
                 (click)="downloadCsvTemplate()"
@@ -1343,6 +1344,10 @@
                 <p class="text-xs font-medium text-gray-500 dark:text-gray-400">Already Exists</p>
                 <p class="mt-1 text-lg font-semibold text-gray-700 dark:text-gray-200">{{ csvImportState.existsCurrentPoCount }}</p>
               </div>
+              <div class="rounded-xl border border-brand-200 bg-brand-50 p-3 text-center dark:border-brand-500/30 dark:bg-brand-500/10">
+                <p class="text-xs font-medium text-brand-700 dark:text-brand-400">Update Capacity</p>
+                <p class="mt-1 text-lg font-semibold text-brand-800 dark:text-brand-300">{{ csvImportState.updateCapacityCount }}</p>
+              </div>
             </div>
 
             <!-- Preview table -->
@@ -1353,7 +1358,9 @@
                     <tr>
                       <th class="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Serial Number</th>
                       <th class="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Unit Type</th>
+                      <th class="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Capacity</th>
                       <th class="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Status</th>
+                      <th class="px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Details</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
@@ -1361,6 +1368,7 @@
                       <tr class="hover:bg-gray-50 dark:hover:bg-gray-800/50">
                         <td class="px-4 py-2 text-sm text-gray-800 dark:text-gray-200">{{ row.serialNumber }}</td>
                         <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300">{{ row.unitType }}</td>
+                        <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300">{{ row.capacity }}</td>
                         <td class="px-4 py-2">
                           <span
                             class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold"
@@ -1368,17 +1376,20 @@
                               'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-400': row.status === 'valid',
                               'bg-error-50 text-error-700 dark:bg-error-500/15 dark:text-error-400': row.status === 'invalid',
                               'bg-warning-50 text-warning-700 dark:bg-warning-500/15 dark:text-warning-400': row.status === 'duplicate',
-                              'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300': row.status === 'exists-current-po'
+                              'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300': row.status === 'exists-current-po',
+                              'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-400': row.status === 'update-capacity'
                             }"
                           >
                             @switch (row.status) {
                               @case ('valid') { Valid }
                               @case ('invalid') { Invalid }
-                              @case ('duplicate') { Duplicate }
+                              @case ('duplicate') { Duplicate in CSV }
                               @case ('exists-current-po') { Already Exists }
+                              @case ('update-capacity') { Update Capacity }
                             }
                           </span>
                         </td>
+                        <td class="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">{{ row.reason || '-' }}</td>
                       </tr>
                     }
                   </tbody>
@@ -1406,7 +1417,7 @@
               <button
                 type="button"
                 (click)="confirmCsvImport()"
-                [disabled]="csvImportState.validCount === 0"
+                [disabled]="csvImportState.validCount === 0 && csvImportState.updateCapacityCount === 0"
                 class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Confirm Import

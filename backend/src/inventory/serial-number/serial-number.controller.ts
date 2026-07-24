@@ -166,6 +166,20 @@ export class SerialNumberController {
     return this.serialNumberService.scanPurchaseOrderBatch(dto, actor, branchId);
   }
 
+  @Post('purchase-import/reassign-capacity')
+  reassignCapacityForPurchaseImport(
+    @Body()
+    body: {
+      purchaseId: number;
+      serialNumbers: string[];
+      productId: number;
+      capacityId: number;
+      unitType?: string;
+    },
+  ) {
+    return this.serialNumberService.reassignCapacityForPurchaseImport(body);
+  }
+
   @Post('remove-purchase-order')
   removePurchaseOrderSerial(@Body() dto: RemovePurchaseOrderSerialDto) {
     return this.serialNumberService.removePurchaseOrderSerial(dto);

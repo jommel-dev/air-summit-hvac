@@ -144,6 +144,9 @@ export interface CheckSerialsResponse {
     currentPurchaseId: number | null;
     currentPoNumber: string | null;
     isSamePoAssignment: boolean;
+    productId: number | null;
+    capacityId: number | null;
+    unitType: string | null;
   }>;
 }
 
@@ -492,6 +495,21 @@ export class PurchaseOrderService {
   async checkSerials(payload: { serialNumbers: string[]; purchaseId: number }): Promise<CheckSerialsResponse> {
     const response = await apiClient.post<CheckSerialsResponse>(
       '/serial-number/check-serials',
+      payload,
+    );
+
+    return response.data;
+  }
+
+  async reassignCapacityForPurchaseImport(payload: {
+    purchaseId: number;
+    serialNumbers: string[];
+    productId: number;
+    capacityId: number;
+    unitType?: string;
+  }): Promise<{ success: boolean; message?: string; updated?: number }> {
+    const response = await apiClient.post<{ success: boolean; message?: string; updated?: number }>(
+      '/serial-number/purchase-import/reassign-capacity',
       payload,
     );
 

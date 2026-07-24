@@ -50,10 +50,13 @@ type CsvImportStep = 'upload' | 'summary' | 'importing';
 interface CsvImportRow {
   serialNumber: string;
   unitType: string;
-  status: 'valid' | 'invalid' | 'duplicate' | 'exists-current-po' | 'reassign';
+  capacity: string;
+  status: 'valid' | 'invalid' | 'duplicate' | 'exists-current-po' | 'update-capacity' | 'reassign';
   reason?: string;
   currentPoNumber?: string;
   currentPurchaseId?: number;
+  expectedProductId?: number;
+  expectedCapacityId?: number;
 }
 
 interface CsvImportState {
@@ -65,6 +68,7 @@ interface CsvImportState {
   invalidCount: number;
   duplicateCount: number;
   existsCurrentPoCount: number;
+  updateCapacityCount: number;
   reassignCount: number;
   parseError: string | null;
   importError: string | null;
@@ -218,6 +222,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     invalidCount: 0,
     duplicateCount: 0,
     existsCurrentPoCount: 0,
+    updateCapacityCount: 0,
     reassignCount: 0,
     parseError: null,
     importError: null,
@@ -2383,8 +2388,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       const worksheet = workbook.addWorksheet('Scanned Serials');
 
       worksheet.columns = [
-        { header: 'Unit Type', key: 'unitType', width: 14 },
         { header: 'Serial Number', key: 'serialNumber', width: 28 },
+        { header: 'Unit Type', key: 'unitType', width: 14 },
+        { header: 'Capacity', key: 'capacity', width: 18 },
       ];
 
       rows.forEach((row) => worksheet.addRow(row));
@@ -2414,14 +2420,15 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       return;
     }
 
-    const headers = ['Unit Type', 'Serial Number'];
+    const headers = ['Serial Number', 'Unit Type', 'Capacity'];
     const csvLines = [headers.map((value) => this.escapeCsvValue(value)).join(',')];
 
     for (const row of rows) {
       csvLines.push(
         [
-          row.unitType,
           row.serialNumber,
+          row.unitType,
+          row.capacity,
         ]
           .map((value) => this.escapeCsvValue(value))
           .join(','),
@@ -2434,8 +2441,18 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   downloadCsvTemplate(): void {
     const bom = '\uFEFF';
-    const header = 'serialNumber,unitType\n';
-    const blob = new Blob([bom + header], { type: 'text/csv;charset=utf-8;' });
+    const header = 'serialNumber,unitType,capacity\n';
+    const exampleCapacities = this.createForm.productItems
+      .map((item) => {
+        if (!item.productId || !item.capacityId) {
+          return '';
+        }
+        return this.getCapacityNameByProductAndCapacity(item.productId, item.capacityId);
+      })
+      .filter((value) => value.trim().length > 0);
+    const sampleCapacity = exampleCapacities[0] ?? '1.0HP';
+    const sampleRow = `SN-000001,indoor,${this.escapeCsvValue(sampleCapacity)}\n`;
+    const blob = new Blob([bom + header + sampleRow], { type: 'text/csv;charset=utf-8;' });
     this.downloadBlob(blob, 'serial_import_template.csv');
   }
 
@@ -2472,6 +2489,224 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.parseCsvForImport();
   }
 
+  private formatCapacityNumber(value: number): string {
+    if (!Number.isFinite(value)) {
+      return '';
+    }
+
+    const rounded = Math.round(value * 10000) / 10000;
+    if (Math.abs(rounded - Math.round(rounded)) < 1e-9) {
+      return String(Math.round(rounded));
+    }
+
+    return String(rounded)
+      .replace(/(\.\d*?)0+$/, '$1')
+      .replace(/\.$/, '');
+  }
+
+  private normalizeSerialLookupKey(serial: string): string {
+    return this.normalizeSerial(serial).toLowerCase();
+  }
+
+  private shouldUpdateCsvSerialAssignment(
+    row: CsvImportRow,
+    result: {
+      exists: boolean;
+      isSamePoAssignment: boolean;
+      productId: number | null;
+      capacityId: number | null;
+    },
+  ): boolean {
+    if (!result.exists || !result.isSamePoAssignment) {
+      return false;
+    }
+
+    const targetProductId = Number(row.expectedProductId ?? 0);
+    const targetCapacityId = Number(row.expectedCapacityId ?? 0);
+    if (!targetProductId || !targetCapacityId) {
+      return false;
+    }
+
+    const currentProductId = Number(result.productId ?? 0);
+    const currentCapacityId = Number(result.capacityId ?? 0);
+
+    if (!currentProductId && !currentCapacityId) {
+      return String(row.capacity ?? '').trim().length > 0;
+    }
+
+    return targetProductId !== currentProductId || targetCapacityId !== currentCapacityId;
+  }
+
+  private classifyExistingCsvSerialRow(
+    row: CsvImportRow,
+    result: {
+      exists: boolean;
+      isSamePoAssignment: boolean;
+      currentPoNumber: string | null;
+      currentPurchaseId: number | null;
+      productId: number | null;
+      capacityId: number | null;
+    },
+  ): void {
+    if (!result.exists) {
+      return;
+    }
+
+    row.currentPoNumber = result.currentPoNumber ?? undefined;
+    row.currentPurchaseId = result.currentPurchaseId ?? undefined;
+
+    if (this.shouldUpdateCsvSerialAssignment(row, result)) {
+      row.status = 'update-capacity';
+      row.reason = `Move from current assignment to ${row.capacity || 'target capacity'}`;
+      return;
+    }
+
+    if (result.isSamePoAssignment) {
+      row.status = 'exists-current-po';
+      row.reason = 'Already assigned to this PO with the same capacity';
+      return;
+    }
+
+    row.status = 'exists-current-po';
+    row.reason = `Already assigned to ${result.currentPoNumber ?? 'another PO'}`;
+  }
+
+  private normalizeCapacityLabel(value: string): string {
+    const raw = String(value ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/,/g, '')
+      .replace(/[\s_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!raw) {
+      return '';
+    }
+
+    // Accept common capacity formats such as 1.0HP, 1.0 HP, 1HP, and 1 HP.
+    const match = raw.match(/^(\d+(?:\.\d+)?)\s*([a-z][a-z0-9.-]*)$/);
+    if (match) {
+      const numeric = parseFloat(match[1]);
+      const unit = match[2].replace(/[^a-z0-9]/g, '');
+      if (Number.isFinite(numeric) && unit) {
+        return `${this.formatCapacityNumber(numeric)}${unit}`;
+      }
+    }
+
+    return raw.replace(/\s+/g, '');
+  }
+
+  private resolveProductItemsByCapacityAndUnitType(
+    capacityLabel: string,
+    unitType: string,
+  ): Array<{ productId: number; capacityId: number }> {
+    const normalizedCapacity = this.normalizeCapacityLabel(capacityLabel);
+    const normalizedUnitType = this.normalizeUnitTypeLabel(unitType);
+    const matches: Array<{ productId: number; capacityId: number }> = [];
+
+    for (const item of this.createForm.productItems) {
+      const productId = Number(item.productId) || 0;
+      const capacityId = Number(item.capacityId) || 0;
+      if (!productId || !capacityId) {
+        continue;
+      }
+
+      const itemCapacityName = this.normalizeCapacityLabel(
+        this.getCapacityNameByProductAndCapacity(String(productId), String(capacityId)),
+      );
+      if (itemCapacityName !== normalizedCapacity) {
+        continue;
+      }
+
+      const hasUnitType = (item.unitTypes ?? []).some(
+        (entry) => this.normalizeUnitTypeLabel(entry.label) === normalizedUnitType,
+      );
+      if (!hasUnitType) {
+        continue;
+      }
+
+      matches.push({ productId, capacityId });
+    }
+
+    return matches;
+  }
+
+  private resolveProductItemByCapacityAndUnitType(
+    capacityLabel: string,
+    unitType: string,
+  ): { productId: number; capacityId: number } | null {
+    const matches = this.resolveProductItemsByCapacityAndUnitType(capacityLabel, unitType);
+    if (matches.length === 1) {
+      return matches[0];
+    }
+    return null;
+  }
+
+  private getConfiguredCsvProductItems(): Array<{
+    productId: number;
+    capacityId: number;
+    unitTypes: string[];
+  }> {
+    return this.createForm.productItems
+      .map((item) => ({
+        productId: Number(item.productId) || 0,
+        capacityId: Number(item.capacityId) || 0,
+        unitTypes: (item.unitTypes ?? [])
+          .map((unitType) => this.normalizeUnitTypeLabel(unitType.label))
+          .filter(Boolean),
+      }))
+      .filter((item) => item.productId > 0 && item.capacityId > 0);
+  }
+
+  private assignCsvRowTargetProduct(row: CsvImportRow): boolean {
+    const normalizedUnitType = this.normalizeUnitTypeLabel(row.unitType);
+    const hasCapacity = String(row.capacity ?? '').trim().length > 0;
+
+    if (hasCapacity) {
+      const matches = this.resolveProductItemsByCapacityAndUnitType(row.capacity, row.unitType);
+      if (matches.length === 0) {
+        row.status = 'invalid';
+        row.reason = `Capacity "${row.capacity}" does not match any product item on this PO`;
+        return false;
+      }
+
+      if (matches.length > 1) {
+        row.status = 'invalid';
+        row.reason = `Capacity "${row.capacity}" matches multiple product items. Use a unique capacity per item.`;
+        return false;
+      }
+
+      row.expectedProductId = matches[0].productId;
+      row.expectedCapacityId = matches[0].capacityId;
+      return true;
+    }
+
+    const configuredItems = this.getConfiguredCsvProductItems();
+    if (configuredItems.length === 0) {
+      row.status = 'invalid';
+      row.reason = 'No product items with product and capacity selected on this PO';
+      return false;
+    }
+
+    if (configuredItems.length === 1) {
+      const item = configuredItems[0];
+      if (!item.unitTypes.includes(normalizedUnitType)) {
+        row.status = 'invalid';
+        row.reason = `Unit type "${row.unitType}" is not configured for this product item`;
+        return false;
+      }
+
+      row.expectedProductId = item.productId;
+      row.expectedCapacityId = item.capacityId;
+      return true;
+    }
+
+    row.status = 'invalid';
+    row.reason = 'Capacity is required when this PO has multiple product items';
+    return false;
+  }
+
   async parseCsvForImport(): Promise<void> {
     const file = this.csvImportState.file;
     if (!file) {
@@ -2487,6 +2722,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.csvImportState.invalidCount = 0;
     this.csvImportState.duplicateCount = 0;
     this.csvImportState.existsCurrentPoCount = 0;
+    this.csvImportState.updateCapacityCount = 0;
     this.csvImportState.reassignCount = 0;
 
     try {
@@ -2507,6 +2743,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       const header = this.parseCsvLine(lines[0]).map((value) => value.trim().toLowerCase());
       const serialIndex = header.findIndex((value) => value === 'serialnumber' || value === 'serial_number');
       const unitTypeIndex = header.findIndex((value) => value === 'unittype' || value === 'unit_type');
+      const capacityIndex = header.findIndex((value) => value === 'capacity' || value === 'capacity_name' || value === 'capacityname');
 
       if (serialIndex === -1) {
         this.csvImportState.parseError = 'Missing required header: serialNumber';
@@ -2517,6 +2754,8 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         this.csvImportState.parseError = 'Missing required header: unitType';
         return;
       }
+
+      // capacity column is optional (required only when PO has multiple product items)
 
       // Validate at least one data row exists
       if (lines.length < 2) {
@@ -2529,13 +2768,12 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         const columns = this.parseCsvLine(line);
         const rawSerial = String(columns[serialIndex] ?? '').trim();
         const rawUnitType = String(columns[unitTypeIndex] ?? '').trim();
-
-        const serialNumber = this.normalizeSerial(rawSerial);
-        const unitType = this.normalizeUnitTypeLabel(rawUnitType);
+        const rawCapacity = capacityIndex >= 0 ? String(columns[capacityIndex] ?? '').trim() : '';
 
         return {
-          serialNumber,
-          unitType,
+          serialNumber: this.normalizeSerial(rawSerial),
+          unitType: this.normalizeUnitTypeLabel(rawUnitType),
+          capacity: rawCapacity,
           status: 'valid' as const,
         };
       });
@@ -2544,7 +2782,6 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       const seenSerials = new Set<string>();
 
       for (const row of rows) {
-        // Check for invalid rows (missing required fields)
         if (!row.serialNumber) {
           row.status = 'invalid';
           row.reason = 'Missing serial number';
@@ -2556,7 +2793,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           continue;
         }
 
-        // Check for duplicates among non-invalid rows
+        if (!this.assignCsvRowTargetProduct(row)) {
+          continue;
+        }
+
         const normalizedKey = row.serialNumber.toLowerCase();
         if (seenSerials.has(normalizedKey)) {
           row.status = 'duplicate';
@@ -2568,7 +2808,6 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         row.status = 'valid';
       }
 
-      // Compute initial summary counts
       const totalCount = rows.length;
       const invalidCount = rows.filter((r) => r.status === 'invalid').length;
       const duplicateCount = rows.filter((r) => r.status === 'duplicate').length;
@@ -2578,37 +2817,26 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       this.csvImportState.invalidCount = invalidCount;
       this.csvImportState.duplicateCount = duplicateCount;
 
-      // Collect valid rows for ownership check
-      const validRows = rows.filter((r) => r.status === 'valid');
+      const candidateRows = rows.filter((r) => r.status === 'valid');
 
-      if (validRows.length > 0 && this.editingPurchaseId) {
+      if (candidateRows.length > 0 && this.editingPurchaseId) {
         try {
           const checkResponse = await this.purchaseOrderService.checkSerials({
-            serialNumbers: validRows.map((r) => r.serialNumber),
+            serialNumbers: candidateRows.map((r) => r.serialNumber),
             purchaseId: this.editingPurchaseId,
           });
 
-          // Map check-serials response back to rows
           const resultMap = new Map(
-            checkResponse.results.map((r) => [r.serialNumber.toLowerCase(), r]),
+            checkResponse.results.map((r) => [this.normalizeSerialLookupKey(r.serialNumber), r]),
           );
 
-          for (const row of validRows) {
-            const result = resultMap.get(row.serialNumber.toLowerCase());
+          for (const row of candidateRows) {
+            const result = resultMap.get(this.normalizeSerialLookupKey(row.serialNumber));
             if (!result) {
-              // No result from backend — keep as valid
               continue;
             }
 
-            if (result.exists) {
-              row.status = 'exists-current-po';
-              row.reason = result.isSamePoAssignment
-                ? 'Already assigned to this PO'
-                : `Already assigned to ${result.currentPoNumber ?? 'another PO'}`;
-              row.currentPoNumber = result.currentPoNumber ?? undefined;
-              row.currentPurchaseId = result.currentPurchaseId ?? undefined;
-            }
-            // If exists === false, keep status as 'valid' (will be imported)
+            this.classifyExistingCsvSerialRow(row, result);
           }
         } catch (networkError: unknown) {
           const errMsg = networkError instanceof Error ? networkError.message : 'Network error checking serial ownership.';
@@ -2617,16 +2845,15 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         }
       }
 
-      // Recompute counts after ownership classification
       const finalValidCount = rows.filter((r) => r.status === 'valid').length;
       const existsCurrentPoCount = rows.filter((r) => r.status === 'exists-current-po').length;
+      const updateCapacityCount = rows.filter((r) => r.status === 'update-capacity').length;
       const reassignCount = rows.filter((r) => r.status === 'reassign').length;
 
       this.csvImportState.validCount = finalValidCount;
       this.csvImportState.existsCurrentPoCount = existsCurrentPoCount;
+      this.csvImportState.updateCapacityCount = updateCapacityCount;
       this.csvImportState.reassignCount = reassignCount;
-
-      // Transition to summary step
       this.csvImportState.step = 'summary';
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Failed to parse CSV file.';
@@ -2635,77 +2862,107 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   async confirmCsvImport(): Promise<void> {
-    if (this.csvImportState.validCount === 0) {
+    if (this.csvImportState.validCount === 0 && this.csvImportState.updateCapacityCount === 0) {
       return;
     }
 
     this.csvImportState.step = 'importing';
     this.csvImportState.importError = null;
 
-    // Collect rows that are importable (only valid — non-existing serials)
-    const importableRows = this.csvImportState.rows.filter(
-      (row) => row.status === 'valid',
-    );
+    const importableRows = this.csvImportState.rows.filter((row) => row.status === 'valid');
+    const updateCapacityRows = this.csvImportState.rows.filter((row) => row.status === 'update-capacity');
 
-    if (importableRows.length === 0) {
+    if (importableRows.length === 0 && updateCapacityRows.length === 0) {
       this.csvImportState.importError = 'No importable rows found.';
       this.csvImportState.step = 'summary';
       return;
     }
 
-    // Build a lookup from normalized unit type label -> { productId, capacityId }
-    const unitTypeProductMap = new Map<string, { productId: number; capacityId: number }>();
-    for (const item of this.createForm.productItems) {
-      const productId = Number(item.productId) || 0;
-      const capacityId = Number(item.capacityId) || 0;
-      if (!productId) continue;
-      for (const unitType of item.unitTypes) {
-        const normalizedLabel = this.normalizeUnitTypeLabel(unitType.label);
-        if (normalizedLabel && !unitTypeProductMap.has(normalizedLabel)) {
-          unitTypeProductMap.set(normalizedLabel, { productId, capacityId });
-        }
-      }
-    }
-
     try {
-      const response = await this.purchaseOrderService.scanPurchaseSerialBatch({
-        items: importableRows.map((row) => {
-          const normalizedUnitType = this.normalizeUnitTypeLabel(row.unitType);
-          const productInfo = unitTypeProductMap.get(normalizedUnitType);
-          return {
-            serialNumber: row.serialNumber,
-            purchaseId: this.editingPurchaseId as number,
-            expectedProductId: productInfo?.productId,
-            expectedCapacityId: productInfo?.capacityId,
-            unitType: row.unitType,
-          };
-        }),
-      });
-
-      const results = Array.isArray(response.items) ? response.items : [];
       let successCount = 0;
       let failureCount = 0;
       const failedSerials: Array<{ serialNumber: string; reason: string }> = [];
 
-      results.forEach((result, index) => {
-        if (result?.success) {
-          successCount += 1;
-        } else {
-          failureCount += 1;
-          failedSerials.push({
-            serialNumber: importableRows[index]?.serialNumber ?? 'Unknown',
-            reason: result?.message ?? 'Failed to import serial number',
-          });
-        }
-      });
+      if (importableRows.length > 0) {
+        const response = await this.purchaseOrderService.scanPurchaseSerialBatch({
+          items: importableRows.map((row) => ({
+            serialNumber: row.serialNumber,
+            purchaseId: this.editingPurchaseId as number,
+            expectedProductId: row.expectedProductId,
+            expectedCapacityId: row.expectedCapacityId,
+            unitType: row.unitType,
+          })),
+        });
 
+        const results = Array.isArray(response.items) ? response.items : [];
+        results.forEach((result, index) => {
+          if (result?.success) {
+            successCount += 1;
+          } else {
+            failureCount += 1;
+            failedSerials.push({
+              serialNumber: importableRows[index]?.serialNumber ?? 'Unknown',
+              reason: result?.message ?? 'Failed to import serial number',
+            });
+          }
+        });
+      }
+
+      if (updateCapacityRows.length > 0 && this.editingPurchaseId) {
+        const groupedUpdates = new Map<string, { productId: number; capacityId: number; unitType: string; serialNumbers: string[] }>();
+        for (const row of updateCapacityRows) {
+          const productId = Number(row.expectedProductId ?? 0);
+          const capacityId = Number(row.expectedCapacityId ?? 0);
+          if (!productId || !capacityId) {
+            failureCount += 1;
+            failedSerials.push({
+              serialNumber: row.serialNumber,
+              reason: 'Missing target product/capacity for update',
+            });
+            continue;
+          }
+
+          const groupKey = `${productId}:${capacityId}:${row.unitType}`;
+          if (!groupedUpdates.has(groupKey)) {
+            groupedUpdates.set(groupKey, {
+              productId,
+              capacityId,
+              unitType: row.unitType,
+              serialNumbers: [],
+            });
+          }
+          groupedUpdates.get(groupKey)!.serialNumbers.push(row.serialNumber);
+        }
+
+        for (const group of groupedUpdates.values()) {
+          const updateResponse = await this.purchaseOrderService.reassignCapacityForPurchaseImport({
+            purchaseId: this.editingPurchaseId,
+            serialNumbers: group.serialNumbers,
+            productId: group.productId,
+            capacityId: group.capacityId,
+            unitType: group.unitType,
+          });
+
+          if (updateResponse.success) {
+            successCount += updateResponse.updated ?? group.serialNumbers.length;
+          } else {
+            failureCount += group.serialNumbers.length;
+            for (const serialNumber of group.serialNumbers) {
+              failedSerials.push({
+                serialNumber,
+                reason: updateResponse.message ?? 'Failed to update capacity',
+              });
+            }
+          }
+        }
+      }
+
+      const totalProcessed = importableRows.length + updateCapacityRows.length;
       if (failureCount === 0) {
-        // Full success — close modal, show success message, refresh serial list
         this.csvImportDialogMode = false;
-        this.createSuccess = `${successCount} serial number${successCount > 1 ? 's' : ''} imported successfully.`;
+        this.createSuccess = `${successCount} serial number${successCount > 1 ? 's' : ''} processed successfully.`;
         this.resetCsvImportState();
 
-        // Refresh the PO detail to update the serial list
         if (this.editingPurchaseId) {
           const detail = await this.purchaseOrderService.getPurchaseById(this.editingPurchaseId, {
             includeInstalled: this.activeTab === 'master-data',
@@ -2716,10 +2973,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           }
         }
       } else {
-        // Partial or full failure — show error in modal, stay on importing step with error
-        const errorMsg = failureCount === importableRows.length
+        const errorMsg = failureCount === totalProcessed
           ? `All ${failureCount} serial number${failureCount > 1 ? 's' : ''} failed to import.`
-          : `${successCount} imported successfully, ${failureCount} failed.`;
+          : `${successCount} processed successfully, ${failureCount} failed.`;
         this.csvImportState.importError = errorMsg;
         this.csvImportState.step = 'summary';
       }
@@ -2747,6 +3003,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       invalidCount: 0,
       duplicateCount: 0,
       existsCurrentPoCount: 0,
+      updateCapacityCount: 0,
       reassignCount: 0,
       parseError: null,
       importError: null,
@@ -3188,17 +3445,20 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   }
 
   private buildScannedSerialExportRows(): Array<{
-    unitType: string;
     serialNumber: string;
+    unitType: string;
+    capacity: string;
   }> {
     const activeItem = this.getActiveProductItem();
     if (!activeItem) {
       return [];
     }
 
+    const capacityName = this.getCapacityNameByProductAndCapacity(activeItem.productId, activeItem.capacityId);
     const rows: Array<{
-      unitType: string;
       serialNumber: string;
+      unitType: string;
+      capacity: string;
     }> = [];
 
     for (const unitType of activeItem.unitTypes) {
@@ -3207,8 +3467,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         : unitType.serials;
       for (const serialNumber of serials) {
         rows.push({
-          unitType: unitType.label,
           serialNumber,
+          unitType: unitType.label,
+          capacity: capacityName,
         });
       }
     }
@@ -3222,7 +3483,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
               continue;
             }
 
-            rows.push({ unitType: entry.unitType, serialNumber });
+            rows.push({ unitType: entry.unitType, serialNumber, capacity: capacityName });
           }
         }
       }
@@ -3232,6 +3493,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           rows.push({
             unitType: `Unmapped - ${entry.unitType}`,
             serialNumber,
+            capacity: capacityName,
           });
         }
       }
