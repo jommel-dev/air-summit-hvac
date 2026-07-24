@@ -2184,6 +2184,102 @@ export class SerialNumberService {
     return { success: true, message: `Reassigned ${updated} serial(s) to the selected capacity`, updated };
   }
 
+  async reassignCapacityForPurchaseImport(input: {
+    purchaseId: number;
+    serialNumbers: string[];
+    productId: number;
+    capacityId: number;
+    unitType?: string;
+  }) {
+    const purchaseId = Number(input.purchaseId);
+    const productId = Number(input.productId);
+    const capacityId = Number(input.capacityId);
+
+    if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
+      return { success: false, message: 'purchaseId is required' };
+    }
+    if (!productId || !capacityId) {
+      return { success: false, message: 'productId and capacityId are required' };
+    }
+
+    const normalized = (input.serialNumbers ?? [])
+      .map((serial) => this.normalizeSerialNumber(serial))
+      .filter((serial) => serial.length > 0);
+
+    if (normalized.length === 0) {
+      return { success: false, message: 'No serial numbers provided' };
+    }
+
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
+    const productIdColumn = this.pickColumn(serialColumns, ['productId', 'product_id']);
+    const capacityIdColumn = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
+    const unitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
+    const purchaseIdColumn = this.pickColumn(serialColumns, [
+      'purchaseId',
+      'purchase_id',
+      'po_id',
+      'purchaseOrderId',
+      'purchase_order_id',
+    ]);
+
+    if (!serialNumberColumn || !productIdColumn || !capacityIdColumn || !purchaseIdColumn) {
+      return { success: false, message: 'Required columns not found in tblserial_numbers' };
+    }
+
+    const normalizedUnitType = input.unitType
+      ? this.normalizeUnitType(input.unitType)
+      : null;
+
+    const setParts = [
+      `"${productIdColumn}" = $1`,
+      `"${capacityIdColumn}" = $2`,
+    ];
+    const params: unknown[] = [productId, capacityId];
+
+    if (normalizedUnitType && unitTypeColumn) {
+      params.push(normalizedUnitType);
+      setParts.push(`"${unitTypeColumn}" = $${params.length}`);
+    }
+
+    params.push(purchaseId);
+    const purchaseParamIndex = params.length;
+    params.push(normalized);
+
+    const result = await this.databaseService.query<{ id: number }>(
+      `UPDATE tblserial_numbers
+       SET ${setParts.join(', ')}
+       WHERE "${purchaseIdColumn}" = $${purchaseParamIndex}
+         AND LOWER(
+           regexp_replace(
+             BTRIM(COALESCE("${serialNumberColumn}", '')),
+             '\\s+',
+             ' ',
+             'g'
+           )
+         ) = ANY(
+           SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($${params.length}::text[]) s
+         )
+       RETURNING id`,
+      params,
+    );
+
+    const updated = result.rowCount ?? 0;
+    if (updated === 0) {
+      return {
+        success: false,
+        message: 'No matching serial numbers found on this purchase order to update',
+        updated: 0,
+      };
+    }
+
+    return {
+      success: true,
+      message: `Updated capacity for ${updated} serial number(s)`,
+      updated,
+    };
+  }
+
   async validateAndBulkInstall(serialNumbers: string[], userId?: number) {
     const normalizedInputs = (serialNumbers ?? [])
       .map((s) => this.normalizeSerialNumber(s))
@@ -4369,9 +4465,9 @@ export class SerialNumberService {
       );
     }
 
-    // Normalize input serial numbers (lowercase, trim) for matching
+    // Normalize input serial numbers for matching
     const normalizedSerials = serialNumbers.map((sn) =>
-      String(sn ?? '').trim().toLowerCase(),
+      this.normalizeSerialNumber(sn).toLowerCase(),
     );
 
     // Resolve column names dynamically
@@ -4384,6 +4480,9 @@ export class SerialNumberService {
       'purchaseOrderId',
       'purchase_order_id',
     ]);
+    const serialProductIdColumn = this.pickColumn(serialColumns, ['productId', 'product_id']);
+    const serialCapacityIdColumn = this.pickColumn(serialColumns, ['capacityId', 'capacity_id']);
+    const serialUnitTypeColumn = this.pickColumn(serialColumns, ['unitType', 'unit_type']);
 
     if (!serialNumberColumn || !serialPurchaseIdColumn) {
       throw new HttpException(
@@ -4401,37 +4500,80 @@ export class SerialNumberService {
       serialNumber: string;
       purchaseId: string | null;
       currentPoNumber: string | null;
+      productId: string | null;
+      capacityId: string | null;
+      unitType: string | null;
     }>(
       `SELECT
-         sn."${serialNumberColumn}" AS "serialNumber",
-         sn."${serialPurchaseIdColumn}" AS "purchaseId",
-         ${poNumberColumn ? `po."${poNumberColumn}"` : 'NULL'} AS "currentPoNumber"
+         COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '') AS "serialNumber",
+         COALESCE(
+           to_jsonb(sn)->>'purchaseId',
+           to_jsonb(sn)->>'purchase_id',
+           to_jsonb(sn)->>'po_id',
+           to_jsonb(sn)->>'purchaseOrderId',
+           to_jsonb(sn)->>'purchase_order_id'
+         ) AS "purchaseId",
+         ${poNumberColumn ? `po."${poNumberColumn}"` : 'NULL'} AS "currentPoNumber",
+         COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id') AS "productId",
+         COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id') AS "capacityId",
+         COALESCE(to_jsonb(sn)->>'unitType', to_jsonb(sn)->>'unit_type') AS "unitType"
        FROM tblserial_numbers sn
-       LEFT JOIN tblpurchase_orders po ON po.id = sn."${serialPurchaseIdColumn}"
-       WHERE LOWER(BTRIM(sn."${serialNumberColumn}")) = ANY($1::text[])`,
+       LEFT JOIN tblpurchase_orders po
+         ON po.id::text = COALESCE(
+           to_jsonb(sn)->>'purchaseId',
+           to_jsonb(sn)->>'purchase_id',
+           to_jsonb(sn)->>'po_id',
+           to_jsonb(sn)->>'purchaseOrderId',
+           to_jsonb(sn)->>'purchase_order_id'
+         )
+       WHERE LOWER(
+         regexp_replace(
+           BTRIM(COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '')),
+           '\\s+',
+           ' ',
+           'g'
+         )
+       ) = ANY(
+         SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g'))
+         FROM unnest($1::text[]) s
+       )`,
       [normalizedSerials],
     );
 
     // Build a lookup map from normalized serial -> DB row
     const existingMap = new Map<
       string,
-      { serialNumber: string; purchaseId: number | null; currentPoNumber: string | null }
+      {
+        serialNumber: string;
+        purchaseId: number | null;
+        currentPoNumber: string | null;
+        productId: number | null;
+        capacityId: number | null;
+        unitType: string | null;
+      }
     >();
 
     for (const row of result.rows) {
-      const normalizedKey = String(row.serialNumber ?? '').trim().toLowerCase();
+      const normalizedKey = this.normalizeSerialNumber(row.serialNumber).toLowerCase();
       existingMap.set(normalizedKey, {
         serialNumber: row.serialNumber,
         purchaseId: row.purchaseId !== null && row.purchaseId !== undefined
           ? Number(row.purchaseId)
           : null,
         currentPoNumber: row.currentPoNumber ?? null,
+        productId: row.productId !== null && row.productId !== undefined && String(row.productId).trim() !== ''
+          ? Number(row.productId)
+          : null,
+        capacityId: row.capacityId !== null && row.capacityId !== undefined && String(row.capacityId).trim() !== ''
+          ? Number(row.capacityId)
+          : null,
+        unitType: row.unitType ?? null,
       });
     }
 
     // Map each input serial to a result
     const results = serialNumbers.map((inputSerial) => {
-      const normalized = String(inputSerial ?? '').trim().toLowerCase();
+      const normalized = this.normalizeSerialNumber(inputSerial).toLowerCase();
       const existing = existingMap.get(normalized);
 
       if (!existing) {
@@ -4441,6 +4583,9 @@ export class SerialNumberService {
           currentPurchaseId: null,
           currentPoNumber: null,
           isSamePoAssignment: false,
+          productId: null,
+          capacityId: null,
+          unitType: null,
         };
       }
 
@@ -4454,6 +4599,9 @@ export class SerialNumberService {
         currentPurchaseId,
         currentPoNumber: existing.currentPoNumber,
         isSamePoAssignment,
+        productId: existing.productId,
+        capacityId: existing.capacityId,
+        unitType: existing.unitType,
       };
     });
 
