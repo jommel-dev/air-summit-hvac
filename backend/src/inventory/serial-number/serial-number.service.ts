@@ -869,34 +869,7 @@ export class SerialNumberService {
     }
 
     const serialRowsResult = await this.databaseService.query<CapacityStockSerialRow>(
-      `WITH selected_product AS (
-         SELECT
-           p.id::text AS product_id,
-           LOWER(TRIM(COALESCE(
-             to_jsonb(p)->>'productName',
-             to_jsonb(p)->>'product_name',
-             to_jsonb(p)->>'productname',
-             ''
-           ))) AS product_name
-         FROM tblproducts p
-         WHERE p.id::text = $1::text
-         LIMIT 1
-       ),
-       selected_capacity AS (
-         SELECT
-           c.id::text AS capacity_id,
-           LOWER(TRIM(COALESCE(
-             to_jsonb(c)->>'capacity',
-             to_jsonb(c)->>'capacityValue',
-             to_jsonb(c)->>'capacity_value',
-             to_jsonb(c)->>'name',
-             ''
-           ))) AS capacity_name
-         FROM tblcapacity c
-         WHERE c.id::text = $2::text
-         LIMIT 1
-       )
-       SELECT
+      `SELECT
          COALESCE(
            to_jsonb(sn)->>'serialNumber',
            to_jsonb(sn)->>'serial_number',
@@ -904,37 +877,20 @@ export class SerialNumberService {
          ) AS "serialNumber",
          COALESCE(to_jsonb(sn)->>'status', '') AS status
        FROM tblserial_numbers sn
-       CROSS JOIN selected_product sp
-       CROSS JOIN selected_capacity sc
-       WHERE (
-         COALESCE(
-           to_jsonb(sn)->>'productId',
-           to_jsonb(sn)->>'product_id',
-           to_jsonb(sn)->>'prodId',
-           to_jsonb(sn)->>'prod_id'
-         ) = sp.product_id
-         OR LOWER(TRIM(COALESCE(
-           to_jsonb(sn)->>'productName',
-           to_jsonb(sn)->>'product_name',
-           ''
-         ))) = sp.product_name
-       )
-       AND (
-         COALESCE(
-           to_jsonb(sn)->>'capacityId',
-           to_jsonb(sn)->>'capacity_id',
-           to_jsonb(sn)->>'capId',
-           to_jsonb(sn)->>'cap_id'
-         ) = sc.capacity_id
-         OR LOWER(TRIM(COALESCE(
-           to_jsonb(sn)->>'capacity',
-           to_jsonb(sn)->>'capacityValue',
-           to_jsonb(sn)->>'capacity_value',
-           to_jsonb(sn)->>'capacityName',
-           to_jsonb(sn)->>'capacity_name',
-           ''
-         ))) = sc.capacity_name
-       )
+       WHERE COALESCE(
+         to_jsonb(sn)->>'productId',
+         to_jsonb(sn)->>'product_id',
+         to_jsonb(sn)->>'prodId',
+         to_jsonb(sn)->>'prod_id',
+         ''
+       ) = $1::text
+       AND COALESCE(
+         to_jsonb(sn)->>'capacityId',
+         to_jsonb(sn)->>'capacity_id',
+         to_jsonb(sn)->>'capId',
+         to_jsonb(sn)->>'cap_id',
+         ''
+       ) = $2::text
        AND (
          $3::text IS NULL
          OR COALESCE(
@@ -990,7 +946,7 @@ export class SerialNumberService {
       }
 
       if (
-        ['delivered', 'installed', 'sold', 'released', 'out', 'outbound'].includes(
+        ['delivered', 'installed', 'for-delivery', 'sold', 'released', 'out', 'outbound'].includes(
           normalizedStatus,
         )
       ) {

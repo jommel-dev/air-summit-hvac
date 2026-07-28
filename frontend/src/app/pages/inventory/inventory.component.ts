@@ -2218,7 +2218,7 @@ export class InventoryComponent implements OnInit {
       };
     }
 
-    this.capacityStockCounts = counts;
+    this.capacityStockCounts = { ...this.capacityStockCounts, ...counts };
     this.isLoadingCapacityCounts = false;
   }
 
