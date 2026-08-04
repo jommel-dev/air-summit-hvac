@@ -3041,6 +3041,22 @@ export class SalesOrderService {
       )`);
     }
 
+    // --- 3b. Schedule Date range filter ---
+    const scheduleDateFrom = this.toIsoDateOrNull(query.scheduleDateFrom)?.slice(0, 10) ?? null;
+    const scheduleDateTo = this.toIsoDateOrNull(query.scheduleDateTo)?.slice(0, 10) ?? null;
+    if (scheduleDateFrom) {
+      params.push(scheduleDateFrom);
+      whereParts.push(
+        `NULLIF(BTRIM(COALESCE(base.schedule_date, '')), '')::date >= $${params.length}::date`,
+      );
+    }
+    if (scheduleDateTo) {
+      params.push(scheduleDateTo);
+      whereParts.push(
+        `NULLIF(BTRIM(COALESCE(base.schedule_date, '')), '')::date <= $${params.length}::date`,
+      );
+    }
+
     const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
 
     const computedStatusExpression =

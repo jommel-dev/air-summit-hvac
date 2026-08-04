@@ -3,4 +3,6 @@ export class ListSalesOrderQueryDto {
   limit?: number;
   search?: string;
   branchId?: number;
+  scheduleDateFrom?: string;
+  scheduleDateTo?: string;
 }

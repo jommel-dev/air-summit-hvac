@@ -1,7 +1,8 @@
 ﻿
 import { CommonModule } from '@angular/common';
-import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
+import { Component, HostListener, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { DatePickerComponent } from '../../shared/components/form/date-picker/date-picker.component';
 import { ActivatedRoute } from '@angular/router';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
@@ -147,12 +148,14 @@ interface SalesDrawerHistoryEntry {
 
 @Component({
   selector: 'app-sales-order',
-  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, SerialValidationModalComponent],
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent, SerialValidationModalComponent, DatePickerComponent],
   templateUrl: './sales-order.component.html',
   styles: ``,
 })
 
 export class SalesOrderComponent {
+  @ViewChild('scheduleDateRangePicker') scheduleDateRangePicker?: DatePickerComponent;
+
     // Error dialog state for modal
     isErrorDialogOpen = false;
     errorDialog: SalesOrderErrorDialog | null = null;
@@ -221,10 +224,17 @@ export class SalesOrderComponent {
   isLoading = false;
   errorMessage = '';
   search = '';
+  scheduleDateFrom = '';
+  scheduleDateTo = '';
   page = 1;
+  pageInput: number | '' = 1;
   limit = 10;
   total = 0;
   totalPages = 1;
+
+  get pageInputMaxLength(): number {
+    return String(Math.max(1, this.totalPages)).length;
+  }
   private readonly searchDebounceMs = 300;
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private customerDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -729,6 +739,7 @@ export class SalesOrderComponent {
     if (this.activeTab === tab) return;
     this.activeTab = tab;
     this.page = 1;
+    this.pageInput = 1;
     await this.loadTabData(tab);
   }
 
@@ -1187,6 +1198,7 @@ export class SalesOrderComponent {
   onSearchChange(value: string): void {
     this.search = value;
     this.page = 1;
+    this.pageInput = 1;
     if (this.searchDebounceTimer) clearTimeout(this.searchDebounceTimer);
     this.searchDebounceTimer = setTimeout(() => {
       void this.loadTabData(this.activeTab);
@@ -1194,13 +1206,119 @@ export class SalesOrderComponent {
     }, this.searchDebounceMs);
   }
 
+  onScheduleDateRangeChange(event: { dateStr?: string }): void {
+    const dateStr = String(event.dateStr ?? '').trim();
+    if (!dateStr) {
+      this.scheduleDateFrom = '';
+      this.scheduleDateTo = '';
+    } else {
+      const parts = dateStr
+        .split(/\s+to\s+/i)
+        .map((part) => part.trim())
+        .filter(Boolean);
+      this.scheduleDateFrom = parts[0] ?? '';
+      this.scheduleDateTo = parts[1] ?? parts[0] ?? '';
+    }
+
+    this.page = 1;
+    this.pageInput = 1;
+    void this.loadTabData(this.activeTab);
+  }
+
+  clearScheduleDateFilter(): void {
+    if (!this.scheduleDateFrom && !this.scheduleDateTo) {
+      return;
+    }
+    this.scheduleDateFrom = '';
+    this.scheduleDateTo = '';
+    this.scheduleDateRangePicker?.clear();
+    this.page = 1;
+    this.pageInput = 1;
+    void this.loadTabData(this.activeTab);
+  }
+
+  getScheduleDatePickerDefault(): string | string[] | undefined {
+    if (this.scheduleDateFrom && this.scheduleDateTo) {
+      return this.scheduleDateFrom === this.scheduleDateTo
+        ? this.scheduleDateFrom
+        : [this.scheduleDateFrom, this.scheduleDateTo];
+    }
+    return this.scheduleDateFrom || this.scheduleDateTo || undefined;
+  }
+
   onPageChange(nextPage: number): void {
     if (nextPage < 1 || nextPage > this.totalPages || nextPage === this.page) {
+      this.pageInput = this.page;
       return;
     }
 
     this.page = nextPage;
+    this.pageInput = nextPage;
     void this.loadTabData(this.activeTab);
+  }
+
+  onPageInputKeydown(event: KeyboardEvent): void {
+    const allowedKeys = new Set([
+      'Backspace',
+      'Delete',
+      'Tab',
+      'Escape',
+      'Enter',
+      'ArrowLeft',
+      'ArrowRight',
+      'Home',
+      'End',
+    ]);
+    if (allowedKeys.has(event.key) || event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+
+    if (!/^\d$/.test(event.key)) {
+      event.preventDefault();
+      return;
+    }
+
+    const input = event.target as HTMLInputElement;
+    const selectionLength = Math.abs((input.selectionEnd ?? 0) - (input.selectionStart ?? 0));
+    const nextLength = String(input.value ?? '').length - selectionLength + 1;
+    if (nextLength > this.pageInputMaxLength) {
+      event.preventDefault();
+    }
+  }
+
+  onPageInputChange(value: number | string | null): void {
+    if (value === null || value === '') {
+      this.pageInput = '';
+      return;
+    }
+
+    const digitsOnly = String(value).replace(/\D+/g, '').slice(0, this.pageInputMaxLength);
+    if (!digitsOnly) {
+      this.pageInput = '';
+      return;
+    }
+
+    const parsed = Number(digitsOnly);
+    if (!Number.isFinite(parsed)) {
+      this.pageInput = this.page;
+      return;
+    }
+
+    const maxPage = Math.max(1, this.totalPages);
+    this.pageInput = Math.min(parsed, maxPage);
+  }
+
+  onPageInputSubmit(): void {
+    const maxPage = Math.max(1, this.totalPages);
+    const parsed = Number(this.pageInput);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      this.pageInput = this.page;
+      return;
+    }
+
+    const clamped = Math.min(Math.floor(parsed), maxPage);
+    this.pageInput = clamped;
+    this.onPageChange(clamped);
   }
 
   onCustomerSearchChange(value: string): void {
@@ -3325,10 +3443,12 @@ export class SalesOrderComponent {
     if (!meta) {
       this.total = this.orders.length;
       this.totalPages = 1;
+      this.pageInput = this.page;
       return;
     }
 
     this.page = meta.page;
+    this.pageInput = meta.page;
     this.limit = meta.limit;
     this.total = meta.total;
     this.totalPages = Math.max(1, meta.totalPages || 1);
@@ -3350,6 +3470,8 @@ export class SalesOrderComponent {
       page: this.page,
       limit: this.limit,
       search: this.search.trim() || undefined,
+      scheduleDateFrom: this.scheduleDateFrom.trim() || undefined,
+      scheduleDateTo: this.scheduleDateTo.trim() || undefined,
     };
 
     try {

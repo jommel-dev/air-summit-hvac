@@ -89,14 +89,39 @@
     </div>
 
     <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <input
-        type="text"
-        [value]="search"
-        (input)="onSearchChange($any($event.target).value)"
-        placeholder="Search SO number, customer, status, sales type, or payment method"
-        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 sm:max-w-sm"
-      />
-      <div class="text-sm text-gray-500 dark:text-gray-400">
+      <div class="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <input
+          type="text"
+          [value]="search"
+          (input)="onSearchChange($any($event.target).value)"
+          placeholder="Search SO number, customer, status, sales type, or payment method"
+          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 sm:max-w-sm"
+        />
+        <div class="flex flex-wrap items-end gap-2">
+          <div class="w-full min-w-64 sm:w-72">
+            <app-date-picker
+              #scheduleDateRangePicker
+              id="sales-order-schedule-date-filter"
+              mode="range"
+              [staticCalendar]="false"
+              [defaultDate]="getScheduleDatePickerDefault()"
+              label="Schedule Date"
+              placeholder="Select schedule date range"
+              (dateChange)="onScheduleDateRangeChange($event)"
+            />
+          </div>
+          @if (scheduleDateFrom || scheduleDateTo) {
+            <button
+              type="button"
+              (click)="clearScheduleDateFilter()"
+              class="mb-0.5 rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Clear dates
+            </button>
+          }
+        </div>
+      </div>
+      <div class="text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
         Showing {{ orders.length }} of {{ total }}
       </div>
     </div>
@@ -267,7 +292,7 @@
         </table>
       </div>
 
-      <div class="mt-4 flex items-center justify-between">
+      <div class="mt-4 flex items-center justify-between gap-3">
         <button
           type="button"
           class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
@@ -277,7 +302,24 @@
           Previous
         </button>
 
-        <span class="text-sm text-gray-500 dark:text-gray-400">Page {{ page }} of {{ totalPages }}</span>
+        <div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+          <span>Page</span>
+          <input
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            [attr.maxlength]="pageInputMaxLength"
+            [ngModel]="pageInput"
+            (ngModelChange)="onPageInputChange($event)"
+            (keydown)="onPageInputKeydown($event)"
+            (keydown.enter)="onPageInputSubmit()"
+            (blur)="onPageInputSubmit()"
+            name="salesOrderPageInput"
+            class="w-16 rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-center text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+            aria-label="Go to page"
+          />
+          <span>of {{ totalPages }}</span>
+        </div>
 
         <button
           type="button"
