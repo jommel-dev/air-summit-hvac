@@ -536,6 +536,8 @@ export interface SalesQueryParams {
   page: number;
   limit: number;
   search?: string;
+  scheduleDateFrom?: string;
+  scheduleDateTo?: string;
 }
 
 interface SalesOrderListApiResponse {

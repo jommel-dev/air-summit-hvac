@@ -1,5 +1,7 @@
 # System Architecture — HVAC Inventory & Sales Management System
 
+**Related:** [SYSTEM_ANALYSIS.md](./SYSTEM_ANALYSIS.md) — strengths, weaknesses, known bugs, recurring client scenarios, and remediation roadmap.
+
 ## 1. Overview
 
 This is a full-stack web application for managing HVAC (Heating, Ventilation, and Air Conditioning) products, sales orders, purchase orders, materials, quotations, projects, and accounting. It supports multi-branch operations with role-based access control (RBAC).

@@ -17,6 +17,8 @@ export class DatePickerComponent {
   @Input() defaultDate?: string | Date | string[] | Date[];
   @Input() label?: string;
   @Input() placeholder?: string;
+  /** When true, calendar is always shown inline. When false, opens as a popup. */
+  @Input() staticCalendar = true;
   @Output() dateChange = new EventEmitter<any>();
 
   @ViewChild('dateInput', { static: false }) dateInput!: ElementRef<HTMLInputElement>;
@@ -26,7 +28,7 @@ export class DatePickerComponent {
   ngAfterViewInit() {
     this.flatpickrInstance = flatpickr(this.dateInput.nativeElement, {
       mode: this.mode,
-      static: true,
+      static: this.staticCalendar,
       monthSelectorType: 'static',
       dateFormat: 'Y-m-d',
       defaultDate: this.defaultDate,
@@ -34,6 +36,10 @@ export class DatePickerComponent {
         this.dateChange.emit({ selectedDates, dateStr, instance });
       }
     });
+  }
+
+  clear(): void {
+    this.flatpickrInstance?.clear(true);
   }
 
   ngOnDestroy() {
