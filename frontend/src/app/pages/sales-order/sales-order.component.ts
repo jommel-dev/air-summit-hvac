@@ -3598,14 +3598,29 @@ export class SalesOrderComponent {
 
   onProductChanged(index: number): void {
     const nextItems = [...this.form.productItems];
+    const currentItem = nextItems[index];
+    if (!currentItem) {
+      return;
+    }
+
+    const qty = Math.max(1, Math.floor(Number(currentItem.totalSetQty) || 1));
+    const productUnitTypeLabels = this.getProductUnitTypeLabels(currentItem.productId ?? '');
+    const nextUnitTypes =
+      productUnitTypeLabels.length > 0
+        ? productUnitTypeLabels.map((label) => this.createUnitTypeEntry(label, qty, []))
+        : [this.createUnitTypeEntry('set', qty, [])];
+
     nextItems[index] = {
-      ...nextItems[index],
+      ...currentItem,
       capacityId: '',
       sellPrice: this.isTransferSalesType() ? 0 : '',
       unitPrice: 0,
-      discountPrice: this.isTransferSalesType() ? '' : nextItems[index].discountPrice,
+      discountPrice: this.isTransferSalesType() ? '' : currentItem.discountPrice,
+      unitTypes: nextUnitTypes,
+      totalSetQty: qty,
     };
     this.form.productItems = nextItems;
+    this.ensureSelectedUnitType(index);
     this.recalculateTotalAmount();
   }
 
@@ -4804,6 +4819,28 @@ export class SalesOrderComponent {
       paymentMethod: '',
       referenceNo: '',
     };
+  }
+
+  private normalizeUnitTypeLabel(label: unknown): string {
+    const normalized = String(label ?? 'set')
+      .trim()
+      .toLowerCase()
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .replace(/[\s_-]*qty$/i, '')
+      .replace(/quantity$/i, '')
+      .trim();
+
+    return normalized || 'set';
+  }
+
+  private getProductUnitTypeLabels(productId: string): string[] {
+    const product = this.catalogProducts.find((item) => String(item.id) === String(productId));
+    const labels = Array.isArray(product?.unitTypes) ? product.unitTypes : [];
+
+    return labels
+      .map((entry) => this.normalizeUnitTypeLabel(entry))
+      .filter((entry, index, all) => entry.length > 0 && all.indexOf(entry) === index);
   }
 
   private ensureSelectedUnitType(productIndex: number): void {
