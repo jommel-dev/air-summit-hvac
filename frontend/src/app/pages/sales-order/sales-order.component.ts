@@ -2655,7 +2655,7 @@ export class SalesOrderComponent {
       totals.bankTransfer += payments.bankTransfer;
       totals.creditCard += payments.creditCard;
 
-      const scheduleText = this.buildRemittanceScheduleText(detail, breakdown);
+      const scheduleText = this.buildRemittanceScheduleText(detail, breakdown, payments);
       const reportsText = this.buildRemittanceReportsText(detail);
       const row = sheet.addRow([
         this.formatRemittanceDate(dateStr),
@@ -2737,6 +2737,14 @@ export class SalesOrderComponent {
     return haystack.includes('gcash') || haystack.includes('g-cash');
   }
 
+  /** True when at least one non-CC payment has an amount (Cash / GCash / Bank / etc.). */
+  private hasRemittanceNonCcPayment(detail: SalesOrderDetailItem): boolean {
+    return (detail.paymentDetails ?? []).some(
+      (payment) =>
+        !this.isCreditCardMethod(payment.method) && (Number(payment.amount) || 0) > 0,
+    );
+  }
+
   private splitRemittancePaymentAmounts(
     detail: SalesOrderDetailItem,
     baseTotal = 0,
@@ -2752,9 +2760,7 @@ export class SalesOrderComponent {
     let bankTransfer = 0;
     let creditCard = 0;
 
-    const ccPayments = (detail.paymentDetails ?? []).filter((payment) =>
-      this.isCreditCardMethod(payment.method),
-    );
+    const isSplitWithOtherMethods = this.hasRemittanceNonCcPayment(detail);
 
     for (const payment of detail.paymentDetails ?? []) {
       const amount = Number(payment.amount) || 0;
@@ -2769,10 +2775,10 @@ export class SalesOrderComponent {
       if (this.isCreditCardMethod(payment.method)) {
         const percent = this.parseCcChargePercent(payment.ccCharge);
         if (percent > 0) {
-          // Single CC payment: charge CC% on full remittance base (product + excess + service).
-          // Multiple CC payments: apply % on each payment amount as pre-CC base.
+          // CC-only: charge % on full order base (product + excess + service).
+          // Split (e.g. Cash + CC): charge % only on this CC payment amount.
           const chargeBase =
-            ccPayments.length === 1 && baseTotal > 0
+            !isSplitWithOtherMethods && baseTotal > 0
               ? baseTotal
               : amount > 0
                 ? amount
@@ -2874,7 +2880,10 @@ export class SalesOrderComponent {
     baseTotal: number;
     ccPercent: number;
     ccAmount: number;
+    ccChargeBase: number;
     grandTotal: number;
+    isCcOnly: boolean;
+    isSplitPayment: boolean;
   } {
     const productTotal = (detail.productItems ?? []).reduce((sum, item) => {
       const qty = Math.max(0, Math.floor(Number(item.totalSetQty) || 0));
@@ -2937,15 +2946,25 @@ export class SalesOrderComponent {
     const ccPayments = (detail.paymentDetails ?? []).filter((payment) =>
       this.isCreditCardMethod(payment.method),
     );
+    const isSplitWithOtherMethods = this.hasRemittanceNonCcPayment(detail);
+    const isCcOnly = ccPayments.length > 0 && !isSplitWithOtherMethods;
+
     const ccPercent = ccPayments.reduce(
       (max, payment) => Math.max(max, this.parseCcChargePercent(payment.ccCharge)),
       0,
     );
+
+    // CC-only: % on full order base. Split: % only on CC payment amount(s).
+    const ccChargeBase = isCcOnly
+      ? baseTotal
+      : ccPayments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0);
     const ccAmount =
-      ccPercent > 0 && baseTotal > 0
-        ? Math.round(baseTotal * (ccPercent / 100) * 100) / 100
+      ccPercent > 0 && ccChargeBase > 0
+        ? Math.round(ccChargeBase * (ccPercent / 100) * 100) / 100
         : 0;
-    const grandTotal = Math.round((baseTotal + ccAmount) * 100) / 100;
+    const grandTotal = isCcOnly
+      ? Math.round((baseTotal + ccAmount) * 100) / 100
+      : Math.round(baseTotal * 100) / 100;
 
     return {
       productTotal,
@@ -2953,8 +2972,63 @@ export class SalesOrderComponent {
       baseTotal,
       ccPercent,
       ccAmount,
+      ccChargeBase,
       grandTotal,
+      isCcOnly,
+      isSplitPayment: isSplitWithOtherMethods && (detail.paymentDetails?.length ?? 0) > 1,
     };
+  }
+
+  private buildRemittanceSchedulePaymentLines(
+    payments: {
+      cash: number;
+      gcash: number;
+      bankTransfer: number;
+      creditCard: number;
+    },
+    breakdown: {
+      ccPercent: number;
+      ccAmount: number;
+      ccChargeBase: number;
+      isCcOnly: boolean;
+    },
+  ): string[] {
+    const lines: string[] = [];
+
+    if (payments.cash > 0) {
+      lines.push(`Cash: ${this.formatRemittanceAmount(payments.cash)}`);
+    }
+    if (payments.gcash > 0) {
+      lines.push(`GCash: ${this.formatRemittanceAmount(payments.gcash)}`);
+    }
+    if (payments.bankTransfer > 0) {
+      lines.push(`Bank Transfer: ${this.formatRemittanceAmount(payments.bankTransfer)}`);
+    }
+
+    if (payments.creditCard > 0) {
+      if (
+        !breakdown.isCcOnly &&
+        breakdown.ccPercent > 0 &&
+        breakdown.ccAmount > 0 &&
+        breakdown.ccChargeBase > 0
+      ) {
+        lines.push(
+          `Credit Card: ${this.formatRemittanceAmount(breakdown.ccChargeBase)} + ${this.formatRemittanceAmount(breakdown.ccAmount)} (${breakdown.ccPercent}%) = ${this.formatRemittanceAmount(payments.creditCard)}`,
+        );
+      } else if (!breakdown.isCcOnly) {
+        lines.push(`Credit Card: ${this.formatRemittanceAmount(payments.creditCard)}`);
+      }
+    }
+
+    // Only emit split lines when more than one method actually remitted.
+    const activeCount = [
+      payments.cash,
+      payments.gcash,
+      payments.bankTransfer,
+      payments.creditCard,
+    ].filter((amount) => amount > 0).length;
+
+    return activeCount > 1 ? lines : [];
   }
 
   private buildRemittanceScheduleText(
@@ -2965,7 +3039,16 @@ export class SalesOrderComponent {
       baseTotal: number;
       ccPercent: number;
       ccAmount: number;
+      ccChargeBase: number;
       grandTotal: number;
+      isCcOnly: boolean;
+      isSplitPayment: boolean;
+    },
+    payments: {
+      cash: number;
+      gcash: number;
+      bankTransfer: number;
+      creditCard: number;
     },
   ): string {
     const customerName = String(detail.customerName ?? '').trim();
@@ -2989,7 +3072,12 @@ export class SalesOrderComponent {
       );
     }
 
-    if (breakdown.ccAmount > 0 && breakdown.ccPercent > 0) {
+    // CC-only: keep 15% on the Total line. Split: Total = order base only; CC% on payment lines.
+    if (
+      breakdown.isCcOnly &&
+      breakdown.ccAmount > 0 &&
+      breakdown.ccPercent > 0
+    ) {
       totalParts.push(
         `${this.formatRemittanceAmount(breakdown.ccAmount)} (${breakdown.ccPercent}%)`,
       );
@@ -2999,9 +3087,12 @@ export class SalesOrderComponent {
       totalParts.push(this.formatRemittanceAmount(Number(detail.totalAmount)));
     }
 
+    const totalEquals = breakdown.isCcOnly
+      ? breakdown.grandTotal
+      : breakdown.baseTotal;
     const totalLine =
-      breakdown.grandTotal > 0 && totalParts.length > 0
-        ? `Total: ${totalParts.join(' + ')} = ${this.formatRemittanceAmount(breakdown.grandTotal)}`
+      totalEquals > 0 && totalParts.length > 0
+        ? `Total: ${totalParts.join(' + ')} = ${this.formatRemittanceAmount(totalEquals)}`
         : `Total: ${totalParts.join(' + ')}`;
 
     const lines = [
@@ -3011,6 +3102,7 @@ export class SalesOrderComponent {
       `Order: ${orderEntries.join(', ')}`,
       `Mode of Payment: ${methods.join(', ').toUpperCase()}`,
       totalLine,
+      ...this.buildRemittanceSchedulePaymentLines(payments, breakdown),
     ];
 
     return lines.join('\n');
@@ -4088,13 +4180,23 @@ export class SalesOrderComponent {
   }
 
   addPaymentDetail(): void {
-    this.form.paymentDetails = [...this.form.paymentDetails, this.createEmptyPaymentItem()];
+    const nextPayment = this.createEmptyPaymentItem();
+    nextPayment.amount = 0;
+    nextPayment.isAmountManual = true;
+    this.form.paymentDetails = [...this.form.paymentDetails, nextPayment];
     this.syncPaymentAmounts();
   }
 
   removePaymentDetail(index: number): void {
     if (this.form.paymentDetails.length <= 1) return;
     this.form.paymentDetails = this.form.paymentDetails.filter((_: unknown, itemIndex: number) => itemIndex !== index);
+
+    if (this.form.paymentDetails.length === 1) {
+      this.form.paymentDetails[0].isAmountManual = false;
+      this.paymentAmountEditedByUser = false;
+    }
+
+    this.syncPaymentAmounts();
   }
 
   addProductItem(): void {
@@ -4319,6 +4421,11 @@ export class SalesOrderComponent {
 
     this.paymentAmountEditedByUser = true;
     payment.isAmountManual = true;
+
+    // Split payment: Payment 1 auto-adjusts to (order total - sum of other cards).
+    if (index > 0 && this.form.paymentDetails.length > 1) {
+      this.redistributePrimaryPaymentAmount();
+    }
   }
 
   onTermsChanged(index: number): void {
@@ -4381,7 +4488,17 @@ export class SalesOrderComponent {
       payment.ccCharge = value;
     }
 
-    // Always recalculate Amount from SO total + CC % when charge changes.
+    // Split payments: keep entered secondary amounts; only refresh Payment 1 remainder.
+    if (this.form.paymentDetails.length > 1) {
+      if (index > 0) {
+        payment.isAmountManual = true;
+        this.paymentAmountEditedByUser = true;
+      }
+      this.redistributePrimaryPaymentAmount();
+      return;
+    }
+
+    // Single payment: recalculate Amount from SO total + CC %.
     payment.isAmountManual = false;
     this.paymentAmountEditedByUser = false;
     payment.amount = this.applyCcChargeToAmount(Number(this.form.totalAmount) || 0, payment);
@@ -5843,8 +5960,68 @@ export class SalesOrderComponent {
     return this.calculateAmountWithCcCharge(baseAmount, payment.method, payment.ccCharge);
   }
 
+  /**
+   * Payment 1 = order total minus amounts on Payment 2..N.
+   * Used for split payments so entering 7000 on card 2 reduces card 1 by 7000.
+   */
+  private redistributePrimaryPaymentAmount(): void {
+    const payments = this.form.paymentDetails as SalesPaymentFormItem[];
+    if (!payments.length || payments.length === 1) {
+      return;
+    }
+
+    const targetTotal = Math.max(0, Number(this.form.totalAmount) || 0);
+    let othersSum = 0;
+    for (let index = 1; index < payments.length; index += 1) {
+      othersSum += Math.max(0, Number(payments[index]?.amount) || 0);
+    }
+
+    const remainder = Math.max(0, Math.round((targetTotal - othersSum) * 100) / 100);
+    const primary = payments[0];
+    if (!primary) {
+      return;
+    }
+
+    // Keep Payment 1 as the plain remainder of the SO total (no CC mark-up here),
+    // so Cash/GCash/Bank splits stay: card1 = total - card2 - card3...
+    primary.amount = remainder;
+    primary.isAmountManual = true;
+
+    const explicitStatus = String(primary.status ?? '').trim().toLowerCase();
+    const normalizedStatus = ['paid', 'unpaid', 'overdue'].includes(explicitStatus)
+      ? explicitStatus
+      : '';
+    primary.status = normalizedStatus || this.getDisplayPaymentStatus(primary);
+  }
+
   private syncPaymentAmounts(): void {
     const computedAmount = Number(this.form.totalAmount) || 0;
+    const isSplitPayment = this.form.paymentDetails.length > 1;
+
+    if (isSplitPayment) {
+      this.form.paymentDetails = this.form.paymentDetails.map(
+        (payment: SalesPaymentFormItem) => {
+          const nextPayment: SalesPaymentFormItem = {
+            ...payment,
+            amount: Number(payment.amount) || 0,
+          };
+
+          const explicitStatus = String(payment.status ?? '').trim().toLowerCase();
+          const normalizedStatus = ['paid', 'unpaid', 'overdue'].includes(explicitStatus)
+            ? explicitStatus
+            : '';
+
+          return {
+            ...nextPayment,
+            status: normalizedStatus || this.getDisplayPaymentStatus(nextPayment),
+          };
+        },
+      );
+      // Payment 1 always follows: order total - (Payment 2 + Payment 3 + ...).
+      this.redistributePrimaryPaymentAmount();
+      return;
+    }
+
     this.form.paymentDetails = this.form.paymentDetails.map((payment: SalesPaymentFormItem) => {
       const shouldUseComputedAmount = !this.paymentAmountEditedByUser && !payment.isAmountManual;
       const nextAmount = shouldUseComputedAmount
