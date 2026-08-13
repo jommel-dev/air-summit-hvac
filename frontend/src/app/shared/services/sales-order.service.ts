@@ -200,6 +200,7 @@ export interface SalesOrderListItem {
   paidAmount?: number;
   paymentCount?: number;
   paymentMethod: string;
+  ccCharge?: string;
   status: string;
   salesType?: string;
   projectName?: string;
@@ -221,6 +222,7 @@ export interface SalesOrderRow {
   paidAmount?: number;
   paymentCount?: number;
   paymentMethod: string;
+  ccCharge?: string;
   status: string;
   salesType?: string;
   projectCode?: string;

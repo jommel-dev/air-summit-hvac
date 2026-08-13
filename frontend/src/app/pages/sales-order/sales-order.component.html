@@ -44,10 +44,10 @@
         </button>
         <button
           type="button"
-          (click)="openDailyUnitReleaseReport()"
+          (click)="openReportChooser()"
           class="inline-flex items-center justify-center rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
         >
-          Daily Unit Release
+          Report
         </button>
         @if (canCreateSalesOrder()) {
           <button
@@ -931,8 +931,15 @@
                     }
                     @if (shouldShowPaymentField(payment.method, 'ccCharge')) {
                       <div>
-                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">CC Charge</label>
-                        <input type="text" [(ngModel)]="payment.ccCharge" [name]="'payment_cc_charge_' + pIndex" placeholder="Card charge" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+                        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">CC Charge (%)</label>
+                        <input
+                          type="text"
+                          [ngModel]="payment.ccCharge"
+                          (ngModelChange)="onCcChargeChange(pIndex, $event)"
+                          [name]="'payment_cc_charge_' + pIndex"
+                          placeholder="e.g. 15"
+                          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+                        />
                       </div>
                     }
                     @if (shouldShowPaymentField(payment.method, 'checkNo')) {
@@ -2077,11 +2084,43 @@
               </div>
               <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
                 <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Total Amount</div>
-                <div class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-100">₱{{ viewDrawerDetail.totalAmount | number:'1.2-2' }}</div>
+                <div class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-100">₱{{ getViewDisplayTotalAmount() | number:'1.2-2' }}</div>
               </div>
               <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
                 <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Schedule Date</div>
                 <div class="mt-2 text-sm font-medium text-gray-800 dark:text-gray-100">{{ viewDrawerDetail.scheduleDate || '-' }}</div>
+              </div>
+            </div>
+
+            <div class="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+              <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Amount Breakdown</div>
+              <div class="mt-3 space-y-2 text-sm">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="text-gray-500 dark:text-gray-400">Product Total</span>
+                  <span class="font-medium text-gray-800 dark:text-gray-100">₱{{ getViewProductTotal() | number:'1.2-2' }}</span>
+                </div>
+                <div class="flex items-center justify-between gap-3">
+                  <span class="text-gray-500 dark:text-gray-400">Service Total</span>
+                  <span class="font-medium text-gray-800 dark:text-gray-100">₱{{ getViewServiceTotal() | number:'1.2-2' }}</span>
+                </div>
+                <div class="flex items-center justify-between gap-3">
+                  <span class="text-gray-500 dark:text-gray-400">Excess Total</span>
+                  <span class="font-medium text-gray-800 dark:text-gray-100">₱{{ getViewAdditionalExcessTotal() | number:'1.2-2' }}</span>
+                </div>
+                <div class="flex items-center justify-between gap-3 border-t border-gray-100 pt-2 dark:border-gray-700">
+                  <span class="text-gray-500 dark:text-gray-400">Subtotal</span>
+                  <span class="font-medium text-gray-800 dark:text-gray-100">₱{{ getViewBaseTotalAmount() | number:'1.2-2' }}</span>
+                </div>
+                @if (getViewCcChargeAmount() > 0) {
+                  <div class="flex items-center justify-between gap-3">
+                    <span class="text-gray-500 dark:text-gray-400">CC Charge</span>
+                    <span class="font-medium text-gray-800 dark:text-gray-100">₱{{ getViewCcChargeAmount() | number:'1.2-2' }}</span>
+                  </div>
+                }
+                <div class="flex items-center justify-between gap-3 border-t border-gray-100 pt-2 dark:border-gray-700">
+                  <span class="font-semibold text-gray-700 dark:text-gray-200">Grand Total</span>
+                  <span class="font-semibold text-gray-900 dark:text-white">₱{{ getViewDisplayTotalAmount() | number:'1.2-2' }}</span>
+                </div>
               </div>
             </div>
 
@@ -2098,7 +2137,7 @@
                         </div>
                         <div>
                           <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Amount</div>
-                          <div class="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">₱{{ payment.amount | number:'1.2-2' }}</div>
+                          <div class="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">₱{{ getViewPaymentAmount(payment) | number:'1.2-2' }}</div>
                         </div>
                         <div>
                           <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Status</div>
@@ -2108,6 +2147,12 @@
                           <div>
                             <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">Payment Date</div>
                             <div class="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">{{ payment.paymentDate }}</div>
+                          </div>
+                        }
+                        @if (payment.ccCharge) {
+                          <div>
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-400">CC Charge (%)</div>
+                            <div class="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">{{ payment.ccCharge }}</div>
                           </div>
                         }
                         @if (payment.terms) {
@@ -2164,9 +2209,14 @@
                 <div class="space-y-3">
                   @for (product of viewDrawerDetail.productItems; track product.id) {
                     <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-700">
-                      <div class="flex items-center justify-between">
-                        <span class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ viewResolveProductName(product.productId) }}</span>
-                        <span class="text-xs text-gray-500">{{ viewResolveCapacityName(product.productId, product.capacityId) }}</span>
+                      <div class="flex items-center justify-between gap-3">
+                        <div>
+                          <span class="text-sm font-medium text-gray-800 dark:text-gray-100">{{ viewResolveProductName(product.productId) }}</span>
+                          <span class="ml-2 text-xs text-gray-500">{{ viewResolveCapacityName(product.productId, product.capacityId) }}</span>
+                        </div>
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">
+                          ₱{{ ((product.discountPrice > 0 ? product.discountPrice : product.sellPrice > 0 ? product.sellPrice : product.unitPrice) * (product.totalSetQty || 0)) | number:'1.2-2' }}
+                        </span>
                       </div>
                       <div class="mt-2 flex flex-wrap gap-2">
                         @for (ut of product.unitTypesQty || []; track ut) {
@@ -2274,10 +2324,21 @@
                 <div class="space-y-2">
                   @for (svc of viewDrawerDetail.serviceItems; track svc.id) {
                     <div class="flex items-center justify-between rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-700">
-                      <span class="text-sm text-gray-800 dark:text-gray-100">{{ svc.serviceName }}</span>
-                      <span class="text-sm font-medium text-gray-700 dark:text-gray-200">₱{{ svc.total | number:'1.2-2' }}</span>
+                      <div>
+                        <div class="text-sm text-gray-800 dark:text-gray-100">{{ svc.serviceName || 'Service' }}</div>
+                        <div class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                          Qty {{ svc.qty || 0 }} × ₱{{ (svc.unitPrice || 0) | number:'1.2-2' }}
+                        </div>
+                      </div>
+                      <span class="text-sm font-medium text-gray-700 dark:text-gray-200">
+                        ₱{{ ((svc.total || 0) > 0 ? svc.total : (svc.unitPrice || 0) * (svc.qty || 0)) | number:'1.2-2' }}
+                      </span>
                     </div>
                   }
+                </div>
+                <div class="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-4 dark:border-sky-500/30 dark:bg-sky-500/10">
+                  <div class="text-xs font-semibold uppercase tracking-wide text-sky-700 dark:text-sky-300">Service Total</div>
+                  <div class="mt-2 text-sm font-semibold text-sky-800 dark:text-sky-200">₱{{ getViewServiceTotal() | number:'1.2-2' }}</div>
                 </div>
               </div>
             }
@@ -2336,14 +2397,71 @@
     (cancel)="onValidationModalCancel()"
   ></app-serial-validation-modal>
 
+  @if (isReportChooserOpen) {
+    <div class="fixed inset-0 z-100006 bg-gray-950/55 backdrop-blur-sm" (click)="closeReportChooser()"></div>
+    <div class="fixed inset-0 z-100007 flex items-center justify-center p-4">
+      <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <div class="border-b border-gray-200 bg-linear-to-r from-brand-50 via-white to-sky-50 px-6 py-5 dark:border-gray-800 dark:from-brand-500/10 dark:via-gray-900 dark:to-sky-500/10">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-700 dark:text-brand-300">Reports</p>
+          <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">Select Report</h3>
+          <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">Choose which Sales Order report to generate.</p>
+        </div>
+
+        <div class="space-y-3 px-6 py-5">
+          <button
+            type="button"
+            (click)="selectReportType('daily-unit-release')"
+            class="flex w-full items-start gap-3 rounded-2xl border border-gray-200 px-4 py-3 text-left transition hover:border-brand-300 hover:bg-brand-50/60 dark:border-gray-700 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/10"
+          >
+            <span class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-100 text-brand-700 dark:bg-brand-500/20 dark:text-brand-300">
+              <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12" />
+              </svg>
+            </span>
+            <span>
+              <span class="block text-sm font-semibold text-gray-900 dark:text-white">Daily Unit Release</span>
+              <span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">Serial numbers, products, and unit release details.</span>
+            </span>
+          </button>
+
+          <button
+            type="button"
+            (click)="selectReportType('daily-remittance')"
+            class="flex w-full items-start gap-3 rounded-2xl border border-gray-200 px-4 py-3 text-left transition hover:border-brand-300 hover:bg-brand-50/60 dark:border-gray-700 dark:hover:border-brand-500/40 dark:hover:bg-brand-500/10"
+          >
+            <span class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300">
+              <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0115.607 2.25c1.124.132 2.268-.094 3.15-.956.882-.863 1.162-2.19.886-3.36a60.078 60.078 0 00-3.15-8.607A60.078 60.078 0 0014.25 4.5" />
+              </svg>
+            </span>
+            <span>
+              <span class="block text-sm font-semibold text-gray-900 dark:text-white">Daily Remittance Report</span>
+              <span class="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">Team schedule, payments by method, and remittance status.</span>
+            </span>
+          </button>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          <button
+            type="button"
+            (click)="closeReportChooser()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
   @if (isDailyUnitReleaseModalOpen) {
     <div class="fixed inset-0 z-100006 bg-gray-950/55 backdrop-blur-sm" (click)="closeDailyUnitReleaseReport()"></div>
     <div class="fixed inset-0 z-100007 flex items-center justify-center p-4">
       <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
         <div class="border-b border-gray-200 bg-linear-to-r from-brand-50 via-white to-sky-50 px-6 py-5 dark:border-gray-800 dark:from-brand-500/10 dark:via-gray-900 dark:to-sky-500/10">
           <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-brand-700 dark:text-brand-300">Report</p>
-          <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">Daily Unit Release</h3>
-          <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">Export SO details with serial numbers, products, and payment info.</p>
+          <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">{{ getSelectedReportTitle() }}</h3>
+          <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">{{ getSelectedReportDescription() }}</p>
         </div>
 
         <div class="space-y-4 px-6 py-5">
@@ -2353,25 +2471,16 @@
             </div>
           }
 
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Date From</label>
-              <input
-                type="date"
-                [(ngModel)]="dailyUnitReleaseDateFrom"
-                name="reportDateFrom"
-                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-white"
-              />
-            </div>
-            <div>
-              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Date To</label>
-              <input
-                type="date"
-                [(ngModel)]="dailyUnitReleaseDateTo"
-                name="reportDateTo"
-                class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 dark:text-white"
-              />
-            </div>
+          <div class="w-full">
+            <app-date-picker
+              id="sales-order-report-date-range"
+              mode="range"
+              [staticCalendar]="false"
+              [defaultDate]="getReportDatePickerDefault()"
+              label="Date Range"
+              placeholder="Select date range"
+              (dateChange)="onReportDateRangeChange($event)"
+            />
           </div>
         </div>
 
@@ -2385,7 +2494,7 @@
           </button>
           <button
             type="button"
-            (click)="generateDailyUnitReleaseReport()"
+            (click)="generateSelectedReport()"
             [disabled]="isGeneratingDailyUnitRelease"
             class="rounded-lg border border-brand-300 bg-brand-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-600 disabled:opacity-60 dark:border-brand-500/50 dark:bg-brand-500 dark:hover:bg-brand-600"
           >

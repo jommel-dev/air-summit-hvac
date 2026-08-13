@@ -29,6 +29,8 @@ export class DatePickerComponent {
     this.flatpickrInstance = flatpickr(this.dateInput.nativeElement, {
       mode: this.mode,
       static: this.staticCalendar,
+      // Popup calendars must escape overflow:hidden modal containers.
+      appendTo: this.staticCalendar ? undefined : document.body,
       monthSelectorType: 'static',
       dateFormat: 'Y-m-d',
       defaultDate: this.defaultDate,
