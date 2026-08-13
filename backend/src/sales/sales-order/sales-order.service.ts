@@ -1829,7 +1829,7 @@ export class SalesOrderService {
       Terms: new Set(['amount', 'terms', 'termsDueDate']),
       'Terms with DP': new Set(['amount', 'terms', 'termsDueDate', 'downPayment']),
       Cheque: new Set(['amount', 'checkNo', 'issuedBy', 'bankName', 'bankAccount', 'postDated']),
-      'Credit Card': new Set(['amount', 'ccCharge', 'referenceNo', 'paymentDate']),
+      'Credit Card': new Set(['amount', 'ccCharge', 'bankName', 'referenceNo', 'paymentDate']),
       Installment: new Set(['amount', 'terms', 'termsDueDate', 'downPayment']),
     };
 
@@ -3075,12 +3075,28 @@ export class SalesOrderService {
       ),
       payment_totals AS (
         SELECT 
-          COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
+          sp.so_id::text AS so_id,
           COUNT(*)::int AS payment_count,
-          COALESCE(STRING_AGG(DISTINCT NULLIF(COALESCE(to_jsonb(sp)->>'method', ''), ''), ', '), '-') AS payment_method,
-          SUM(COALESCE(NULLIF(to_jsonb(sp)->>'amount', '')::numeric, 0)) AS paid_amount
+          COALESCE(STRING_AGG(DISTINCT NULLIF(TRIM(COALESCE(sp.method, '')), ''), ', '), '-') AS payment_method,
+          SUM(COALESCE(sp.amount, 0)) AS paid_amount,
+          MAX(
+            CASE
+              WHEN LOWER(REPLACE(REPLACE(TRIM(COALESCE(sp.method, '')), '_', ' '), '-', ' ')) LIKE '%credit%card%'
+              THEN NULLIF(
+                REGEXP_REPLACE(
+                  TRIM(COALESCE(sp."ccCharge"::text, '')),
+                  '[^0-9.]',
+                  '',
+                  'g'
+                ),
+                ''
+              )
+              ELSE NULL
+            END
+          ) AS cc_charge
         FROM tblso_payments sp
-        GROUP BY 1
+        WHERE sp.so_id IS NOT NULL
+        GROUP BY sp.so_id
       ),
       base AS (
         SELECT
@@ -3102,6 +3118,7 @@ export class SalesOrderService {
           COALESCE(pt.payment_method, '-') AS payment_method,
           COALESCE(pt.paid_amount, 0) AS paid_amount,
           COALESCE(pt.payment_count, 0)::int AS payment_count,
+          COALESCE(pt.cc_charge, '') AS cc_charge,
           COALESCE(cd.concern_status, '') AS concern_status,
           ${computedStatusExpression} AS computed_status
         FROM tblsales_order so
@@ -3130,7 +3147,7 @@ export class SalesOrderService {
         payment_count AS "paymentCount", computed_status AS status, sales_type AS "salesType",
         project_name AS "projectName", project_code AS "projectCode", payment_method AS "paymentMethod",
         schedule_date AS "scheduleDate", created_at AS "createdAt", serial_count AS "serialCount",
-        concern_status AS "concernStatus", installer
+        concern_status AS "concernStatus", installer, cc_charge AS "ccCharge"
       FROM base
       ${whereSql}
       ORDER BY id DESC
@@ -3145,9 +3162,12 @@ export class SalesOrderService {
       items: listResult.rows.map((row) => ({
         ...row,
         totalAmount: Number(row.totalAmount ?? 0),
+        // Keep raw payment sum; frontend applies CC Charge (%) for display.
         paidAmount: Number(row.paidAmount ?? 0),
         paymentCount: Number(row.paymentCount ?? 0),
         serialCount: Number(row.serialCount ?? 0),
+        ccCharge: row.ccCharge != null ? String(row.ccCharge) : '',
+        paymentMethod: String(row.paymentMethod ?? ''),
       })),
       meta: {
         page,

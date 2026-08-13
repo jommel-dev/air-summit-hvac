@@ -537,7 +537,9 @@ export class SalesOrderComponent {
   uiMessage = '';
   uiError = '';
 
-  // Daily Unit Release Report state
+  // Report chooser + date-range export state
+  isReportChooserOpen = false;
+  selectedReportType: 'daily-unit-release' | 'daily-remittance' | null = null;
   isDailyUnitReleaseModalOpen = false;
   isGeneratingDailyUnitRelease = false;
   dailyUnitReleaseError = '';
@@ -2287,6 +2289,59 @@ export class SalesOrderComponent {
     }
   }
 
+  openReportChooser(): void {
+    this.isReportChooserOpen = true;
+    this.selectedReportType = null;
+    this.dailyUnitReleaseError = '';
+  }
+
+  closeReportChooser(): void {
+    this.isReportChooserOpen = false;
+  }
+
+  selectReportType(type: 'daily-unit-release' | 'daily-remittance'): void {
+    this.selectedReportType = type;
+    this.isReportChooserOpen = false;
+    this.openDailyUnitReleaseReport();
+  }
+
+  getSelectedReportTitle(): string {
+    return this.selectedReportType === 'daily-remittance'
+      ? 'Daily Remittance Report'
+      : 'Daily Unit Release';
+  }
+
+  getSelectedReportDescription(): string {
+    return this.selectedReportType === 'daily-remittance'
+      ? 'Export team schedule, payments by method, and remittance status.'
+      : 'Export SO details with serial numbers, products, and payment info.';
+  }
+
+  getReportDatePickerDefault(): string | string[] | undefined {
+    if (this.dailyUnitReleaseDateFrom && this.dailyUnitReleaseDateTo) {
+      return this.dailyUnitReleaseDateFrom === this.dailyUnitReleaseDateTo
+        ? this.dailyUnitReleaseDateFrom
+        : [this.dailyUnitReleaseDateFrom, this.dailyUnitReleaseDateTo];
+    }
+    return this.dailyUnitReleaseDateFrom || this.dailyUnitReleaseDateTo || undefined;
+  }
+
+  onReportDateRangeChange(event: { dateStr?: string }): void {
+    const dateStr = String(event.dateStr ?? '').trim();
+    if (!dateStr) {
+      this.dailyUnitReleaseDateFrom = '';
+      this.dailyUnitReleaseDateTo = '';
+      return;
+    }
+
+    const parts = dateStr
+      .split(/\s+to\s+/i)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    this.dailyUnitReleaseDateFrom = parts[0] ?? '';
+    this.dailyUnitReleaseDateTo = parts[1] ?? parts[0] ?? '';
+  }
+
   openDailyUnitReleaseReport(): void {
     this.isDailyUnitReleaseModalOpen = true;
     this.dailyUnitReleaseError = '';
@@ -2298,6 +2353,14 @@ export class SalesOrderComponent {
     if (this.isGeneratingDailyUnitRelease) return;
     this.isDailyUnitReleaseModalOpen = false;
     this.dailyUnitReleaseError = '';
+  }
+
+  async generateSelectedReport(): Promise<void> {
+    if (this.selectedReportType === 'daily-remittance') {
+      await this.generateDailyRemittanceReport();
+      return;
+    }
+    await this.generateDailyUnitReleaseReport();
   }
 
   async generateDailyUnitReleaseReport(): Promise<void> {
@@ -2312,45 +2375,13 @@ export class SalesOrderComponent {
     this.dailyUnitReleaseError = '';
 
     try {
-      // Load all SOs from multiple tabs to get a complete picture
-      const allOrders: SalesOrderListItem[] = [];
-      for (const loader of [
-        () => this.salesOrderService.getDeliveries({ page: 1, limit: 500 }),
-        () => this.salesOrderService.getRemittedSales({ page: 1, limit: 500 }),
-        () => this.salesOrderService.getSchedules({ page: 1, limit: 500 }),
-      ]) {
-        const result = await loader();
-        allOrders.push(...result.items);
-      }
-
-      // Deduplicate by id
-      const uniqueOrders = [...new Map(allOrders.map((o) => [o.id, o])).values()];
-
-      // Filter by date range (scheduleDate or createdAt)
       const from = this.dailyUnitReleaseDateFrom;
       const to = this.dailyUnitReleaseDateTo;
-      const filteredOrders = uniqueOrders.filter((order) => {
-        const dateStr = order.scheduleDate ?? order.createdAt ?? '';
-        const orderDate = dateStr.split('T')[0];
-        return orderDate >= from && orderDate <= to;
-      });
+      const details = await this.loadReportOrderDetailsByDateRange(from, to);
 
-      if (filteredOrders.length === 0) {
+      if (details.length === 0) {
         this.dailyUnitReleaseError = 'No sales orders found for the selected date range.';
         return;
-      }
-
-      // Fetch detail for each SO (serial numbers, product info)
-      const details: Array<{ order: SalesOrderListItem; detail: SalesOrderDetailItem }> = [];
-      for (const order of filteredOrders) {
-        try {
-          const detail = await this.salesOrderService.getSalesOrderById(order.id);
-          if (detail) {
-            details.push({ order, detail });
-          }
-        } catch {
-          // Skip if detail fails to load
-        }
       }
 
       // Build Excel
@@ -2470,6 +2501,523 @@ export class SalesOrderComponent {
     } finally {
       this.isGeneratingDailyUnitRelease = false;
     }
+  }
+
+  async generateDailyRemittanceReport(): Promise<void> {
+    if (this.isGeneratingDailyUnitRelease) return;
+
+    if (!this.dailyUnitReleaseDateFrom || !this.dailyUnitReleaseDateTo) {
+      this.dailyUnitReleaseError = 'Both date fields are required.';
+      return;
+    }
+
+    this.isGeneratingDailyUnitRelease = true;
+    this.dailyUnitReleaseError = '';
+
+    try {
+      const details = await this.loadReportOrderDetailsByDateRange(
+        this.dailyUnitReleaseDateFrom,
+        this.dailyUnitReleaseDateTo,
+      );
+
+      if (details.length === 0) {
+        this.dailyUnitReleaseError = 'No sales orders found for the selected date range.';
+        return;
+      }
+
+      const excelJsModule = await import('exceljs').catch(async () => import('exceljs/dist/exceljs.min.js'));
+      const WorkbookCtor =
+        (excelJsModule as { Workbook?: new () => any }).Workbook ??
+        (excelJsModule as { default?: { Workbook?: new () => any } }).default?.Workbook;
+
+      if (!WorkbookCtor) {
+        this.dailyUnitReleaseError = 'Excel export is unavailable.';
+        return;
+      }
+
+      const workbook = new WorkbookCtor();
+      const regularDetails = details.filter(({ detail }) => !this.isRemittanceTermsOrder(detail));
+      const termsDetails = details.filter(({ detail }) => this.isRemittanceTermsOrder(detail));
+
+      await this.writeRemittanceWorksheet(workbook, 'Daily Remittance', regularDetails);
+      await this.writeRemittanceWorksheet(workbook, 'Terms', termsDetails);
+
+      const from = this.dailyUnitReleaseDateFrom;
+      const to = this.dailyUnitReleaseDateTo;
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const fileName = `daily_remittance_${from}_${to}.xlsx`;
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = fileName;
+      anchor.click();
+      URL.revokeObjectURL(objectUrl);
+
+      this.closeDailyUnitReleaseReport();
+    } catch (error: unknown) {
+      this.dailyUnitReleaseError = 'Failed to generate report. Please try again.';
+      console.error('generateDailyRemittanceReport error', error);
+    } finally {
+      this.isGeneratingDailyUnitRelease = false;
+    }
+  }
+
+  private async loadReportOrderDetailsByDateRange(
+    from: string,
+    to: string,
+  ): Promise<Array<{ order: SalesOrderListItem; detail: SalesOrderDetailItem }>> {
+    const allOrders: SalesOrderListItem[] = [];
+    for (const loader of [
+      () => this.salesOrderService.getDeliveries({ page: 1, limit: 500 }),
+      () => this.salesOrderService.getRemittedSales({ page: 1, limit: 500 }),
+      () => this.salesOrderService.getSchedules({ page: 1, limit: 500 }),
+    ]) {
+      const result = await loader();
+      allOrders.push(...result.items);
+    }
+
+    const uniqueOrders = [...new Map(allOrders.map((o) => [o.id, o])).values()];
+    const filteredOrders = uniqueOrders.filter((order) => {
+      const dateStr = order.scheduleDate ?? order.createdAt ?? '';
+      const orderDate = dateStr.split('T')[0];
+      return orderDate >= from && orderDate <= to;
+    });
+
+    const details: Array<{ order: SalesOrderListItem; detail: SalesOrderDetailItem }> = [];
+    for (const order of filteredOrders) {
+      try {
+        const detail = await this.salesOrderService.getSalesOrderById(order.id);
+        if (detail) {
+          details.push({ order, detail });
+        }
+      } catch {
+        // Skip if detail fails to load
+      }
+    }
+
+    return details;
+  }
+
+  private isRemittanceTermsOrder(detail: SalesOrderDetailItem): boolean {
+    return (detail.paymentDetails ?? []).some((payment) => {
+      const method = String(payment.method ?? '').trim().toLowerCase();
+      return method === 'terms' || method === 'terms with dp';
+    });
+  }
+
+  private async writeRemittanceWorksheet(
+    workbook: { addWorksheet: (name: string) => any },
+    sheetName: string,
+    details: Array<{ order: SalesOrderListItem; detail: SalesOrderDetailItem }>,
+  ): Promise<void> {
+    const sheet = workbook.addWorksheet(sheetName);
+    const headers = [
+      'DATE',
+      'TEAM',
+      'SCHEDULE',
+      'CASH',
+      'GCASH',
+      'BANK TRANSFER',
+      'CREDIT CARD',
+      'REPORTS',
+    ];
+    const headerRow = sheet.addRow(headers);
+    headerRow.font = { bold: true };
+    headerRow.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    sheet.columns = [
+      { width: 14 },
+      { width: 22 },
+      { width: 55 },
+      { width: 14 },
+      { width: 14 },
+      { width: 16 },
+      { width: 14 },
+      { width: 36 },
+    ];
+
+    const totals = {
+      cash: 0,
+      gcash: 0,
+      bankTransfer: 0,
+      creditCard: 0,
+    };
+
+    for (const { order, detail } of details) {
+      const dateStr = order.scheduleDate ?? detail.scheduleDate ?? order.createdAt ?? detail.createdAt ?? '';
+      const miscItems = await this.getRemittanceMiscItems(detail.id);
+      const breakdown = this.buildRemittanceAmountBreakdown(detail, miscItems);
+      const payments = this.splitRemittancePaymentAmounts(detail, breakdown.baseTotal);
+      totals.cash += payments.cash;
+      totals.gcash += payments.gcash;
+      totals.bankTransfer += payments.bankTransfer;
+      totals.creditCard += payments.creditCard;
+
+      const scheduleText = this.buildRemittanceScheduleText(detail, breakdown);
+      const reportsText = this.buildRemittanceReportsText(detail);
+      const row = sheet.addRow([
+        this.formatRemittanceDate(dateStr),
+        String(detail.installer ?? order.installer ?? '').trim(),
+        scheduleText,
+        payments.cash || null,
+        payments.gcash || null,
+        payments.bankTransfer || null,
+        payments.creditCard || null,
+        reportsText,
+      ]);
+
+      row.getCell(3).alignment = { vertical: 'top', wrapText: true };
+      row.height = Math.max(60, scheduleText.split('\n').length * 14);
+
+      for (const col of [4, 5, 6, 7]) {
+        const cell = row.getCell(col);
+        if (typeof cell.value === 'number' && cell.value > 0) {
+          cell.numFmt = '"₱"#,##0.00';
+        }
+      }
+
+      const reportsCell = row.getCell(8);
+      reportsCell.font = { bold: true, color: { argb: 'FFFF0000' } };
+      reportsCell.alignment = { vertical: 'top', wrapText: true };
+    }
+
+    sheet.addRow([]);
+    const grandTotal = totals.cash + totals.gcash + totals.bankTransfer + totals.creditCard;
+    const totalsRow = sheet.addRow([
+      null,
+      null,
+      null,
+      totals.cash || null,
+      totals.gcash || null,
+      totals.bankTransfer || null,
+      totals.creditCard || null,
+      grandTotal || null,
+    ]);
+    const totalsFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFBDD7EE' } };
+    const totalsFont = { bold: true, italic: true, color: { argb: 'FFFF0000' } };
+    for (const col of [4, 5, 6, 7, 8]) {
+      const cell = totalsRow.getCell(col);
+      cell.fill = totalsFill;
+      cell.font = totalsFont;
+      cell.numFmt = '"₱"#,##0.00';
+      cell.alignment = { horizontal: 'right', vertical: 'middle' };
+    }
+  }
+
+  private formatRemittanceDate(value: string): string {
+    const datePart = String(value ?? '').split('T')[0];
+    if (!datePart) return '';
+    const date = new Date(`${datePart}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return datePart;
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  }
+
+  private formatRemittanceAmount(value: number): string {
+    return Number(value || 0).toLocaleString('en-PH', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    });
+  }
+
+  private isGcashPayment(payment: SalesOrderDetailPayment, remarks: string): boolean {
+    const haystack = [
+      payment.bankName,
+      payment.referenceNo,
+      payment.method,
+      remarks,
+    ]
+      .map((entry) => String(entry ?? '').toLowerCase())
+      .join(' ');
+    return haystack.includes('gcash') || haystack.includes('g-cash');
+  }
+
+  private splitRemittancePaymentAmounts(
+    detail: SalesOrderDetailItem,
+    baseTotal = 0,
+  ): {
+    cash: number;
+    gcash: number;
+    bankTransfer: number;
+    creditCard: number;
+  } {
+    const remarks = String(detail.remarks ?? '');
+    let cash = 0;
+    let gcash = 0;
+    let bankTransfer = 0;
+    let creditCard = 0;
+
+    const ccPayments = (detail.paymentDetails ?? []).filter((payment) =>
+      this.isCreditCardMethod(payment.method),
+    );
+
+    for (const payment of detail.paymentDetails ?? []) {
+      const amount = Number(payment.amount) || 0;
+      if (amount <= 0 && !this.isCreditCardMethod(payment.method)) continue;
+      const method = String(payment.method ?? '').trim().toLowerCase();
+
+      if (method === 'cash') {
+        cash += amount;
+        continue;
+      }
+
+      if (this.isCreditCardMethod(payment.method)) {
+        const percent = this.parseCcChargePercent(payment.ccCharge);
+        if (percent > 0) {
+          // Single CC payment: charge CC% on full remittance base (product + excess + service).
+          // Multiple CC payments: apply % on each payment amount as pre-CC base.
+          const chargeBase =
+            ccPayments.length === 1 && baseTotal > 0
+              ? baseTotal
+              : amount > 0
+                ? amount
+                : baseTotal;
+          creditCard += this.calculateAmountWithCcCharge(
+            chargeBase,
+            payment.method,
+            payment.ccCharge,
+          );
+        } else {
+          creditCard += amount;
+        }
+        continue;
+      }
+
+      if (method === 'bank transfer') {
+        if (this.isGcashPayment(payment, remarks)) {
+          gcash += amount;
+        } else {
+          bankTransfer += amount;
+        }
+      }
+    }
+
+    return { cash, gcash, bankTransfer, creditCard };
+  }
+
+  private getDetailLinePrice(item: SalesOrderDetailProductItem): number {
+    const unitPrice = Number(item.unitPrice) || 0;
+    const sellPrice = Number(item.sellPrice) || 0;
+    const discountPrice = Number(item.discountPrice) || 0;
+    return discountPrice > 0 ? discountPrice : sellPrice > 0 ? sellPrice : unitPrice;
+  }
+
+  private buildRemittanceOrderEntries(detail: SalesOrderDetailItem): string[] {
+    return (detail.productItems ?? []).map((item) => {
+      const product = this.catalogProducts.find((entry) => String(entry.id) === String(item.productId));
+      const brand = String(product?.brandName ?? '').trim();
+      const productName = String(product?.name ?? '').trim();
+      const capacity = product?.capacities?.find((entry) => String(entry.id) === String(item.capacityId));
+      const capacityName = String(capacity?.name ?? '').trim();
+      return [brand, productName, capacityName]
+        .filter((entry) => entry.length > 0)
+        .join(' ')
+        .toUpperCase();
+    }).filter((line) => line.length > 0);
+  }
+
+  private async getRemittanceMiscItems(salesId: number): Promise<Array<{
+    category: string;
+    itemName: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+    isInclusion: boolean;
+  }>> {
+    try {
+      const response = await apiClient.get<any>(`/sales-order/${salesId}/misc-items`);
+      const payload = response?.data;
+      const items = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : Array.isArray(payload?.data)
+            ? payload.data
+            : [];
+
+      return items.map((item: any) => {
+        const quantity = Math.max(0, Number(item.quantity) || 0);
+        const unitPrice = Number(item.unitPrice) || 0;
+        const totalPrice = Number(item.totalPrice) || quantity * unitPrice;
+        return {
+          category: String(item.category ?? '').trim(),
+          itemName: String(item.itemName ?? '').trim(),
+          quantity,
+          unitPrice,
+          totalPrice,
+          isInclusion: Boolean(item.isInclusion),
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private buildRemittanceAmountBreakdown(
+    detail: SalesOrderDetailItem,
+    miscItems: Array<{
+      category: string;
+      itemName: string;
+      quantity: number;
+      unitPrice: number;
+      totalPrice: number;
+      isInclusion: boolean;
+    }> = [],
+  ): {
+    productTotal: number;
+    detailParts: Array<{ amount: number; label: string }>;
+    baseTotal: number;
+    ccPercent: number;
+    ccAmount: number;
+    grandTotal: number;
+  } {
+    const productTotal = (detail.productItems ?? []).reduce((sum, item) => {
+      const qty = Math.max(0, Math.floor(Number(item.totalSetQty) || 0));
+      return sum + this.getDetailLinePrice(item) * qty;
+    }, 0);
+
+    const detailParts: Array<{ amount: number; label: string }> = [];
+
+    for (const item of miscItems) {
+      if (String(item.category ?? '').trim().toLowerCase() !== 'excess') {
+        continue;
+      }
+      if (item.isInclusion) {
+        continue;
+      }
+      const amount = Number(item.totalPrice) || item.quantity * item.unitPrice;
+      if (amount <= 0) {
+        continue;
+      }
+      detailParts.push({
+        amount,
+        label: item.itemName || 'Excess',
+      });
+    }
+
+    for (const item of detail.serviceItems ?? []) {
+      const amount =
+        Number(item.total) ||
+        Math.max(0, Math.floor(Number(item.qty) || 0)) * (Number(item.unitPrice) || 0);
+      if (amount <= 0) {
+        continue;
+      }
+      detailParts.push({
+        amount,
+        label: String(item.serviceName ?? '').trim() || 'Service',
+      });
+    }
+
+    // Misc non-excess extras (if any) also appear as labeled breakdown lines.
+    for (const item of miscItems) {
+      if (String(item.category ?? '').trim().toLowerCase() === 'excess') {
+        continue;
+      }
+      if (item.isInclusion) {
+        continue;
+      }
+      const amount = Number(item.totalPrice) || item.quantity * item.unitPrice;
+      if (amount <= 0) {
+        continue;
+      }
+      detailParts.push({
+        amount,
+        label: item.itemName || item.category || 'Extra',
+      });
+    }
+
+    const extrasTotal = detailParts.reduce((sum, part) => sum + part.amount, 0);
+    const baseTotal = productTotal + extrasTotal;
+
+    const ccPayments = (detail.paymentDetails ?? []).filter((payment) =>
+      this.isCreditCardMethod(payment.method),
+    );
+    const ccPercent = ccPayments.reduce(
+      (max, payment) => Math.max(max, this.parseCcChargePercent(payment.ccCharge)),
+      0,
+    );
+    const ccAmount =
+      ccPercent > 0 && baseTotal > 0
+        ? Math.round(baseTotal * (ccPercent / 100) * 100) / 100
+        : 0;
+    const grandTotal = Math.round((baseTotal + ccAmount) * 100) / 100;
+
+    return {
+      productTotal,
+      detailParts,
+      baseTotal,
+      ccPercent,
+      ccAmount,
+      grandTotal,
+    };
+  }
+
+  private buildRemittanceScheduleText(
+    detail: SalesOrderDetailItem,
+    breakdown: {
+      productTotal: number;
+      detailParts: Array<{ amount: number; label: string }>;
+      baseTotal: number;
+      ccPercent: number;
+      ccAmount: number;
+      grandTotal: number;
+    },
+  ): string {
+    const customerName = String(detail.customerName ?? '').trim();
+    const address = String(detail.customerAddress ?? '').trim();
+    const contact = String(detail.customerContactNumber ?? '').trim();
+    const orderEntries = this.buildRemittanceOrderEntries(detail);
+    const methods = [...new Set(
+      (detail.paymentDetails ?? [])
+        .map((payment) => String(payment.method ?? '').trim())
+        .filter((method) => method.length > 0),
+    )];
+
+    const totalParts: string[] = [];
+    if (breakdown.productTotal > 0) {
+      totalParts.push(this.formatRemittanceAmount(breakdown.productTotal));
+    }
+
+    for (const part of breakdown.detailParts) {
+      totalParts.push(
+        `${this.formatRemittanceAmount(part.amount)} (${part.label})`,
+      );
+    }
+
+    if (breakdown.ccAmount > 0 && breakdown.ccPercent > 0) {
+      totalParts.push(
+        `${this.formatRemittanceAmount(breakdown.ccAmount)} (${breakdown.ccPercent}%)`,
+      );
+    }
+
+    if (totalParts.length === 0 && Number(detail.totalAmount) > 0) {
+      totalParts.push(this.formatRemittanceAmount(Number(detail.totalAmount)));
+    }
+
+    const totalLine =
+      breakdown.grandTotal > 0 && totalParts.length > 0
+        ? `Total: ${totalParts.join(' + ')} = ${this.formatRemittanceAmount(breakdown.grandTotal)}`
+        : `Total: ${totalParts.join(' + ')}`;
+
+    const lines = [
+      `Full Name: ${customerName}`,
+      `Address: ${address}`,
+      `Contact: ${contact}`,
+      `Order: ${orderEntries.join(', ')}`,
+      `Mode of Payment: ${methods.join(', ').toUpperCase()}`,
+      totalLine,
+    ];
+
+    return lines.join('\n');
+  }
+
+  private buildRemittanceReportsText(detail: SalesOrderDetailItem): string {
+    return String(detail.remarks ?? '').trim();
   }
 
   private buildReportRemarks(detail: SalesOrderDetailItem): string {
@@ -3068,12 +3616,20 @@ export class SalesOrderComponent {
     try {
       const [detail, miscResponse] = await Promise.all([
         this.salesOrderService.getSalesOrderById(order.id),
-        apiClient.get<any[]>(`/sales-order/${order.id}/misc-items`),
+        apiClient.get<any>(`/sales-order/${order.id}/misc-items`),
       ]);
       this.viewDrawerDetail = detail;
-      this.viewDrawerMiscItems = Array.isArray(miscResponse.data) ? miscResponse.data : [];
+      const miscPayload = miscResponse?.data;
+      this.viewDrawerMiscItems = Array.isArray(miscPayload)
+        ? miscPayload
+        : Array.isArray(miscPayload?.items)
+          ? miscPayload.items
+          : Array.isArray(miscPayload?.data)
+            ? miscPayload.data
+            : [];
     } catch {
       this.viewDrawerDetail = null;
+      this.viewDrawerMiscItems = [];
     } finally {
       this.isViewDrawerLoading = false;
     }
@@ -3143,6 +3699,13 @@ export class SalesOrderComponent {
       await this.loadAdditionalExcessItems(orderId);
       this.recalculateTotalAmount();
       this.isInitializingDrawer = false;
+      // Apply CC Charge (%) to payment Amount after totals are ready.
+      this.paymentAmountEditedByUser = false;
+      this.form.paymentDetails = (this.form.paymentDetails ?? []).map((payment: SalesPaymentFormItem) => ({
+        ...payment,
+        isAmountManual: false,
+      }));
+      this.syncPaymentAmounts();
       await this.loadSalesHistory(orderId);
       this.captureDrawerBaselineSnapshot();
     } catch (error: unknown) {
@@ -3428,6 +3991,7 @@ export class SalesOrderComponent {
       paidAmount: Number(item.paidAmount ?? 0),
       paymentCount: Number(item.paymentCount ?? 0),
       paymentMethod: item.paymentMethod ?? '-',
+      ccCharge: item.ccCharge ?? '',
       status: item.status ?? 'pending',
       salesType: item.salesType ?? '',
       projectCode: item.projectCode ?? '',
@@ -3703,7 +4267,11 @@ export class SalesOrderComponent {
       payment.postDated = '';
     }
 
-    if (payment.method !== 'Bank Transfer' && payment.method !== 'Cheque') {
+    if (
+      payment.method !== 'Bank Transfer' &&
+      payment.method !== 'Cheque' &&
+      payment.method !== 'Credit Card'
+    ) {
       payment.bankName = '';
     }
 
@@ -3796,11 +4364,28 @@ export class SalesOrderComponent {
       Terms: new Set(['amount', 'terms', 'termsDueDate']),
       'Terms with DP': new Set(['amount', 'terms', 'termsDueDate', 'downPayment']),
       Cheque: new Set(['amount', 'checkNo', 'issuedBy', 'bankName', 'bankAccount', 'postDated']),
-      'Credit Card': new Set(['amount', 'ccCharge', 'referenceNo', 'paymentDate']),
+      'Credit Card': new Set(['amount', 'ccCharge', 'bankName', 'referenceNo', 'paymentDate']),
       Installment: new Set(['amount', 'terms', 'termsDueDate', 'downPayment']),
     };
 
     return methodMap[method]?.has(field) ?? false;
+  }
+
+  onCcChargeChange(index: number, value?: string): void {
+    const payment = this.form.paymentDetails[index];
+    if (!payment) {
+      return;
+    }
+
+    if (value !== undefined) {
+      payment.ccCharge = value;
+    }
+
+    // Always recalculate Amount from SO total + CC % when charge changes.
+    payment.isAmountManual = false;
+    this.paymentAmountEditedByUser = false;
+    payment.amount = this.applyCcChargeToAmount(Number(this.form.totalAmount) || 0, payment);
+    this.syncPaymentAmounts();
   }
 
   setActiveProductTab(index: number): void {
@@ -5215,13 +5800,59 @@ export class SalesOrderComponent {
     return 'unpaid';
   }
 
+  private parseCcChargePercent(ccCharge: unknown): number {
+    const raw = String(ccCharge ?? '')
+      .replace(/,/g, '')
+      .replace(/%/g, '')
+      .replace(/₱/g, '')
+      .trim();
+    if (!raw) {
+      return 0;
+    }
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value <= 0) {
+      return 0;
+    }
+    return value;
+  }
+
+  private isCreditCardMethod(method: unknown): boolean {
+    const normalized = String(method ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[_-]+/g, ' ');
+    return normalized.includes('credit card') || normalized === 'creditcard';
+  }
+
+  /** Apply CC Charge % add-on to a base amount (e.g. 35499 + 15% => 40823.85). */
+  private calculateAmountWithCcCharge(baseAmount: number, method: unknown, ccCharge: unknown): number {
+    const base = Math.max(0, Number(baseAmount) || 0);
+    if (!this.isCreditCardMethod(method)) {
+      return base;
+    }
+
+    const percent = this.parseCcChargePercent(ccCharge);
+    if (percent <= 0 || base <= 0) {
+      return base;
+    }
+
+    return Math.round(base * (1 + percent / 100) * 100) / 100;
+  }
+
+  private applyCcChargeToAmount(baseAmount: number, payment: SalesPaymentFormItem): number {
+    return this.calculateAmountWithCcCharge(baseAmount, payment.method, payment.ccCharge);
+  }
+
   private syncPaymentAmounts(): void {
     const computedAmount = Number(this.form.totalAmount) || 0;
     this.form.paymentDetails = this.form.paymentDetails.map((payment: SalesPaymentFormItem) => {
-      const shouldUseComputedAmount = !this.paymentAmountEditedByUser;
+      const shouldUseComputedAmount = !this.paymentAmountEditedByUser && !payment.isAmountManual;
+      const nextAmount = shouldUseComputedAmount
+        ? this.applyCcChargeToAmount(computedAmount, payment)
+        : Number(payment.amount) || 0;
       const nextPayment: SalesPaymentFormItem = {
         ...payment,
-        amount: shouldUseComputedAmount ? computedAmount : Number(payment.amount) || 0,
+        amount: nextAmount,
       };
 
       const explicitStatus = String(payment.status ?? '').trim().toLowerCase();
@@ -5787,23 +6418,125 @@ export class SalesOrderComponent {
   }
 
   getOrderListAmount(order: SalesOrderRow): number {
-    if ((order.paymentCount ?? 0) > 0) {
-      return Number(order.paidAmount ?? 0);
+    const totalAmount = Number(order.totalAmount ?? 0);
+    // Backend may already return a CC-adjusted paidAmount; prefer raw-style handling via ccCharge.
+    const paidAmount = Number(order.paidAmount ?? 0);
+    const percent = this.parseCcChargePercent(order.ccCharge);
+
+    if (!this.isCreditCardMethod(order.paymentMethod) || percent <= 0) {
+      if ((order.paymentCount ?? 0) > 0) {
+        return paidAmount > 0 ? paidAmount : totalAmount;
+      }
+      return totalAmount;
     }
 
-    return Number(order.totalAmount ?? 0);
+    const factor = 1 + percent / 100;
+    const totalWithCc = Math.round(totalAmount * factor * 100) / 100;
+
+    // Already exactly SO total + CC.
+    if (paidAmount > 0 && Math.abs(paidAmount - totalWithCc) <= 1) {
+      return paidAmount;
+    }
+
+    if (paidAmount > totalAmount + 0.009) {
+      const stripped = paidAmount / factor;
+      const strippedInt = Math.round(stripped);
+      const looksLikePostCc =
+        Math.abs(stripped - strippedInt) <= 0.01 &&
+        Math.abs(strippedInt * factor - paidAmount) <= 0.02 &&
+        strippedInt > totalAmount + 1;
+
+      // Payment already stores post-CC amount on a larger base.
+      if (looksLikePostCc) {
+        return Math.round(paidAmount * 100) / 100;
+      }
+
+      // Payment still stores pre-CC base (product + service + excess).
+      return Math.round(paidAmount * factor * 100) / 100;
+    }
+
+    return totalWithCc > 0 ? totalWithCc : paidAmount;
+  }
+
+  getViewProductTotal(): number {
+    const products: SalesOrderDetailProductItem[] = this.viewDrawerDetail?.productItems ?? [];
+    return products.reduce((sum, item) => {
+      const qty = Math.max(0, Math.floor(Number(item.totalSetQty) || 0));
+      return sum + this.getDetailLinePrice(item) * qty;
+    }, 0);
+  }
+
+  getViewServiceTotal(): number {
+    const services = this.viewDrawerDetail?.serviceItems ?? [];
+    return services.reduce((sum: number, item: { total?: number; unitPrice?: number; qty?: number }) => {
+      const total = Number(item.total) || 0;
+      if (total > 0) {
+        return sum + total;
+      }
+      const qty = Math.max(0, Math.floor(Number(item.qty) || 0));
+      return sum + (Number(item.unitPrice) || 0) * qty;
+    }, 0);
+  }
+
+  getViewBaseTotalAmount(): number {
+    const productTotal = this.getViewProductTotal();
+    const serviceTotal = this.getViewServiceTotal();
+    const excessTotal = this.getViewAdditionalExcessTotal();
+    const computed = productTotal + serviceTotal + excessTotal;
+    const stored = Number(this.viewDrawerDetail?.totalAmount ?? 0);
+    // Prefer freshly computed product + service + excess over a stale stored total.
+    return computed > 0 ? computed : stored;
+  }
+
+  getViewCcChargeAmount(): number {
+    const payments: SalesOrderDetailPayment[] = this.viewDrawerDetail?.paymentDetails ?? [];
+    const ccPayment = payments.find(
+      (payment) =>
+        this.isCreditCardMethod(payment.method) && this.parseCcChargePercent(payment.ccCharge) > 0,
+    );
+    if (!ccPayment) {
+      return 0;
+    }
+
+    const base = this.getViewBaseTotalAmount();
+    const withCc = this.calculateAmountWithCcCharge(base, ccPayment.method, ccPayment.ccCharge);
+    return Math.max(0, withCc - base);
+  }
+
+  getViewPaymentAmount(payment: SalesOrderDetailPayment): number {
+    const storedAmount = Number(payment.amount) || 0;
+    const baseAmount = this.getViewBaseTotalAmount();
+
+    if (this.isCreditCardMethod(payment.method) && this.parseCcChargePercent(payment.ccCharge) > 0) {
+      return this.calculateAmountWithCcCharge(
+        baseAmount > 0 ? baseAmount : storedAmount,
+        payment.method,
+        payment.ccCharge,
+      );
+    }
+
+    return storedAmount > 0 ? storedAmount : baseAmount;
   }
 
   getViewPaymentTotal(): number {
     const payments: SalesOrderDetailPayment[] = this.viewDrawerDetail?.paymentDetails ?? [];
     if (payments.length === 0) {
-      return Number(this.viewDrawerDetail?.totalAmount ?? 0);
+      return this.getViewBaseTotalAmount();
     }
 
     return payments.reduce(
-      (sum: number, payment: SalesOrderDetailPayment) => sum + (Number(payment.amount) || 0),
+      (sum: number, payment: SalesOrderDetailPayment) => sum + this.getViewPaymentAmount(payment),
       0,
     );
+  }
+
+  getViewDisplayTotalAmount(): number {
+    const payments: SalesOrderDetailPayment[] = this.viewDrawerDetail?.paymentDetails ?? [];
+    if (payments.length > 0) {
+      return this.getViewPaymentTotal();
+    }
+
+    return this.getViewBaseTotalAmount();
   }
 
   getViewAdditionalExcessItems(): Array<{
@@ -5816,7 +6549,19 @@ export class SalesOrderComponent {
     totalPrice: number;
     isInclusion: boolean;
   }> {
-    return this.viewDrawerMiscItems.filter((item) => item.category === 'excess');
+    return this.viewDrawerMiscItems
+      .filter((item) => String(item.category ?? '').trim().toLowerCase() === 'excess')
+      .map((item) => {
+        const quantity = Math.max(0, Number(item.quantity) || 0);
+        const unitPrice = Number(item.unitPrice) || 0;
+        const totalPrice = Number(item.totalPrice) || quantity * unitPrice;
+        return {
+          ...item,
+          quantity,
+          unitPrice,
+          totalPrice,
+        };
+      });
   }
 
   getViewNonExcessMiscItems(): Array<{
@@ -5829,7 +6574,19 @@ export class SalesOrderComponent {
     totalPrice: number;
     isInclusion: boolean;
   }> {
-    return this.viewDrawerMiscItems.filter((item) => item.category !== 'excess');
+    return this.viewDrawerMiscItems
+      .filter((item) => String(item.category ?? '').trim().toLowerCase() !== 'excess')
+      .map((item) => {
+        const quantity = Math.max(0, Number(item.quantity) || 0);
+        const unitPrice = Number(item.unitPrice) || 0;
+        const totalPrice = Number(item.totalPrice) || quantity * unitPrice;
+        return {
+          ...item,
+          quantity,
+          unitPrice,
+          totalPrice,
+        };
+      });
   }
 
   getViewAdditionalExcessTotal(): number {
@@ -5838,7 +6595,8 @@ export class SalesOrderComponent {
         return sum;
       }
 
-      return sum + (Number(item.totalPrice) || 0);
+      const lineTotal = Number(item.totalPrice) || (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0);
+      return sum + lineTotal;
     }, 0);
   }
 
