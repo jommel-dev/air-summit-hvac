@@ -9,6 +9,10 @@ import { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'crypto';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import {
+  assertActiveProductCapacity,
+  catalogDeletedSql,
+} from 'src/common/utils/catalog-soft-delete';
 
 type PurchaseRow = {
   id: number;
@@ -88,6 +92,10 @@ type PurchaseProductRow = {
   purchaseId: string | null;
   salesId: string | null;
   status: string | null;
+  productName: string | null;
+  capacityName: string | null;
+  isProductDeleted: boolean;
+  isCapacityDeleted: boolean;
 };
 
 type PurchaseSerialRow = {
@@ -1395,29 +1403,7 @@ export class PurchaseService {
               throw new Error('productId and capacityId are required for purchase items');
             }
 
-            const productExistsResult = await client.query<{ id: string | number }>(
-              `SELECT id
-               FROM tblproducts
-               WHERE id::text = $1
-               LIMIT 1`,
-              [String(productId)],
-            );
-
-            if (productExistsResult.rowCount === 0) {
-              throw new Error(`Product ID ${productId} does not exist in tblproducts`);
-            }
-
-            const capacityExistsResult = await client.query<{ id: string | number }>(
-              `SELECT id
-               FROM tblcapacity
-               WHERE id::text = $1
-               LIMIT 1`,
-              [String(capacityId)],
-            );
-
-            if (capacityExistsResult.rowCount === 0) {
-              throw new Error(`Capacity ID ${capacityId} does not exist in tblcapacity`);
-            }
+            await assertActiveProductCapacity(client, productId, capacityId);
 
             const unitTypesQty = Array.isArray(item.unitTypesQty) ? item.unitTypesQty : [];
             const scannedSerials = this.normalizePurchaseProductScannedSerials(
@@ -1728,20 +1714,60 @@ export class PurchaseService {
     }
   }
 
-  async revertInProgress(id: number, userId?: number) {
-    return this.transitionPurchaseStatus(id, 'in-progress', userId, {
+  async revertInProgress(
+    id: number,
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ) {
+    const beforeSnapshot = await this.getPurchaseAuditSnapshot(id);
+    const result = await this.transitionPurchaseStatus(id, 'in-progress', userId, {
       approvalOnly: true,
       updateSerialsToInStock: false,
       successMessage: 'Purchase order reverted to in-progress',
     });
+
+    if (result.success) {
+      const afterSnapshot = await this.getPurchaseAuditSnapshot(id);
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_REVERT_IN_PROGRESS',
+        entityType: 'purchase-order',
+        entityId: id,
+        actor: auditActor ?? { userId },
+        description: `Reverted purchase order #${id} to in-progress`,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+      });
+    }
+
+    return result;
   }
 
-  async revertToDeliveries(id: number, userId?: number) {
-    return this.transitionPurchaseStatus(id, 'in-progress', userId, {
+  async revertToDeliveries(
+    id: number,
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ) {
+    const beforeSnapshot = await this.getPurchaseAuditSnapshot(id);
+    const result = await this.transitionPurchaseStatus(id, 'in-progress', userId, {
       approvalOnly: true,
       updateSerialsToInStock: false,
       successMessage: 'Purchase order reverted to deliveries',
     });
+
+    if (result.success) {
+      const afterSnapshot = await this.getPurchaseAuditSnapshot(id);
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_REVERT_DELIVERIES',
+        entityType: 'purchase-order',
+        entityId: id,
+        actor: auditActor ?? { userId },
+        description: `Reverted purchase order #${id} to deliveries`,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+      });
+    }
+
+    return result;
   }
 
   async verifyAndReceive(id: number, userId?: number, auditActor?: AuditActorContext) {
@@ -2153,8 +2179,22 @@ export class PurchaseService {
              to_jsonb(tpi)->>'salesId',
              to_jsonb(tpi)->>'sales_id'
            ) AS "salesId",
-           COALESCE(to_jsonb(tpi)->>'status', null) AS status
+           COALESCE(to_jsonb(tpi)->>'status', null) AS status,
+           COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', '') AS "productName",
+           COALESCE(to_jsonb(c)->>'capacity', '') AS "capacityName",
+           (${catalogDeletedSql('p')} OR p.id IS NULL) AS "isProductDeleted",
+           (${catalogDeletedSql('c')} OR c.id IS NULL) AS "isCapacityDeleted"
          FROM tbltransaction_product_items tpi
+         LEFT JOIN tblproducts p
+           ON p.id::text = COALESCE(
+             to_jsonb(tpi)->>'productId',
+             to_jsonb(tpi)->>'product_id'
+           )
+         LEFT JOIN tblcapacity c
+           ON c.id::text = COALESCE(
+             to_jsonb(tpi)->>'capacityId',
+             to_jsonb(tpi)->>'capacity_id'
+           )
          WHERE COALESCE(
            to_jsonb(tpi)->>'purchaseId',
            to_jsonb(tpi)->>'purchase_id',
@@ -2274,6 +2314,10 @@ export class PurchaseService {
           salesId: this.toOptionalNumber(product.salesId),
           status: product.status ?? 'pending',
           serialNumbers: serialMap.get(serialKey) ?? {},
+          productName: String(product.productName ?? '').trim(),
+          capacityName: String(product.capacityName ?? '').trim(),
+          isProductDeleted: Boolean(product.isProductDeleted),
+          isCapacityDeleted: Boolean(product.isCapacityDeleted),
         };
       });
 
@@ -2855,6 +2899,8 @@ export class PurchaseService {
             if (pId === null || cId === null) {
               throw new Error('productId and capacityId are required for purchase items');
             }
+
+            await assertActiveProductCapacity(client, pId, cId);
 
             const match = existingItems.find(
               (e) =>
@@ -3797,7 +3843,8 @@ export class PurchaseService {
                       to_jsonb(p)->>'productType',
                       to_jsonb(p)->>'product_type',
                       to_jsonb(p)->>'producttype'
-                    )
+                    ),
+                    'isDeleted', ${catalogDeletedSql('p')}
                   )
                 END,
                 'capacity', CASE
@@ -3820,7 +3867,8 @@ export class PurchaseService {
                         ''
                       )::numeric,
                       0
-                    )
+                    ),
+                    'isDeleted', ${catalogDeletedSql('c')}
                   )
                 END
               )
@@ -4351,6 +4399,7 @@ export class PurchaseService {
       scannedSerials?: Record<string, unknown>;
     },
     userId?: number,
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
       return { success: false, message: 'Invalid purchase ID' };
@@ -4488,6 +4537,16 @@ export class PurchaseService {
         return { id: insertResult.rows[0]?.id };
       });
 
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_PRODUCT_ITEM_ADD',
+        entityType: 'purchase-order',
+        entityId: purchaseId,
+        actor: auditActor ?? { userId },
+        description: `Added product item to purchase order #${purchaseId}`,
+        requestBody: item as unknown as Record<string, unknown>,
+        after: { purchaseId, ...result, productId, capacityId },
+      });
+
       return { success: true, message: 'Product item added', data: result };
     } catch (error) {
       return {
@@ -4517,6 +4576,7 @@ export class PurchaseService {
       scannedSerials?: Record<string, unknown>;
     },
     userId?: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; message?: string }> {
     if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
       return { success: false, message: 'Invalid purchase ID' };
@@ -4683,6 +4743,22 @@ export class PurchaseService {
         }
       });
 
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_PRODUCT_ITEM_UPDATE',
+        entityType: 'purchase-order',
+        entityId: purchaseId,
+        actor: auditActor ?? { userId },
+        description: `Updated product item on purchase order #${purchaseId}`,
+        requestBody: item as unknown as Record<string, unknown>,
+        after: {
+          purchaseId,
+          oldProductId,
+          oldCapacityId,
+          productId,
+          capacityId,
+        },
+      });
+
       return { success: true, message: 'Product item updated' };
     } catch (error) {
       return {
@@ -4704,6 +4780,7 @@ export class PurchaseService {
       newProductId: number;
       newCapacityId: number;
     },
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
       return { success: false, message: 'Invalid purchase ID' };
@@ -4754,6 +4831,23 @@ export class PurchaseService {
         params,
       );
 
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_SERIALS_ASSIGNMENT_UPDATE',
+        entityType: 'purchase-order',
+        entityId: purchaseId,
+        actor: auditActor,
+        description: `Updated serials assignment on purchase order #${purchaseId}`,
+        requestBody: payload as unknown as Record<string, unknown>,
+        after: {
+          purchaseId,
+          updatedCount: updateResult.rowCount ?? 0,
+          newProductId,
+          newCapacityId,
+          oldProductId,
+          oldCapacityId,
+        },
+      });
+
       return {
         success: true,
         message: `Updated ${updateResult.rowCount ?? 0} serial(s)`,
@@ -4773,6 +4867,7 @@ export class PurchaseService {
   async removeProductItem(
     purchaseId: number,
     item: { productId: number; capacityId: number },
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(purchaseId) || purchaseId <= 0) {
       return { success: false, message: 'Invalid purchase ID' };
@@ -4840,6 +4935,16 @@ export class PurchaseService {
             serialParams,
           );
         }
+      });
+
+      await this.auditLogService.logMutation({
+        action: 'PURCHASE_PRODUCT_ITEM_REMOVE',
+        entityType: 'purchase-order',
+        entityId: purchaseId,
+        actor: auditActor,
+        description: `Removed product item from purchase order #${purchaseId}`,
+        requestBody: item as unknown as Record<string, unknown>,
+        after: { purchaseId, productId, capacityId },
       });
 
       return { success: true, message: 'Product item and associated serials removed' };

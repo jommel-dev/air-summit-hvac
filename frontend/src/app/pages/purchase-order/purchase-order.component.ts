@@ -2,6 +2,8 @@
 import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
+import { Subscription, skip } from 'rxjs';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import {
   CreatePurchaseRequestPayload,
@@ -14,6 +16,7 @@ import {
   PurchaseOrderService,
   UpdatePurchaseResponse,
   VendorOption,
+  PendingCatalogAlert,
 } from '../../shared/services/purchase-order.service';
 import { RbacService } from '../../shared/services/rbac.service';
 import {
@@ -82,6 +85,10 @@ interface PurchaseProductFormItem {
   discountPrice: number | '';
   unitTypes: PurchaseUnitTypeFormItem[];
   totalSetQty: number;
+  isProductDeleted?: boolean;
+  isCapacityDeleted?: boolean;
+  deletedProductName?: string;
+  deletedCapacityName?: string;
   // Edit-mode tracking (transient, not persisted)
   _preservedSerials?: Record<string, string[]>;
   _originalProductId?: string;
@@ -258,6 +265,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   deleteAuthPassword = '';
   deleteAuthUsername = '';
   catalogProducts: ProductOption[] = [];
+  pendingCatalogAlerts: PendingCatalogAlert[] = [];
   vendorOptions: VendorOption[] = [];
   vendorSearch = '';
   isVendorDropdownOpen = false;
@@ -289,6 +297,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   };
   private readonly searchDebounceMs = 300;
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private queryParamsSub: Subscription | null = null;
   private vendorDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly serialScanDebounceMs = 120;
   private readonly serialBatchSize = 50;
@@ -325,6 +334,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     private readonly purchaseOrderService: PurchaseOrderService,
     private readonly rbacService: RbacService,
     private readonly auditLogService: AuditLogFrontendService,
+    private readonly route: ActivatedRoute,
   ) {}
 
   ngOnInit(): void {
@@ -333,12 +343,75 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       this.activeTab = availableTabs[0];
     }
 
+    const requestedTab = this.route.snapshot.queryParamMap.get('tab') as PurchaseTab | null;
+    if (requestedTab && availableTabs.includes(requestedTab)) {
+      this.activeTab = requestedTab;
+    }
+
+    const searchFromQuery = (this.route.snapshot.queryParamMap.get('search') ?? '').trim();
+    if (searchFromQuery) {
+      this.search = searchFromQuery;
+      this.page = 1;
+    }
+
     void this.loadTabData(this.activeTab);
     void this.loadReferenceData();
     void this.loadVendorOptions();
+
+    const editId = Number(this.route.snapshot.queryParamMap.get('editId'));
+    if (Number.isInteger(editId) && editId > 0) {
+      void this.openEditDrawer({
+        id: editId,
+        poNumber: searchFromQuery,
+        vendorId: null,
+        vendorName: '',
+        totalAmount: 0,
+        status: '',
+        createdAt: null,
+        serialCount: 0,
+        scannedSerialCount: 0,
+      });
+    }
+
+    this.queryParamsSub = this.route.queryParamMap.pipe(skip(1)).subscribe((params) => {
+      const incomingSearch = (params.get('search') ?? '').trim();
+      const incomingTab = params.get('tab') as PurchaseTab | null;
+      let shouldReload = false;
+
+      if (incomingTab && availableTabs.includes(incomingTab) && incomingTab !== this.activeTab) {
+        this.activeTab = incomingTab;
+        shouldReload = true;
+      }
+
+      if (params.has('search') && incomingSearch !== this.search) {
+        this.search = incomingSearch;
+        this.page = 1;
+        shouldReload = true;
+      }
+
+      if (shouldReload) {
+        void this.loadTabData(this.activeTab);
+      }
+
+      const incomingEditId = Number(params.get('editId'));
+      if (Number.isInteger(incomingEditId) && incomingEditId > 0) {
+        void this.openEditDrawer({
+          id: incomingEditId,
+          poNumber: incomingSearch,
+          vendorId: null,
+          vendorName: '',
+          totalAmount: 0,
+          status: '',
+          createdAt: null,
+          serialCount: 0,
+          scannedSerialCount: 0,
+        });
+      }
+    });
   }
 
   ngOnDestroy(): void {
+    this.queryParamsSub?.unsubscribe();
     if (this.searchDebounceTimer) {
       clearTimeout(this.searchDebounceTimer);
       this.searchDebounceTimer = null;
@@ -572,6 +645,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     // Capture old productId BEFORE mutation so onProductChanged can track it
     const previousProductId = item.productId;
     item.productId = String(productId ?? '').trim();
+    item.isProductDeleted = false;
+    item.isCapacityDeleted = false;
+    item.deletedProductName = '';
+    item.deletedCapacityName = '';
     this.productSearchByItem[index] = this.getProductDisplayLabel(item.productId);
     this.isProductDropdownOpenByItem[index] = false;
     this.onProductChanged(index, previousProductId);
@@ -607,11 +684,89 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   getProductDisplayLabel(productId: string): string {
     const product = this.catalogProducts.find((item) => String(item.id) === String(productId));
-    if (!product) {
-      return '';
+    if (product) {
+      return `${product.name}${product.brandName ? ` (${product.brandName})` : ''}`;
     }
 
-    return `${product.name}${product.brandName ? ` (${product.brandName})` : ''}`;
+    const formItem = this.createForm.productItems.find((item) => String(item.productId) === String(productId));
+    const deletedName = String(formItem?.deletedProductName ?? '').trim();
+    return deletedName ? `${deletedName} (deleted)` : '';
+  }
+
+  isProductItemDeleted(item?: PurchaseProductFormItem | null): boolean {
+    if (!item) {
+      return false;
+    }
+    if (item.isProductDeleted || item.isCapacityDeleted) {
+      return true;
+    }
+    if (!item.productId || this.catalogProducts.length === 0) {
+      return false;
+    }
+    const product = this.catalogProducts.find((entry) => String(entry.id) === String(item.productId));
+    if (!product) {
+      return true;
+    }
+    if (!item.capacityId) {
+      return false;
+    }
+    return !product.capacities.some((capacity) => String(capacity.id) === String(item.capacityId));
+  }
+
+  getProductItemDeletedWarning(item?: PurchaseProductFormItem | null): string {
+    if (!this.isProductItemDeleted(item) || !item) {
+      return '';
+    }
+    const productName = String(item.deletedProductName ?? '').trim() || `Product #${item.productId}`;
+    const capacityName = String(item.deletedCapacityName ?? '').trim();
+    if (item.isCapacityDeleted && !item.isProductDeleted && capacityName) {
+      return `Capacity "${capacityName}" was deleted. Choose another capacity immediately.`;
+    }
+    return `${productName}${capacityName ? ` (${capacityName})` : ''} was deleted. Choose another product immediately.`;
+  }
+
+  hasDeletedCatalogItems(orderId: number): boolean {
+    return this.pendingCatalogAlerts.some((alert) => alert.id === orderId);
+  }
+
+  purchaseOrderHasDeletedCatalogItem(item: PurchaseOrderItem): boolean {
+    if (this.hasDeletedCatalogItems(item.id)) {
+      return true;
+    }
+    return (item.productItems ?? []).some(
+      (productItem) => Boolean(productItem.product?.isDeleted) || Boolean(productItem.capacity?.isDeleted),
+    );
+  }
+
+  get pendingDeletedPurchaseAlerts(): PendingCatalogAlert[] {
+    return this.pendingCatalogAlerts;
+  }
+
+  async openPendingDeletedPurchaseOrder(alert: PendingCatalogAlert): Promise<void> {
+    const listItem = this.purchaseOrders.find((item) => item.id === alert.id);
+    if (listItem) {
+      await this.openEditDrawer(listItem);
+      return;
+    }
+    await this.openEditDrawer({
+      id: alert.id,
+      poNumber: alert.orderNumber,
+      vendorId: null,
+      vendorName: '',
+      totalAmount: 0,
+      status: alert.status,
+      createdAt: null,
+      serialCount: 0,
+      scannedSerialCount: 0,
+    });
+  }
+
+  private async loadPendingCatalogAlerts(): Promise<void> {
+    try {
+      this.pendingCatalogAlerts = await this.purchaseOrderService.getPendingCatalogAlerts();
+    } catch {
+      this.pendingCatalogAlerts = [];
+    }
   }
 
   getFilteredVendorOptions(): VendorOption[] {
@@ -752,6 +907,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         this.purchaseOrders = result.items;
         this.applyMeta(result.meta);
       }
+      void this.loadPendingCatalogAlerts();
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
         this.errorMessage =
@@ -1812,6 +1968,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.createSuccess = '';
     this.stopQueuedSerialAutoFlush();
     this.isFormDrawerOpen = true;
+    void this.loadReferenceData();
     this.captureDrawerInitialSnapshot();
     this.startPoSessionGuard();
   }
@@ -3504,13 +3661,23 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
   private getProductNameById(productId: string): string {
     const matched = this.catalogProducts.find((item) => String(item.id) === String(productId));
-    return matched?.name ?? String(productId || '-');
+    if (matched?.name) {
+      return matched.name;
+    }
+    const formItem = this.createForm.productItems.find((item) => String(item.productId) === String(productId));
+    return String(formItem?.deletedProductName ?? '').trim() || String(productId || '-');
   }
 
   private getCapacityNameByProductAndCapacity(productId: string, capacityId: string): string {
     const capacities = this.getCapacitiesByProduct(productId);
     const matched = capacities.find((item) => String(item.id) === String(capacityId));
-    return matched?.name ?? String(capacityId || '-');
+    if (matched?.name) {
+      return matched.name;
+    }
+    const formItem = this.createForm.productItems.find(
+      (item) => String(item.productId) === String(productId) && String(item.capacityId) === String(capacityId),
+    );
+    return String(formItem?.deletedCapacityName ?? '').trim() || String(capacityId || '-');
   }
 
   private buildSerialExportFileBaseName(): string {
@@ -3733,6 +3900,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     nextItems[index] = {
       ...nextItems[index],
       capacityId: '',
+      unitPrice: 0,
       unitTypes: nextUnitTypes,
       ...(this.drawerMode === 'edit' && Object.keys(preservedSerials).length > 0
         ? { _preservedSerials: preservedSerials }
@@ -3749,11 +3917,21 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.recalculateTotalAmount();
   }
 
-  onCapacityChanged(index: number): void {
+  onCapacityChanged(index: number, selectedCapacityId?: string | number): void {
     const item = this.createForm.productItems[index];
     if (!item) {
       return;
     }
+
+    if (selectedCapacityId !== undefined) {
+      item.capacityId = String(selectedCapacityId ?? '');
+    }
+
+    const capacity = this.getCapacitiesByProduct(item.productId).find(
+      (entry) => String(entry.id) === String(item.capacityId),
+    );
+
+    item.unitPrice = this.resolveCatalogNetPrice(capacity);
 
     // Reassign preserved serials to new unitTypes
     if (this.drawerMode === 'edit' && item._preservedSerials) {
@@ -3880,6 +4058,16 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     }
   }
 
+  onUnitPriceChanged(index: number, value: number | string): void {
+    const item = this.createForm.productItems[index];
+    if (!item) {
+      return;
+    }
+
+    item.unitPrice = Number(value) || 0;
+    this.recalculateTotalAmount();
+  }
+
   recalculateTotalAmount(): void {
     const total = this.createForm.productItems.reduce((sum, item) => {
       const unitPrice = Number(item.unitPrice) || 0;
@@ -3896,6 +4084,16 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   getCapacitiesByProduct(productId: string): ProductCapacityOption[] {
     const product = this.catalogProducts.find((item) => String(item.id) === String(productId));
     return product?.capacities ?? [];
+  }
+
+  private resolveCatalogNetPrice(capacity?: ProductCapacityOption | null): number {
+    if (!capacity) {
+      return 0;
+    }
+
+    const raw = capacity.unitPrice ?? capacity.netPrice ?? 0;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
   }
 
   getProductItemTabLabel(item: PurchaseProductFormItem, index: number): string {
@@ -5148,6 +5346,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         return `Capacity is required for item ${index + 1}.`;
       }
 
+      if (this.isProductItemDeleted(item)) {
+        return this.getProductItemDeletedWarning(item) || `Product item ${index + 1} uses a deleted product. Choose another product immediately.`;
+      }
+
       if (!Number.isFinite(Number(item.unitPrice)) || Number(item.unitPrice) < 0) {
         return `Unit price must be valid for item ${index + 1}.`;
       }
@@ -5481,6 +5683,10 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       discountPrice: Number(product.discountPrice) || 0,
       unitTypes,
       totalSetQty,
+      isProductDeleted: Boolean(product.isProductDeleted),
+      isCapacityDeleted: Boolean(product.isCapacityDeleted),
+      deletedProductName: String(product.productName ?? '').trim(),
+      deletedCapacityName: String(product.capacityName ?? '').trim(),
     };
   }
 

@@ -1,12 +1,12 @@
 <div class="space-y-6">
-  <app-page-breadcrumb pageTitle="Stakeholders"></app-page-breadcrumb>
+  <app-page-breadcrumb pageTitle="Customer & Dealer"></app-page-breadcrumb>
 
   <!-- Header -->
   <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
     <!-- Tabs -->
     <div class="flex flex-wrap gap-2">
       @for (tab of [
-        { key: 'regular', label: 'Stakeholders' },
+        { key: 'regular', label: 'Customers' },
         { key: 'sub_dealer', label: 'Sub-Dealers' },
         { key: 'dealer', label: 'Dealers' }
       ]; track tab.key) {

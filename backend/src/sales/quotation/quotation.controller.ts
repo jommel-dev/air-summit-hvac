@@ -16,7 +16,7 @@ import { ListQuotationQueryDto } from './dto/list-quotation-query.dto';
 import { PermanentDeleteQuotationDto } from './dto/permanent-delete-quotation.dto';
 import { UpdateQuotationDto } from './dto/update-quotation.dto';
 import { QuotationService } from './quotation.service';
-import { AuditActorContext } from 'src/audit-log/audit-log.service';
+import { buildAuditContext } from 'src/common/utils/build-audit-context';
 
 @Controller('quotation')
 @UseGuards(JwtAuthGuard)
@@ -25,19 +25,8 @@ export class QuotationController {
 
   private buildAuditContext(
     request: { user?: Record<string, unknown>; ip?: string },
-  ): AuditActorContext {
-    const userId = Number(request.user?.sub);
-    const branchId = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
-
-    return {
-      userId: Number.isFinite(userId) ? userId : undefined,
-      username: String(request.user?.username ?? '').trim() || undefined,
-      roleName: String(request.user?.roleName ?? request.user?.role_name ?? '').trim() || undefined,
-      branchId: Number.isFinite(branchId) ? branchId : undefined,
-      ipAddress: String(request.ip ?? '').trim() || undefined,
-    };
+  ) {
+    return buildAuditContext(request);
   }
 
   private withEffectiveBranchScope(
@@ -116,7 +105,7 @@ export class QuotationController {
   @Post(':id/convert-to-sales-order')
   convertToSalesOrder(
     @Param('id') id: string,
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     const branchId = Number(
@@ -127,6 +116,7 @@ export class QuotationController {
       +id,
       Number.isFinite(userId) ? userId : undefined,
       Number.isFinite(branchId) ? branchId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -134,7 +124,7 @@ export class QuotationController {
   permanentDelete(
     @Param('id') id: string,
     @Body() body: PermanentDeleteQuotationDto,
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     const roleName = String(request.user?.roleName ?? request.user?.role_name ?? '');
@@ -144,6 +134,7 @@ export class QuotationController {
       String(body.password ?? ''),
       Number.isFinite(userId) ? userId : undefined,
       roleName,
+      this.buildAuditContext(request),
     );
   }
 }

@@ -63,51 +63,6 @@
   <section class="grid grid-cols-1 gap-4 xl:grid-cols-12">
     <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03] xl:col-span-8">
       <div class="flex items-center justify-between">
-        <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Operations Control</h2>
-        <span class="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">Logistics Core</span>
-      </div>
-      <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-        @for (item of operations; track item.label; let operationIndex = $index) {
-          <button
-            type="button"
-            (click)="openOperationDetail(getOperationMode(operationIndex))"
-            class="group rounded-xl border p-3 text-left transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-sm dark:hover:border-brand-500/40"
-            [class]="getOpsLevelClass(item.level)"
-          >
-            <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0 flex-1">
-                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ item.label }}</p>
-                <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ item.value }}</p>
-                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ item.hint }}</p>
-              </div>
-              <svg class="mt-1 h-5 w-5 shrink-0 text-gray-400 transition group-hover:text-brand-500 dark:text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7"></path>
-              </svg>
-            </div>
-          </button>
-        }
-      </div>
-    </article>
-
-    <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03] xl:col-span-4">
-      <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Live Activity</h2>
-      <div class="mt-4 space-y-3">
-        @for (event of activityFeed; track event.time + event.text) {
-          <div class="flex gap-3">
-            <div class="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" [class]="getActivityDotClass(event.status)"></div>
-            <div>
-              <p class="text-xs text-gray-500 dark:text-gray-400">{{ event.time }}</p>
-              <p class="text-sm text-gray-700 dark:text-gray-300">{{ event.text }}</p>
-            </div>
-          </div>
-        }
-      </div>
-    </article>
-  </section>
-
-  <section class="grid grid-cols-1 gap-4 xl:grid-cols-12">
-    <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03] xl:col-span-8">
-      <div class="flex items-center justify-between">
         <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Sales Summary</h2>
         <span class="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">Click to expand</span>
       </div>
@@ -211,6 +166,51 @@
             }
           </tbody>
         </table>
+      </div>
+    </article>
+
+    <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03] xl:col-span-4">
+      <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Live Activity</h2>
+      <div class="mt-4 space-y-3">
+        @for (event of activityFeed; track event.time + event.text) {
+          <div class="flex gap-3">
+            <div class="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" [class]="getActivityDotClass(event.status)"></div>
+            <div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">{{ event.time }}</p>
+              <p class="text-sm text-gray-700 dark:text-gray-300">{{ event.text }}</p>
+            </div>
+          </div>
+        }
+      </div>
+    </article>
+  </section>
+
+  <section class="grid grid-cols-1 gap-4 xl:grid-cols-12">
+    <article class="rounded-2xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-white/[0.03] xl:col-span-8">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold text-gray-800 dark:text-white/90">Operations Control</h2>
+        <span class="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">Logistics Core</span>
+      </div>
+      <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+        @for (item of operations; track item.label; let operationIndex = $index) {
+          <button
+            type="button"
+            (click)="openOperationDetail(getOperationMode(operationIndex))"
+            class="group rounded-xl border p-3 text-left transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-sm dark:hover:border-brand-500/40"
+            [class]="getOpsLevelClass(item.level)"
+          >
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ item.label }}</p>
+                <p class="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">{{ item.value }}</p>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ item.hint }}</p>
+              </div>
+              <svg class="mt-1 h-5 w-5 shrink-0 text-gray-400 transition group-hover:text-brand-500 dark:text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7"></path>
+              </svg>
+            </div>
+          </button>
+        }
       </div>
     </article>
 
@@ -348,7 +348,7 @@
     (click)="closeSalesSummaryDetail()"
   ></div>
 
-  <div class="fixed inset-4 z-[100041] overflow-hidden rounded-2xl bg-white dark:bg-gray-900 md:inset-12 lg:inset-16">
+  <div class="fixed inset-4 z-[100041] flex flex-col overflow-hidden rounded-2xl bg-white dark:bg-gray-900 md:inset-12 lg:inset-16">
     <!-- Header -->
     <div class="flex items-center justify-between border-b border-gray-200 bg-gradient-to-r from-brand-50 to-brand-100/50 px-6 py-4 dark:border-gray-800 dark:from-gray-800 dark:to-gray-900">
       <div>
@@ -381,7 +381,82 @@
     </div>
 
     <!-- Content -->
-    <div class="overflow-y-auto p-6" [style.max-height]="'calc(100% - 80px)'">
+    <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div class="flex flex-wrap items-end justify-between gap-3 border-b border-gray-100 px-6 py-4 dark:border-gray-800">
+        <div class="flex flex-wrap items-end gap-3">
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">From</label>
+            <input
+              type="date"
+              name="salesSummaryDateFrom"
+              [(ngModel)]="salesSummaryDateFrom"
+              (change)="onSalesSummaryDateFilterChange()"
+              class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+            />
+          </div>
+          <div>
+            <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">To</label>
+            <input
+              type="date"
+              name="salesSummaryDateTo"
+              [(ngModel)]="salesSummaryDateTo"
+              (change)="onSalesSummaryDateFilterChange()"
+              class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+            />
+          </div>
+          @if (salesSummaryDateFrom || salesSummaryDateTo) {
+            <button
+              type="button"
+              (click)="clearSalesSummaryDateFilter()"
+              class="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Clear dates
+            </button>
+          }
+          @if (expandedSalesSummaryMode === 'cheques') {
+            <div>
+              <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Status</label>
+              <select
+                name="salesSummaryReceivableStatus"
+                [(ngModel)]="salesSummaryReceivableStatus"
+                (ngModelChange)="onSalesSummaryReceivableStatusChange()"
+                class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+              >
+                <option value="pending">Pending</option>
+                <option value="verified">Verified</option>
+                <option value="all">All</option>
+              </select>
+            </div>
+            @if (salesSummaryReceivableStatus === 'pending' || salesSummaryReceivableStatus === 'all') {
+              <div class="rounded-xl border border-warning-200 bg-warning-50/70 px-3 py-2 dark:border-warning-500/30 dark:bg-warning-500/10">
+                <p class="text-[11px] font-medium uppercase tracking-wide text-warning-700 dark:text-warning-300">Total Amount Receivable</p>
+                <p class="mt-0.5 text-sm font-semibold text-gray-800 dark:text-white/90">{{ formatCurrencyValue(salesSummaryReceivableAmount) }}</p>
+              </div>
+            }
+            @if (salesSummaryReceivableStatus === 'verified' || salesSummaryReceivableStatus === 'all') {
+              <div class="rounded-xl border border-success-200 bg-success-50/70 px-3 py-2 dark:border-success-500/30 dark:bg-success-500/10">
+                <p class="text-[11px] font-medium uppercase tracking-wide text-success-700 dark:text-success-300">Total Amount Received</p>
+                <p class="mt-0.5 text-sm font-semibold text-gray-800 dark:text-white/90">{{ formatCurrencyValue(salesSummaryReceivedAmount) }}</p>
+              </div>
+            }
+            @if (salesSummaryReceivableStatus === 'all') {
+              <div class="rounded-xl border border-brand-200 bg-brand-50/70 px-3 py-2 dark:border-brand-500/30 dark:bg-brand-500/10">
+                <p class="text-[11px] font-medium uppercase tracking-wide text-brand-700 dark:text-brand-300">Overall Total</p>
+                <p class="mt-0.5 text-sm font-semibold text-gray-800 dark:text-white/90">{{ formatCurrencyValue(salesSummaryOverallAmount) }}</p>
+              </div>
+            }
+          }
+        </div>
+        <p class="text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
+          @if (salesSummaryTotal > 0) {
+            Showing {{ salesSummaryRangeStart }}-{{ salesSummaryRangeEnd }} of {{ salesSummaryTotal }}
+          } @else {
+            Showing 0 of 0
+          }
+        </p>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-6">
       @if (salesSummaryLoading) {
         <div class="flex items-center justify-center py-8">
           <div class="flex flex-col items-center gap-2">
@@ -410,6 +485,13 @@
                   <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Balance</th>
                   <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Method</th>
                   <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">Due Date</th>
+                  <th class="px-4 py-3 text-left text-xs font-medium text-gray-600 dark:text-gray-400">
+                    @if (expandedSalesSummaryMode === 'overdues') {
+                      Days Overdue
+                    } @else {
+                      Remaining Days
+                    }
+                  </th>
                   <th class="px-4 py-3 text-right text-xs font-medium text-gray-600 dark:text-gray-400">Action</th>
                 }
                 @if (expandedSalesSummaryMode === 'cheques') {
@@ -444,6 +526,9 @@
                     <td class="px-4 py-3 text-right text-sm font-medium text-error-600 dark:text-error-400">{{ formatCurrencyValue(item['balance']) }}</td>
                     <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTextValue(item['method']) }}</td>
                     <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ formatDateValue(item['dueDate']) }}</td>
+                    <td [class]="getDueCountdownClass(item['daysUntilDue'])">
+                      {{ formatDueCountdown(item['daysUntilDue'], expandedSalesSummaryMode === 'overdues' ? 'overdues' : 'unpaid') }}
+                    </td>
                     <td class="px-4 py-3 text-right">
                       <button
                         type="button"
@@ -468,15 +553,27 @@
                       </span>
                     </td>
                     <td class="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        (click)="verifyReceivable(item, $event.shiftKey)"
-                        [disabled]="verifyingReceivableId !== null && verifyingReceivableId === $any(item['paymentId'])?.toString()"
-                        class="rounded-lg border border-success-300 px-3 py-1.5 text-xs font-medium text-success-700 transition hover:bg-success-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-success-500/40 dark:text-success-300 dark:hover:bg-success-500/10"
-                        [title]="!canVerifyReceivable(item) ? 'Hold Shift and click to force verify' : ''"
-                      >
-                        {{ getReceivableVerifyLabel(item) }}
-                      </button>
+                      @if (isReceivableAlreadyVerified(item)) {
+                        <button
+                          type="button"
+                          (click)="openAdjustmentModal(item)"
+                          [disabled]="adjustingReceivableId !== null && adjustingReceivableId === $any(item['paymentId'])?.toString()"
+                          class="rounded-lg border border-warning-300 px-3 py-1.5 text-xs font-medium text-warning-700 transition hover:bg-warning-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-warning-500/40 dark:text-warning-300 dark:hover:bg-warning-500/10"
+                          title="Revert this payment back to pending so it can be verified again"
+                        >
+                          {{ adjustingReceivableId !== null && adjustingReceivableId === $any(item['paymentId'])?.toString() ? 'Adjusting…' : 'Adjustment' }}
+                        </button>
+                      } @else {
+                        <button
+                          type="button"
+                          (click)="verifyReceivable(item, $event.shiftKey)"
+                          [disabled]="verifyingReceivableId !== null && verifyingReceivableId === $any(item['paymentId'])?.toString()"
+                          class="rounded-lg border border-success-300 px-3 py-1.5 text-xs font-medium text-success-700 transition hover:bg-success-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-success-500/40 dark:text-success-300 dark:hover:bg-success-500/10"
+                          [title]="!canVerifyReceivable(item) ? 'Hold Shift and click to force verify' : ''"
+                        >
+                          {{ getReceivableVerifyLabel(item) }}
+                        </button>
+                      }
                     </td>
                   }
                 </tr>
@@ -490,6 +587,31 @@
             <path d="M9 12h6m-6 4h6M9 8h6M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
           </svg>
           <p class="mt-4 text-center text-sm text-gray-500 dark:text-gray-400">No transaction data available for this period</p>
+        </div>
+      }
+      </div>
+
+      @if (!salesSummaryLoading && salesSummaryTotal > 0) {
+        <div class="flex items-center justify-between gap-3 border-t border-gray-100 px-6 py-3 dark:border-gray-800">
+          <button
+            type="button"
+            class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+            (click)="goToSalesSummaryPage(salesSummaryPage - 1)"
+            [disabled]="salesSummaryPage <= 1"
+          >
+            Previous
+          </button>
+          <p class="text-sm text-gray-500 dark:text-gray-400">
+            Page {{ salesSummaryPage }} of {{ salesSummaryTotalPages }}
+          </p>
+          <button
+            type="button"
+            class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:text-gray-300"
+            (click)="goToSalesSummaryPage(salesSummaryPage + 1)"
+            [disabled]="salesSummaryPage >= salesSummaryTotalPages"
+          >
+            Next
+          </button>
         </div>
       }
     </div>
@@ -641,6 +763,116 @@
           class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {{ settlementBusy ? 'Saving…' : 'Save Settlement' }}
+        </button>
+      </div>
+    </div>
+  </div>
+}
+
+@if (adjustmentTarget) {
+  <div
+    class="fixed inset-0 z-[100060] bg-black/50 transition-opacity backdrop-blur-sm dark:bg-black/70"
+    (click)="closeAdjustmentModal()"
+  ></div>
+
+  <div class="fixed inset-x-4 top-1/2 z-[100061] mx-auto w-full max-w-lg -translate-y-1/2 overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+    <div class="flex items-center justify-between border-b border-gray-200 bg-linear-to-r from-warning-50 to-warning-100/50 px-6 py-4 dark:border-gray-800 dark:from-gray-800 dark:to-gray-900">
+      <div>
+        <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Confirm Adjustment</h3>
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          {{ adjustmentTarget.soNumber }} • {{ adjustmentTarget.customer }} • {{ adjustmentTarget.amount }}
+        </p>
+      </div>
+      <button
+        type="button"
+        (click)="closeAdjustmentModal()"
+        [disabled]="adjustingReceivableId !== null"
+        class="rounded-lg bg-white p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-gray-800 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+      >
+        <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+
+    <div class="space-y-4 p-6">
+      <div class="rounded-xl border border-warning-200 bg-warning-50/80 px-4 py-3 text-sm text-warning-800 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-100">
+        This will revert the verified {{ adjustmentTarget.methodLabel }} payment
+        @if (adjustmentTarget.referenceNo !== '-') {
+          <span class="font-medium">({{ adjustmentTarget.referenceNo }})</span>
+        }
+        back to pending. Admin password and remarks are required.
+      </div>
+
+      <label class="block text-sm">
+        <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Remarks</span>
+        <textarea
+          rows="3"
+          [(ngModel)]="adjustmentRemarks"
+          [disabled]="adjustingReceivableId !== null"
+          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-warning-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+          placeholder="Explain why this payment should be reverted or adjusted"
+        ></textarea>
+      </label>
+
+      @if (!requiresAdminCredentialsForAdjustment) {
+        <label class="block text-sm">
+          <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Admin Password</span>
+          <input
+            type="password"
+            [(ngModel)]="adjustmentPassword"
+            [disabled]="adjustingReceivableId !== null"
+            class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-warning-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+            placeholder="Enter your password"
+          />
+        </label>
+      } @else {
+        <label class="block text-sm">
+          <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Admin Username</span>
+          <input
+            type="text"
+            [(ngModel)]="adjustmentAuthUsername"
+            [disabled]="adjustingReceivableId !== null"
+            class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-warning-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+            placeholder="Enter admin or super admin username"
+          />
+        </label>
+
+        <label class="block text-sm">
+          <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Admin Password</span>
+          <input
+            type="password"
+            [(ngModel)]="adjustmentPassword"
+            [disabled]="adjustingReceivableId !== null"
+            class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-warning-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+            placeholder="Enter admin password"
+          />
+        </label>
+      }
+
+      @if (adjustmentError) {
+        <p class="rounded-lg border border-error-200 bg-error-50 px-3 py-2 text-sm text-error-700 dark:border-error-500/20 dark:bg-error-500/10 dark:text-error-200">
+          {{ adjustmentError }}
+        </p>
+      }
+
+      <div class="flex justify-end gap-3">
+        <button
+          type="button"
+          (click)="closeAdjustmentModal()"
+          [disabled]="adjustingReceivableId !== null"
+          class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          (click)="confirmAdjustment()"
+          [disabled]="adjustingReceivableId !== null"
+          class="rounded-xl bg-warning-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-warning-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {{ adjustingReceivableId !== null ? 'Adjusting…' : 'Confirm Adjustment' }}
         </button>
       </div>
     </div>

@@ -1,9 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 @Injectable()
 export class MaterialStockService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async getBalance(materialId: number) {
     const res = await this.db.query(
@@ -49,7 +53,10 @@ export class MaterialStockService {
       remarks?: string;
       createdBy?: number;
     },
-    options?: { client?: { query: (text: string, params?: unknown[]) => Promise<any> } },
+    options?: {
+      client?: { query: (text: string, params?: unknown[]) => Promise<any> };
+      auditActor?: AuditActorContext;
+    },
   ) {
     if (!dto.materialId || !dto.movementType || !dto.qty || !dto.sourceType || dto.sourceId === undefined || !dto.sourceLineKey) {
       throw new Error('Missing required movement fields');
@@ -129,6 +136,19 @@ export class MaterialStockService {
 
       // Return current balance and movement
       const balanceRow = (await executor.query(`SELECT material_id, on_hand, reserved, available, updated_at FROM tblmaterial_stock_balance WHERE material_id = $1`, [dto.materialId])).rows[0];
+
+      if (options?.auditActor) {
+        await this.auditLogService.logMutation({
+          action: 'MATERIAL_STOCK_MOVEMENT',
+          entityType: 'material-stock',
+          entityId: movement?.id ?? dto.materialId,
+          actor: options.auditActor,
+          description: `Recorded ${dto.movementType} movement of ${dto.qty} for material #${dto.materialId}`,
+          requestBody: dto as unknown as Record<string, unknown>,
+          after: { movement, balance: balanceRow } as unknown as Record<string, unknown>,
+        });
+      }
+
       return { movement, balance: balanceRow };
     } catch (err) {
       if (!isExternalClient) {

@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { UsersService } from './users.service';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditLogService } from 'src/audit-log/audit-log.service';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -10,6 +11,10 @@ describe('UsersService', () => {
       providers: [
         UsersService,
         { provide: DatabaseService, useValue: {} },
+        {
+          provide: AuditLogService,
+          useValue: { logMutation: jest.fn(), log: jest.fn() },
+        },
       ],
     }).compile();
 

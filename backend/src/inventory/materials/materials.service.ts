@@ -20,6 +20,7 @@ import { DatabaseService } from '../../database/database.service';
 import { CreateMaterialDto } from './dto/create-material.dto';
 import { UpdateMaterialDto } from './dto/update-material.dto';
 import { Material } from './entities/material.entity';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 export type QueryClient = {
   query: (text: string, params?: unknown[]) => Promise<any>;
@@ -31,7 +32,10 @@ export class MaterialsService {
    * Constructor - Inject DatabaseService for database operations
    * DatabaseService provides the PostgreSQL connection pool
    */
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   /**
    * =====================================================
@@ -46,7 +50,11 @@ export class MaterialsService {
    * 4. Return created material with brand info
    * =====================================================
    */
-  async create(createMaterialDto: CreateMaterialDto, userId: number): Promise<Material> {
+  async create(
+    createMaterialDto: CreateMaterialDto,
+    userId: number,
+    auditActor?: AuditActorContext,
+  ): Promise<Material> {
     // Step 1: Validate brand if provided
     if (createMaterialDto.brand_id) {
       const brandCheck = await this.db.query(
@@ -101,7 +109,17 @@ export class MaterialsService {
     const material = result.rows[0];
 
     // Step 4: Fetch with brand info and return
-    return this.findOne(material.id);
+    const created = await this.findOne(material.id);
+    await this.auditLogService.logMutation({
+      action: 'MATERIAL_CREATE',
+      entityType: 'material',
+      entityId: created.id,
+      actor: auditActor ?? { userId },
+      description: `Created material ${created.material_name ?? created.id}`,
+      requestBody: createMaterialDto as unknown as Record<string, unknown>,
+      after: created as unknown as Record<string, unknown>,
+    });
+    return created;
   }
 
   /**
@@ -195,9 +213,14 @@ export class MaterialsService {
    * 5. Track price history if prices changed
    * =====================================================
    */
-  async update(id: number, updateMaterialDto: UpdateMaterialDto, userId: number): Promise<Material> {
+  async update(
+    id: number,
+    updateMaterialDto: UpdateMaterialDto,
+    userId: number,
+    auditActor?: AuditActorContext,
+  ): Promise<Material> {
     // Step 1: Check if material exists
-    await this.findOne(id);
+    const before = await this.findOne(id);
 
     // Step 2: Validate brand if provided
     if (updateMaterialDto.brand_id) {
@@ -276,7 +299,18 @@ export class MaterialsService {
       await this.trackPriceHistory(id, material.unit_price, material.sell_price, userId);
     }
 
-    return this.findOne(id);
+    const updated = await this.findOne(id);
+    await this.auditLogService.logMutation({
+      action: 'MATERIAL_UPDATE',
+      entityType: 'material',
+      entityId: id,
+      actor: auditActor ?? { userId },
+      description: `Updated material ${updated.material_name ?? id}`,
+      requestBody: updateMaterialDto as unknown as Record<string, unknown>,
+      before: before as unknown as Record<string, unknown>,
+      after: updated as unknown as Record<string, unknown>,
+    });
+    return updated;
   }
 
   /**
@@ -289,9 +323,13 @@ export class MaterialsService {
    * This preserves historical data and relationships
    * =====================================================
    */
-  async remove(id: number, userId: number): Promise<void> {
+  async remove(
+    id: number,
+    userId: number,
+    auditActor?: AuditActorContext,
+  ): Promise<void> {
     // Check if material exists
-    await this.findOne(id);
+    const before = await this.findOne(id);
 
     // Soft delete by setting deleted_at
     const deleteQuery = `
@@ -301,6 +339,15 @@ export class MaterialsService {
     `;
 
     await this.db.query(deleteQuery, [userId, id]);
+
+    await this.auditLogService.logMutation({
+      action: 'MATERIAL_DELETE',
+      entityType: 'material',
+      entityId: id,
+      actor: auditActor ?? { userId },
+      description: `Deleted material ${before.material_name ?? id}`,
+      before: before as unknown as Record<string, unknown>,
+    });
   }
 
   /**

@@ -1,5 +1,7 @@
-import { Controller, Get, Post, Body, Query } from '@nestjs/common';
+import { Controller, Get, Post, Body, Req } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditLogService } from 'src/audit-log/audit-log.service';
+import { buildAuditContext } from 'src/common/utils/build-audit-context';
 
 class SubmitFeedbackDto {
   rating!: number;
@@ -10,26 +12,56 @@ class SubmitFeedbackDto {
 
 @Controller('public/feedback')
 export class PublicFeedbackController {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   @Post()
-  async submitFeedback(@Body() dto: SubmitFeedbackDto) {
+  async submitFeedback(
+    @Body() dto: SubmitFeedbackDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
     const rating = Math.floor(Number(dto.rating ?? 0));
     if (rating < 1 || rating > 5) {
       return { success: false, message: 'Rating must be between 1 and 5.' };
     }
 
+    const wouldRecommend = Boolean(dto.wouldRecommend);
+    const insights = String(dto.insights ?? '').trim() || null;
+    const name = String(dto.name ?? '').trim() || null;
+
     try {
-      await this.databaseService.query(
+      const insertResult = await this.databaseService.query<{ id: number }>(
         `INSERT INTO tblfeedback (rating, would_recommend, insights, name)
-         VALUES ($1, $2, $3, $4)`,
-        [
-          rating,
-          Boolean(dto.wouldRecommend),
-          String(dto.insights ?? '').trim() || null,
-          String(dto.name ?? '').trim() || null,
-        ],
+         VALUES ($1, $2, $3, $4)
+         RETURNING id`,
+        [rating, wouldRecommend, insights, name],
       );
+
+      const feedbackId = insertResult.rows[0]?.id ?? null;
+
+      await this.auditLogService.logMutation({
+        action: 'PUBLIC_FEEDBACK_CREATE',
+        entityType: 'public-feedback',
+        entityId: feedbackId,
+        actor: buildAuditContext(request),
+        description: 'Submitted public feedback',
+        requestBody: {
+          rating,
+          wouldRecommend,
+          insights,
+          name,
+        },
+        after: {
+          id: feedbackId,
+          rating,
+          wouldRecommend,
+          insights,
+          name,
+        },
+      });
+
       return { success: true, message: 'Thank you for your feedback!' };
     } catch (error) {
       return { success: false, message: error instanceof Error ? error.message : 'Failed to submit feedback.' };

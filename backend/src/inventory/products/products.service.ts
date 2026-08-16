@@ -6,10 +6,18 @@ import {
 import { UpdateProductDto } from './dto/update-product.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import {
+  catalogActiveSql,
+  findPendingCatalogAlerts,
+} from 'src/common/utils/catalog-soft-delete';
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   private async getTableColumns(
     executor: { query: PoolClient['query'] },
@@ -289,7 +297,11 @@ export class ProductsService {
     await this.runInsert(executor, 'tblcapacity_netprice_history', historyRecord);
   }
 
-  async create(createProductDto: CreateProductDto, userId: number) {
+  async create(
+    createProductDto: CreateProductDto,
+    userId: number,
+    auditActor?: AuditActorContext,
+  ) {
     const prodData = createProductDto;
     const normalizedProductName = prodData.productName?.trim();
 
@@ -314,6 +326,7 @@ export class ProductsService {
          to_jsonb(p)->>'brand_id',
          to_jsonb(p)->>'brandid'
        ) = $2::text
+       AND ${catalogActiveSql('p')}
        LIMIT 1`,
       [normalizedProductName, prodData.brandId],
     );
@@ -408,6 +421,21 @@ export class ProductsService {
           id: productId,
           capacitiesInserted: capacities.length,
         };
+      });
+
+      await this.auditLogService.logMutation({
+        action: 'PRODUCT_CREATE',
+        entityType: 'product',
+        entityId: result.id,
+        actor: auditActor ?? { userId },
+        description: `Created product ${normalizedProductName}`,
+        requestBody: createProductDto as unknown as Record<string, unknown>,
+        after: {
+          id: result.id,
+          productName: normalizedProductName,
+          brandId: prodData.brandId,
+          capacitiesInserted: result.capacitiesInserted,
+        },
       });
 
       return {
@@ -535,10 +563,12 @@ export class ProductsService {
                  to_jsonb(c)->>'prod_id',
                  to_jsonb(c)->>'product_id'
                ) = p.id::text
+                 AND ${catalogActiveSql('c')}
              ),
              '[]'::json
            ) AS capacities
          FROM tblproducts p
+         WHERE ${catalogActiveSql('p')}
          ORDER BY p.id DESC`,
       );
 
@@ -583,7 +613,11 @@ export class ProductsService {
     return { success: true, item: product };
   }
 
-  async update(id: number, updateProductDto: UpdateProductDto) {
+  async update(
+    id: number,
+    updateProductDto: UpdateProductDto,
+    auditActor?: AuditActorContext,
+  ) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid product id' };
     }
@@ -593,7 +627,7 @@ export class ProductsService {
     }
 
     try {
-      return await this.databaseService.withTransaction(async (client) => {
+      const result = await this.databaseService.withTransaction(async (client) => {
         const existingResult = await client.query<{
           id: number;
           brand_id: string | null;
@@ -677,6 +711,7 @@ export class ProductsService {
                to_jsonb(p)->>'brandid'
              ) = $2::text
              AND p.id <> $3
+             AND ${catalogActiveSql('p')}
              LIMIT 1`,
             [nextProductName, duplicateBrandId, id],
           );
@@ -834,6 +869,20 @@ export class ProductsService {
           : '';
         return { success: true, message: `Product updated successfully.${cascadeMsg}` };
       });
+
+      if (result?.success) {
+        await this.auditLogService.logMutation({
+          action: 'PRODUCT_UPDATE',
+          entityType: 'product',
+          entityId: id,
+          actor: auditActor,
+          description: `Updated product #${id}`,
+          requestBody: updateProductDto as unknown as Record<string, unknown>,
+          after: { id, message: result.message },
+        });
+      }
+
+      return result;
     } catch (error) {
       return {
         success: false,
@@ -842,7 +891,154 @@ export class ProductsService {
     }
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} product`;
+  async findPendingCatalogAlerts(productId?: number, capacityId?: number) {
+    try {
+      const items = await findPendingCatalogAlerts(this.databaseService, {
+        productId,
+        capacityId,
+      });
+      return {
+        success: true,
+        items,
+        salesOrders: items.filter((item) => item.orderType === 'sales'),
+        purchaseOrders: items.filter((item) => item.orderType === 'purchase'),
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Failed to load pending catalog alerts',
+        items: [],
+        salesOrders: [],
+        purchaseOrders: [],
+      };
+    }
+  }
+
+  async remove(id: number, userId?: number, auditActor?: AuditActorContext) {
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: 'Invalid product id' };
+    }
+
+    try {
+      const existingResult = await this.databaseService.query<{
+        id: number;
+        product_name: string | null;
+      }>(
+        `SELECT
+           p.id,
+           COALESCE(
+             to_jsonb(p)->>'productName',
+             to_jsonb(p)->>'product_name',
+             to_jsonb(p)->>'productname'
+           ) AS product_name
+         FROM tblproducts p
+         WHERE p.id = $1
+           AND ${catalogActiveSql('p')}
+         LIMIT 1`,
+        [id],
+      );
+
+      if (existingResult.rowCount === 0) {
+        return { success: false, message: `Product ${id} not found` };
+      }
+
+      const productName = existingResult.rows[0].product_name ?? `Product ${id}`;
+      const actorUserId =
+        Number.isFinite(Number(userId)) && Number(userId) > 0
+          ? Number(userId)
+          : Number(auditActor?.userId);
+
+      await this.databaseService.withTransaction(async (client) => {
+        const productColumns = await this.getTableColumns(client, 'tblproducts');
+        const productDeletedAtColumn = this.pickColumn(productColumns, [
+          'deleted_at',
+          'deletedAt',
+        ]);
+        const productDeletedByColumn = this.pickColumn(productColumns, [
+          'deleted_by',
+          'deletedBy',
+        ]);
+
+        if (!productDeletedAtColumn) {
+          throw new Error('tblproducts.deleted_at is not configured');
+        }
+
+        const productValues: unknown[] = [new Date().toISOString()];
+        const productSets = [`"${productDeletedAtColumn}" = $1`];
+        if (productDeletedByColumn && Number.isFinite(actorUserId) && actorUserId > 0) {
+          productValues.push(actorUserId);
+          productSets.push(`"${productDeletedByColumn}" = $${productValues.length}`);
+        }
+        productValues.push(id);
+        await client.query(
+          `UPDATE tblproducts
+           SET ${productSets.join(', ')}
+           WHERE id = $${productValues.length}`,
+          productValues,
+        );
+
+        const capacityColumns = await this.getTableColumns(client, 'tblcapacity');
+        const capacityDeletedAtColumn = this.pickColumn(capacityColumns, [
+          'deleted_at',
+          'deletedAt',
+        ]);
+        const capacityDeletedByColumn = this.pickColumn(capacityColumns, [
+          'deleted_by',
+          'deletedBy',
+        ]);
+        const capacityProductIdColumn = this.pickColumn(capacityColumns, [
+          'prodId',
+          'productId',
+          'prod_id',
+          'product_id',
+        ]);
+
+        if (capacityDeletedAtColumn && capacityProductIdColumn) {
+          const capacityValues: unknown[] = [new Date().toISOString()];
+          const capacitySets = [`"${capacityDeletedAtColumn}" = $1`];
+          if (capacityDeletedByColumn && Number.isFinite(actorUserId) && actorUserId > 0) {
+            capacityValues.push(actorUserId);
+            capacitySets.push(`"${capacityDeletedByColumn}" = $${capacityValues.length}`);
+          }
+          capacityValues.push(String(id));
+          await client.query(
+            `UPDATE tblcapacity c
+             SET ${capacitySets.join(', ')}
+             WHERE c."${capacityProductIdColumn}"::text = $${capacityValues.length}
+               AND ${catalogActiveSql('c')}`,
+            capacityValues,
+          );
+        }
+      });
+
+      const affectedPendingOrders = await findPendingCatalogAlerts(
+        this.databaseService,
+        { productId: id },
+      );
+
+      await this.auditLogService.logMutation({
+        action: 'PRODUCT_DELETE',
+        entityType: 'product',
+        entityId: id,
+        actor: auditActor ?? { userId: actorUserId },
+        description: `Soft deleted product ${productName}`,
+        before: { id, productName },
+      });
+
+      return {
+        success: true,
+        message: 'Product deleted successfully',
+        affectedPendingOrders,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message:
+          error instanceof Error ? error.message : 'Failed to delete product',
+      };
+    }
   }
 }

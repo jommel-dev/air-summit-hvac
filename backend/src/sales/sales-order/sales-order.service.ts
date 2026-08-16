@@ -15,6 +15,11 @@ import { MaterialsService } from 'src/inventory/materials/materials.service';
 import { PurchaseService } from 'src/inventory/purchase/purchase.service';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 import { SoNumberService } from './so-number.service';
+import {
+  assertActiveProductCapacity,
+  catalogActiveSql,
+  catalogDeletedSql,
+} from 'src/common/utils/catalog-soft-delete';
 
 type SalesMode =
   | 'deliveries'
@@ -81,7 +86,12 @@ export class SalesOrderService {
     }
   }
 
-  async bulkAssignInstaller(orderIds: number[], installer: string, userId?: number) {
+  async bulkAssignInstaller(
+    orderIds: number[],
+    installer: string,
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ) {
     if (!orderIds || orderIds.length === 0) {
       return { success: false, message: 'No orders specified' };
     }
@@ -102,6 +112,17 @@ export class SalesOrderService {
         `UPDATE tblsales_order SET "${installerColumn}" = $1 WHERE id = ANY($2::integer[])`,
         [cleanInstaller, orderIds],
       );
+
+      await this.auditLogService.logMutation({
+        action: 'SALES_ORDER_BULK_ASSIGN_INSTALLER',
+        entityType: 'sales-order',
+        entityId: orderIds[0],
+        actor: auditActor ?? { userId },
+        description: `Assigned installer "${cleanInstaller}" to ${result.rowCount ?? 0} sales order(s)`,
+        requestBody: { orderIds, installer: cleanInstaller },
+        after: { updatedCount: result.rowCount ?? 0, installer: cleanInstaller, orderIds },
+        metadata: { orderIds, installer: cleanInstaller, updatedCount: result.rowCount ?? 0 },
+      });
 
       return { success: true, message: `Installer assigned to ${result.rowCount} orders`, updatedCount: result.rowCount };
     } catch (error) {
@@ -160,7 +181,11 @@ export class SalesOrderService {
    * - Regular orders: must be 'for-delivery' and have scanned serial numbers
    * - Service-only orders: can remit directly from workflow statuses (e.g. after-sales)
    */
-  async bulkRemitSalesOrders(orderIds: number[], userId?: number): Promise<{ success: boolean; message: string; updatedCount?: number; skipped?: Array<{ id: number; soNumber: string; reason: string }> }> {
+  async bulkRemitSalesOrders(
+    orderIds: number[],
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ): Promise<{ success: boolean; message: string; updatedCount?: number; skipped?: Array<{ id: number; soNumber: string; reason: string }> }> {
     if (!orderIds || orderIds.length === 0) {
       return { success: false, message: 'No orders specified' };
     }
@@ -199,7 +224,17 @@ export class SalesOrderService {
           .replace(/[\s_&]+/g, '-')
           .replace(/-+/g, '-');
         const isServiceOnly = normalizedSalesType === 'service' || normalizedSalesType === 'services';
+        const isProjectOrder = normalizedSalesType === 'project';
         const nonRemittableStatuses = ['remitted', 'complete', 'completed', 'cancelled', 'rejected'];
+
+        if (isProjectOrder) {
+          skipped.push({
+            id: row.id,
+            soNumber: row.so_number,
+            reason: 'Project orders use Complete (SOA/Billing/Settlement), not Remit',
+          });
+          continue;
+        }
 
         if (isServiceOnly) {
           if (nonRemittableStatuses.includes(status)) {
@@ -238,15 +273,131 @@ export class SalesOrderService {
         [eligible],
       );
 
+      await this.databaseService.query(
+        `UPDATE tblso_payments
+         SET status = 'unpaid'
+         WHERE so_id = ANY($1::integer[])
+           AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(method, ''))), '_', '-'), ' ', '-')
+             IN ('bank-transfer', 'cheque', 'credit-card')`,
+        [eligible],
+      );
+
       const updatedCount = result.rowCount ?? 0;
       let message = `${updatedCount} order(s) remitted successfully`;
       if (skipped.length > 0) {
         message += `. ${skipped.length} order(s) skipped.`;
       }
 
+      await this.auditLogService.logMutation({
+        action: 'SALES_ORDER_BULK_REMIT',
+        entityType: 'sales-order',
+        entityId: eligible[0],
+        actor: auditActor ?? { userId },
+        description: `Bulk remitted ${updatedCount} sales order(s)`,
+        requestBody: { orderIds },
+        after: { updatedCount, eligible, skipped },
+        metadata: { orderIds: eligible, skippedCount: skipped.length, updatedCount },
+      });
+
       return { success: true, message, updatedCount, skipped };
     } catch (error) {
       return { success: false, message: `Failed to remit orders: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  /**
+   * Complete a project sales order without remittance.
+   * Project payment is handled via Project SOA / Billing / Settlement and must
+   * not enter the normal remittance → Collected Sales path.
+   */
+  async completeProjectSalesOrder(
+    id: number,
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ): Promise<{ success: boolean; message: string }> {
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: 'Invalid sales order id' };
+    }
+
+    try {
+      const beforeSnapshot = await this.getSalesOrderAuditSnapshot(id);
+      const existing = await this.databaseService.query<{
+        id: number;
+        so_number: string | null;
+        status: string | null;
+        sales_type: string | null;
+      }>(
+        `SELECT
+           so.id,
+           COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', '') AS so_number,
+           COALESCE(so.status, 'pending') AS status,
+           COALESCE(to_jsonb(so)->>'salesType', to_jsonb(so)->>'sales_type', '') AS sales_type
+         FROM tblsales_order so
+         WHERE so.id = $1
+         LIMIT 1`,
+        [id],
+      );
+
+      if (existing.rowCount === 0) {
+        return { success: false, message: `Sales order ${id} not found` };
+      }
+
+      const row = existing.rows[0];
+      const salesType = String(row.sales_type ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_&]+/g, '-')
+        .replace(/-+/g, '-');
+      if (salesType !== 'project') {
+        return {
+          success: false,
+          message: 'Only project sales orders can be completed this way',
+        };
+      }
+
+      const status = String(row.status ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_]+/g, '-');
+      if (['complete', 'completed', 'cancelled', 'rejected'].includes(status)) {
+        return {
+          success: false,
+          message: `Order is already "${row.status}" and cannot be completed again`,
+        };
+      }
+      if (status === 'remitted') {
+        return {
+          success: false,
+          message: 'This project order was already remitted. Use the remitted/receivable flow instead.',
+        };
+      }
+
+      await this.databaseService.query(
+        `UPDATE tblsales_order SET status = 'complete' WHERE id = $1`,
+        [id],
+      );
+
+      const afterSnapshot = await this.getSalesOrderAuditSnapshot(id);
+      await this.auditLogService.logMutation({
+        action: 'SALES_ORDER_PROJECT_COMPLETE',
+        entityType: 'sales-order',
+        entityId: id,
+        actor: auditActor ?? { userId },
+        description: `Completed project sales order ${String(row.so_number ?? '').trim() || `#${id}`} (SOA/billing basis)`,
+        before: beforeSnapshot ?? undefined,
+        after: afterSnapshot ?? undefined,
+      });
+
+      return {
+        success: true,
+        message: 'Project sales order completed. Payment is tracked via Project SOA / Settlement.',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message:
+          error instanceof Error ? error.message : 'Failed to complete project sales order',
+      };
     }
   }
 
@@ -356,6 +507,117 @@ export class SalesOrderService {
       `INSERT INTO ${tableName} (${quotedColumns}) VALUES (${placeholders}) RETURNING id`,
       values,
     );
+  }
+
+  /**
+   * Compute SO total from product + service lines.
+   * Frontend sends serviceCost as unit price and serviceDurationHours as qty.
+   * Prefer payload.totalAmount when it is >= line total (includes Additional Excess).
+   */
+  private resolveSalesOrderTotalAmount(params: {
+    productItems: Array<{
+      unitPrice?: unknown;
+      sellPrice?: unknown;
+      discountPrice?: unknown;
+      totalSetQty?: unknown;
+    }>;
+    serviceItems: Array<{
+      serviceCost?: unknown;
+      serviceDurationHours?: unknown;
+    }>;
+    payloadTotalAmount?: unknown;
+    existingTotalAmount?: unknown;
+  }): number {
+    let computedProductTotal = 0;
+    for (const item of params.productItems) {
+      const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
+      const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
+      const discountPrice = this.toOptionalNumber(item.discountPrice) ?? 0;
+      const qty = this.toOptionalNumber(item.totalSetQty) ?? 0;
+      const priceToUse = discountPrice > 0 ? discountPrice : sellPrice > 0 ? sellPrice : unitPrice;
+      computedProductTotal += priceToUse * qty;
+    }
+
+    let computedServiceTotal = 0;
+    for (const item of params.serviceItems) {
+      const unitPrice = this.toOptionalNumber(item.serviceCost) ?? 0;
+      const qty = this.toOptionalNumber(item.serviceDurationHours) ?? 0;
+      computedServiceTotal += unitPrice * qty;
+    }
+
+    const computedLineTotal = computedProductTotal + computedServiceTotal;
+    const payloadTotal = this.toOptionalNumber(params.payloadTotalAmount) ?? 0;
+    const existingTotal = this.toOptionalNumber(params.existingTotalAmount) ?? 0;
+
+    // FE totalAmount = products + services + Additional Excess (non-inclusion).
+    if (payloadTotal > 0 && payloadTotal + 0.009 >= computedLineTotal) {
+      return Math.round(payloadTotal * 100) / 100;
+    }
+    if (computedLineTotal > 0) {
+      return Math.round(computedLineTotal * 100) / 100;
+    }
+    if (existingTotal > 0) {
+      return Math.round(existingTotal * 100) / 100;
+    }
+    return 0;
+  }
+
+  /**
+   * Recompute and persist total_amount from product lines + services + non-inclusion excess.
+   * Used after misc excess sync (which may skip incremental total updates).
+   */
+  private async syncSalesOrderTotalFromComponents(
+    salesId: number,
+    executor?: { query: PoolClient['query'] },
+  ): Promise<number> {
+    if (!Number.isFinite(salesId) || salesId <= 0) {
+      return 0;
+    }
+
+    const db = executor ?? this.databaseService;
+    const result = await db.query<{ total: string }>(
+      `SELECT (
+          COALESCE((
+            SELECT SUM(
+              COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', ''), '')::numeric, 0)
+              * CASE
+                  WHEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', ''), '')::numeric, 0) > 0
+                    THEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', ''), '')::numeric, 0)
+                  WHEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', ''), '')::numeric, 0) > 0
+                    THEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', ''), '')::numeric, 0)
+                  ELSE COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', ''), '')::numeric, 0)
+                END
+            )
+            FROM tbltransaction_product_items tpi
+            WHERE COALESCE(to_jsonb(tpi)->>'salesId', to_jsonb(tpi)->>'sales_id') = $1::text
+          ), 0)
+          + COALESCE((
+            SELECT SUM(
+              COALESCE(sd.service_cost, 0)
+              * COALESCE(NULLIF(sd.service_duration_hours, 0), 1)
+            )
+            FROM tblservice_details sd
+            WHERE sd.sales_id = $1::integer
+          ), 0)
+          + COALESCE((
+            SELECT SUM(COALESCE(mi.total_price, 0))
+            FROM tblso_miscellaneous_items mi
+            WHERE mi.sales_id = $1::integer
+              AND LOWER(TRIM(COALESCE(mi.category, ''))) = 'excess'
+              AND COALESCE(mi.is_inclusion, false) = false
+          ), 0)
+        )::numeric AS total`,
+      [salesId],
+    );
+
+    const total = Math.round((Number(result.rows[0]?.total) || 0) * 100) / 100;
+    await db.query(
+      `UPDATE tblsales_order
+       SET total_amount = $1
+       WHERE id = $2`,
+      [total, salesId],
+    );
+    return total;
   }
 
   private toOptionalNumber(value: unknown): number | null {
@@ -838,11 +1100,40 @@ export class SalesOrderService {
   }
 
   private getAutoPaymentStatus(method: SalesPaymentMethod): string {
-    if (method === 'Cash' || method === 'Bank Transfer') {
+    if (method === 'Cash') {
       return 'paid';
     }
 
     return 'unpaid';
+  }
+
+  private isReceivableVerificationMethod(method: SalesPaymentMethod): boolean {
+    return method === 'Bank Transfer' || method === 'Cheque' || method === 'Credit Card';
+  }
+
+  private isRemittedOrCompleteStatus(status: unknown): boolean {
+    const normalized = String(status ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/_/g, '-');
+    return ['remitted', 'complete', 'completed'].includes(normalized);
+  }
+
+  private resolveStoredPaymentStatus(
+    method: SalesPaymentMethod,
+    explicitStatus: unknown,
+    options?: { forceUnpaidUntilVerified?: boolean },
+  ): string {
+    if (options?.forceUnpaidUntilVerified && this.isReceivableVerificationMethod(method)) {
+      return 'unpaid';
+    }
+
+    const explicit = String(explicitStatus ?? '').trim().toLowerCase();
+    if (['paid', 'unpaid', 'overdue'].includes(explicit)) {
+      return explicit;
+    }
+
+    return this.getAutoPaymentStatus(method);
   }
 
   private normalizeHeaderKey(value: unknown): string {
@@ -1192,7 +1483,9 @@ export class SalesOrderService {
            to_jsonb(c)->>'product_id'
          )
        LEFT JOIN tblbrands b
-         ON b.id::text = COALESCE(to_jsonb(p)->>'brandId', to_jsonb(p)->>'brand_id')`,
+         ON b.id::text = COALESCE(to_jsonb(p)->>'brandId', to_jsonb(p)->>'brand_id')
+       WHERE ${catalogActiveSql('p')}
+         AND ${catalogActiveSql('c')}`,
     );
 
     return result.rows
@@ -3098,13 +3391,63 @@ export class SalesOrderService {
         WHERE sp.so_id IS NOT NULL
         GROUP BY sp.so_id
       ),
+      product_totals AS (
+        SELECT
+          COALESCE(to_jsonb(tpi)->>'salesId', to_jsonb(tpi)->>'sales_id') AS so_id,
+          SUM(
+            COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', ''), '')::numeric, 0)
+            * CASE
+                WHEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', ''), '')::numeric, 0) > 0
+                  THEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', ''), '')::numeric, 0)
+                WHEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', ''), '')::numeric, 0) > 0
+                  THEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', ''), '')::numeric, 0)
+                ELSE COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', ''), '')::numeric, 0)
+              END
+          ) AS product_total
+        FROM tbltransaction_product_items tpi
+        WHERE COALESCE(to_jsonb(tpi)->>'salesId', to_jsonb(tpi)->>'sales_id') IS NOT NULL
+        GROUP BY 1
+      ),
+      service_totals AS (
+        SELECT
+          sd.sales_id::text AS so_id,
+          SUM(
+            COALESCE(sd.service_cost, 0)
+            * COALESCE(NULLIF(sd.service_duration_hours, 0), 1)
+          ) AS service_total
+        FROM tblservice_details sd
+        GROUP BY sd.sales_id
+      ),
+      excess_totals AS (
+        SELECT
+          mi.sales_id::text AS so_id,
+          SUM(COALESCE(mi.total_price, 0)) AS excess_total
+        FROM tblso_miscellaneous_items mi
+        WHERE LOWER(TRIM(COALESCE(mi.category, ''))) = 'excess'
+          AND COALESCE(mi.is_inclusion, false) = false
+        GROUP BY mi.sales_id
+      ),
       base AS (
         SELECT
           so.id,
           COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', '') AS so_number,
           COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') AS customer_id,
           COALESCE(to_jsonb(c)->>'name', to_jsonb(c)->>'customer_name', '') AS customer_name,
-          COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') AS total_amount,
+          -- Prefer line-based total (product + service + excess) so list Amount matches View;
+          -- fall back to stored total_amount when no component lines exist.
+          CASE
+            WHEN (
+              COALESCE(prt.product_total, 0)
+              + COALESCE(svt.service_total, 0)
+              + COALESCE(ext.excess_total, 0)
+            ) > 0
+              THEN (
+                COALESCE(prt.product_total, 0)
+                + COALESCE(svt.service_total, 0)
+                + COALESCE(ext.excess_total, 0)
+              )::text
+            ELSE COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')
+          END AS total_amount,
           COALESCE(so.status, 'pending') AS original_status,
           COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date') AS schedule_date,
           COALESCE(to_jsonb(so)->>'created_at', to_jsonb(so)->>'createdAt') AS created_at,
@@ -3125,6 +3468,9 @@ export class SalesOrderService {
         LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
         LEFT JOIN serial_counts sc ON sc.so_id = so.id::text
         LEFT JOIN payment_totals pt ON pt.so_id = so.id::text
+        LEFT JOIN product_totals prt ON prt.so_id = so.id::text
+        LEFT JOIN service_totals svt ON svt.so_id = so.id::text
+        LEFT JOIN excess_totals ext ON ext.so_id = so.id::text
         LEFT JOIN tblconcern_details cd ON cd.sales_id = so.id
       )
     `;
@@ -3214,7 +3560,7 @@ export class SalesOrderService {
     const hasProductItems = productItems.length > 0;
     const hasServiceItems = serviceItems.length > 0;
     const hasProjectInfo = Boolean(
-      payload.projectDetails || payload.projectName || payload.projectCode,
+      payload.projectId || payload.projectDetails || payload.projectName || payload.projectCode,
     );
     const hasTransferInfo = Boolean(payload.transferDetails);
     const hasConcernInfo = Boolean(payload.concernDetails);
@@ -3269,39 +3615,52 @@ export class SalesOrderService {
       result = await this.databaseService.withTransaction(async (client) => {
         // For transfer SOs, do not require or upsert customer
         let customerId: string | null = null;
-        if (String(payload.salesType).toLowerCase() !== 'transfer') {
+        let projectId: number | null = null;
+        const salesTypeNormalized = String(payload.salesType).toLowerCase();
+
+        if (salesTypeNormalized === 'project') {
+          // Projects-first: require an existing project and inherit its customer
+          const requestedProjectId = Number(payload.projectId);
+          if (!Number.isFinite(requestedProjectId) || requestedProjectId <= 0) {
+            throw new Error('projectId is required for project sales orders');
+          }
+
+          const projectRow = await client.query<{
+            id: number;
+            customer_id: string | null;
+            project_code: string | null;
+            project_name: string | null;
+          }>(
+            `SELECT id, customer_id::text AS customer_id, project_code, project_name
+               FROM tblprojects
+              WHERE id = $1
+              LIMIT 1`,
+            [requestedProjectId],
+          );
+
+          if (projectRow.rowCount === 0) {
+            throw new Error(`Project ${requestedProjectId} not found`);
+          }
+
+          projectId = projectRow.rows[0].id;
+          customerId = this.normalizeText(projectRow.rows[0].customer_id) || null;
+          if (!customerId) {
+            throw new Error('Selected project has no customer. Update the project first.');
+          }
+
+          // Keep denormalized name/code in sync with master project
+          payload.projectCode = projectRow.rows[0].project_code ?? payload.projectCode;
+          payload.projectName = projectRow.rows[0].project_name ?? payload.projectName;
+          payload.customer_id = customerId;
+        } else if (salesTypeNormalized !== 'transfer') {
           customerId = await this.upsertCustomerFromPayload(client, payload);
         }
 
-        // Upsert project if project details provided
-        let projectId: number | null = null;
-        if (String(payload.salesType).toLowerCase() === 'project') {
-          projectId = await this.upsertProjectFromPayload(client, payload, userId, branchId);
-        }
-
-        let computedProductTotal = 0;
-        for (const item of productItems) {
-          const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
-          const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
-          const discountPrice = this.toOptionalNumber(item.discountPrice) ?? 0;
-          const qty = this.toOptionalNumber(item.totalSetQty) ?? 0;
-          const priceToUse = discountPrice > 0 ? discountPrice : sellPrice > 0 ? sellPrice : unitPrice;
-          computedProductTotal += priceToUse * qty;
-        }
-
-        let computedServiceTotal = 0;
-        for (const item of serviceItems) {
-          const unitPrice = this.toOptionalNumber(item.serviceCost) ?? 0;
-          const qty = this.toOptionalNumber(item.serviceDurationHours) ?? 0;
-          const total = this.toOptionalNumber(item.serviceCost) ?? 0;
-
-          // Prefer explicit total if provided, otherwise derive from unit price and quantity
-          computedServiceTotal += total > 0 ? total : unitPrice * qty;
-        }
-
-        const computedTotalAmount = computedProductTotal + computedServiceTotal;
-        const fallbackTotal = this.toOptionalNumber(payload.totalAmount) ?? 0;
-        const totalAmount = computedTotalAmount > 0 ? computedTotalAmount : fallbackTotal;
+        const totalAmount = this.resolveSalesOrderTotalAmount({
+          productItems,
+          serviceItems,
+          payloadTotalAmount: payload.totalAmount,
+        });
 
         const salesColumns = await this.getTableColumns(client, 'tblsales_order');
         const soNumberColumn = this.pickColumn(salesColumns, ['so_number', 'soNumber']);
@@ -3421,11 +3780,13 @@ export class SalesOrderService {
                   this.deriveTermsDueDate(paymentPayload, method) ?? null;
               }
               if (paymentStatusColumn) {
-                const explicitStatus = String(paymentPayload.status ?? '').trim().toLowerCase();
-                const normalizedStatus = ['paid', 'unpaid', 'overdue'].includes(explicitStatus)
-                  ? explicitStatus
-                  : this.getAutoPaymentStatus(method);
-                paymentRecord[paymentStatusColumn] = normalizedStatus;
+                paymentRecord[paymentStatusColumn] = this.resolveStoredPaymentStatus(
+                  method,
+                  paymentPayload.status,
+                  {
+                    forceUnpaidUntilVerified: this.isRemittedOrCompleteStatus(status),
+                  },
+                );
               }
               if (referenceNoColumn && paymentPayload.referenceNo) {
                 paymentRecord[referenceNoColumn] = String(paymentPayload.referenceNo).trim();
@@ -3499,6 +3860,8 @@ export class SalesOrderService {
             if (productId === null || capacityId === null) {
               throw new Error('productId and capacityId are required for sales items');
             }
+
+            await assertActiveProductCapacity(client, productId, capacityId);
 
             const itemRecord: Record<string, unknown> = {};
             if (transTypeColumn) itemRecord[transTypeColumn] = transType;
@@ -4369,7 +4732,11 @@ export class SalesOrderService {
     }
   }
 
-  async createCustomer(dto: CreateCustomerDto, userId?: number) {
+  async createCustomer(
+    dto: CreateCustomerDto,
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ) {
     try {
       const customerColumns = await this.getTableColumns(this.databaseService, 'tblcustomer');
       const customerIdColumn = this.pickColumn(customerColumns, ['id']);
@@ -4414,16 +4781,30 @@ export class SalesOrderService {
       if (createdAtColumn) record[createdAtColumn] = new Date().toISOString();
 
       const inserted = await this.runInsert(this.databaseService, 'tblcustomer', record);
+      const createdId = String(inserted.rows[0]?.id ?? '');
+      await this.auditLogService.logMutation({
+        action: 'CUSTOMER_CREATE',
+        entityType: 'customer',
+        entityId: createdId,
+        actor: auditActor ?? { userId },
+        description: `Created customer ${name}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+        after: { ...dto, id: createdId, name },
+      });
       return {
         success: true,
-        data: { id: String(inserted.rows[0]?.id ?? '') },
+        data: { id: createdId },
       };
     } catch (error) {
       return { success: false, message: error instanceof Error ? error.message : 'Failed to create customer' };
     }
   }
 
-  async updateCustomer(customerId: string, dto: UpdateCustomerDto) {
+  async updateCustomer(
+    customerId: string,
+    dto: UpdateCustomerDto,
+    auditActor?: AuditActorContext,
+  ) {
     const id = String(customerId ?? '').trim();
     if (!id) {
       return { success: false, message: 'Invalid customer id' };
@@ -4480,6 +4861,16 @@ export class SalesOrderService {
         [...values, id],
       );
 
+      await this.auditLogService.logMutation({
+        action: 'CUSTOMER_UPDATE',
+        entityType: 'customer',
+        entityId: id,
+        actor: auditActor,
+        description: `Updated customer ${id}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+        after: { id, updated: result.rowCount, ...dto },
+      });
+
       return {
         success: true,
         data: { updated: result.rowCount },
@@ -4489,7 +4880,7 @@ export class SalesOrderService {
     }
   }
 
-  async deleteCustomer(customerId: string) {
+  async deleteCustomer(customerId: string, auditActor?: AuditActorContext) {
     const id = String(customerId ?? '').trim();
     if (!id) {
       return { success: false, message: 'Invalid customer id' };
@@ -4500,6 +4891,14 @@ export class SalesOrderService {
         `DELETE FROM tblcustomer WHERE id::text = $1`,
         [id],
       );
+      await this.auditLogService.logMutation({
+        action: 'CUSTOMER_DELETE',
+        entityType: 'customer',
+        entityId: id,
+        actor: auditActor,
+        description: `Deleted customer ${id}`,
+        after: { id, deleted: result.rowCount },
+      });
       return { success: true, data: { deleted: result.rowCount } };
     } catch (error) {
       return { success: false, message: error instanceof Error ? error.message : 'Failed to delete customer' };
@@ -5104,7 +5503,11 @@ export class SalesOrderService {
     }
   }
 
-  async createBranch(branchNameInput?: string, branchAddressInput?: string | null) {
+  async createBranch(
+    branchNameInput?: string,
+    branchAddressInput?: string | null,
+    auditActor?: AuditActorContext,
+  ) {
     const branchName = String(branchNameInput ?? '').trim();
     const branchAddress = String(branchAddressInput ?? '').trim();
     if (!branchName) {
@@ -5130,11 +5533,23 @@ export class SalesOrderService {
         };
       }
 
-      await this.databaseService.query(
+      const insertResult = await this.databaseService.query<{ id: number }>(
         `INSERT INTO tblbranches ("branchName", "branchAddress")
-         VALUES ($1, $2)`,
+         VALUES ($1, $2)
+         RETURNING id`,
         [branchName, branchAddress || null],
       );
+
+      const branchId = insertResult.rows[0]?.id ?? null;
+      await this.auditLogService.logMutation({
+        action: 'BRANCH_CREATE',
+        entityType: 'branch',
+        entityId: branchId,
+        actor: auditActor,
+        description: `Created branch ${branchName}`,
+        requestBody: { branchName, branchAddress: branchAddress || null },
+        after: { id: branchId, branchName, branchAddress: branchAddress || null },
+      });
 
       return this.getBranches();
     } catch (error) {
@@ -5149,6 +5564,7 @@ export class SalesOrderService {
     branchId: number,
     branchNameInput?: string,
     branchAddressInput?: string | null,
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(branchId) || branchId <= 0) {
       return {
@@ -5207,6 +5623,16 @@ export class SalesOrderService {
         [branchName, branchAddress || null, branchId],
       );
 
+      await this.auditLogService.logMutation({
+        action: 'BRANCH_UPDATE',
+        entityType: 'branch',
+        entityId: branchId,
+        actor: auditActor,
+        description: `Updated branch ${branchName}`,
+        requestBody: { branchName, branchAddress: branchAddress || null },
+        after: { id: branchId, branchName, branchAddress: branchAddress || null },
+      });
+
       return this.getBranches();
     } catch (error) {
       return {
@@ -5216,7 +5642,7 @@ export class SalesOrderService {
     }
   }
 
-  async deleteBranch(branchId: number) {
+  async deleteBranch(branchId: number, auditActor?: AuditActorContext) {
     if (!Number.isFinite(branchId) || branchId <= 0) {
       return {
         success: false,
@@ -5288,6 +5714,15 @@ export class SalesOrderService {
          WHERE id = $1`,
         [branchId],
       );
+
+      await this.auditLogService.logMutation({
+        action: 'BRANCH_DELETE',
+        entityType: 'branch',
+        entityId: branchId,
+        actor: auditActor,
+        description: `Deleted branch #${branchId}`,
+        after: { id: branchId },
+      });
 
       return this.getBranches();
     } catch (error) {
@@ -5719,6 +6154,10 @@ export class SalesOrderService {
         purchaseId: string | null;
         salesId: string | null;
         status: string | null;
+        productName: string | null;
+        capacityName: string | null;
+        isProductDeleted: boolean;
+        isCapacityDeleted: boolean;
       }>(
         `SELECT
            tpi.id,
@@ -5732,8 +6171,16 @@ export class SalesOrderService {
            COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', ''), '')::int, 0)::text AS "totalSetQty",
            COALESCE(to_jsonb(tpi)->>'purchaseId', to_jsonb(tpi)->>'purchase_id', to_jsonb(tpi)->>'po_id') AS "purchaseId",
            COALESCE(to_jsonb(tpi)->>'salesId', to_jsonb(tpi)->>'sales_id') AS "salesId",
-           COALESCE(to_jsonb(tpi)->>'status', null) AS status
+           COALESCE(to_jsonb(tpi)->>'status', null) AS status,
+           COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', '') AS "productName",
+           COALESCE(to_jsonb(c)->>'capacity', '') AS "capacityName",
+           (${catalogDeletedSql('p')} OR p.id IS NULL) AS "isProductDeleted",
+           (${catalogDeletedSql('c')} OR c.id IS NULL) AS "isCapacityDeleted"
          FROM tbltransaction_product_items tpi
+         LEFT JOIN tblproducts p
+           ON p.id::text = COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id')
+         LEFT JOIN tblcapacity c
+           ON c.id::text = COALESCE(to_jsonb(tpi)->>'capacityId', to_jsonb(tpi)->>'capacity_id')
          WHERE COALESCE(to_jsonb(tpi)->>'salesId', to_jsonb(tpi)->>'sales_id') = $1
            AND LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'sales')) = 'sales'
          ORDER BY tpi.id ASC`,
@@ -5993,6 +6440,10 @@ export class SalesOrderService {
               salesId: this.toOptionalNumber(product.salesId) ?? id,
               status: product.status ?? 'pending',
               serialNumbers: serialMap.get(serialKey) ?? {},
+              productName: String(product.productName ?? '').trim(),
+              capacityName: String(product.capacityName ?? '').trim(),
+              isProductDeleted: Boolean(product.isProductDeleted),
+              isCapacityDeleted: Boolean(product.isCapacityDeleted),
             };
           }),
           serviceItems: serviceDetailResult.rows.map((service) => ({
@@ -6098,10 +6549,32 @@ export class SalesOrderService {
         }
 
         const existingSales = existingSalesResult.rows[0];
-        const isTransferSO = String(payload.salesType ?? existingSales.sales_type ?? '').toLowerCase() === 'transfer';
+        const salesTypeNormalized = String(
+          payload.salesType ?? existingSales.sales_type ?? '',
+        ).toLowerCase();
+        const isTransferSO = salesTypeNormalized === 'transfer';
+        const isProjectSO = salesTypeNormalized === 'project';
 
         let customerId: string | null = null;
-        if (!isTransferSO) {
+        if (isProjectSO) {
+          customerId = existingSales.customer_id ?? null;
+          if (Object.prototype.hasOwnProperty.call(payload, 'projectId')) {
+            const requestedProjectId = Number(payload.projectId);
+            if (Number.isFinite(requestedProjectId) && requestedProjectId > 0) {
+              const projectCustomer = await client.query<{ customer_id: string | null }>(
+                `SELECT customer_id::text AS customer_id FROM tblprojects WHERE id = $1 LIMIT 1`,
+                [requestedProjectId],
+              );
+              customerId =
+                this.normalizeText(projectCustomer.rows[0]?.customer_id) ||
+                existingSales.customer_id ||
+                null;
+            }
+          }
+          if (!customerId) {
+            throw new Error('Unable to resolve customer for project sales order update');
+          }
+        } else if (!isTransferSO) {
           const customerColumns = await this.getTableColumns(client, 'tblcustomer');
           const customerNameColumn = this.pickColumn(customerColumns, ['name', 'customer_name']);
           const customerAddressColumn = this.pickColumn(customerColumns, ['address']);
@@ -6176,38 +6649,20 @@ export class SalesOrderService {
         const productItems = Array.isArray(payload.productItems) ? payload.productItems : [];
         const serviceItems = Array.isArray(payload.serviceItems) ? payload.serviceItems : [];
 
-        let computedProductTotal = 0;
-        for (const item of productItems) {
-          const unitPrice = this.toOptionalNumber(item.unitPrice) ?? 0;
-          const sellPrice = this.toOptionalNumber(item.sellPrice) ?? 0;
-          const discountPrice = this.toOptionalNumber(item.discountPrice) ?? 0;
-          const qty = this.toOptionalNumber(item.totalSetQty) ?? 0;
-          const priceToUse = discountPrice > 0 ? discountPrice : sellPrice > 0 ? sellPrice : unitPrice;
-          computedProductTotal += priceToUse * qty;
-        }
-
-        let computedServiceTotal = 0;
-        for (const item of serviceItems) {
-          const unitPrice = this.toOptionalNumber(item.serviceCost) ?? 0;
-          const qty = this.toOptionalNumber(item.serviceDurationHours) ?? 0;
-          const total = this.toOptionalNumber(item.serviceCost) ?? 0;
-          computedServiceTotal += total > 0 ? total : unitPrice * qty;
-        }
-
-        const computedTotalAmount = computedProductTotal + computedServiceTotal;
-
-        const fallbackTotal =
-          this.toOptionalNumber(payload.totalAmount) ??
-          this.toOptionalNumber(existingSales.total_amount) ??
-          0;
-        const totalAmount = computedTotalAmount > 0 ? computedTotalAmount : fallbackTotal;
-        const status = String(payload.status ?? existingSales.status ?? 'pending').trim() || 'pending';
+        const totalAmount = this.resolveSalesOrderTotalAmount({
+          productItems,
+          serviceItems,
+          payloadTotalAmount: payload.totalAmount,
+          existingTotalAmount: existingSales.total_amount,
+        });
+        let status = String(payload.status ?? existingSales.status ?? 'pending').trim() || 'pending';
 
         const salesColumns = await this.getTableColumns(client, 'tblsales_order');
         const salesCustomerIdColumn = this.pickColumn(salesColumns, ['customer_id', 'customerId']);
         const totalAmountColumn = this.pickColumn(salesColumns, ['total_amount', 'totalAmount']);
         const scheduleDateColumn = this.pickColumn(salesColumns, ['scheduleDate', 'schedule_date']);
         const salesTypeColumn = this.pickColumn(salesColumns, ['salesType', 'sales_type']);
+        const projectIdColumn = this.pickColumn(salesColumns, ['project_id', 'projectId']);
         const projectNameColumn = this.pickColumn(salesColumns, ['projectName', 'project_name']);
         const projectCodeColumn = this.pickColumn(salesColumns, ['projectCode', 'project_code']);
         const installerColumn = this.pickColumn(salesColumns, ['installer']);
@@ -6217,6 +6672,43 @@ export class SalesOrderService {
 
         if (!salesCustomerIdColumn || !totalAmountColumn || !statusColumn) {
           throw new Error('tblsales_order columns are not aligned with expected fields');
+        }
+
+        let resolvedProjectId: number | null | undefined = undefined;
+        let resolvedProjectCode: string | null = null;
+        let resolvedProjectName: string | null = null;
+
+        if (Object.prototype.hasOwnProperty.call(payload, 'projectId')) {
+          if (payload.projectId === null) {
+            resolvedProjectId = null;
+          } else {
+            const requestedProjectId = Number(payload.projectId);
+            if (Number.isFinite(requestedProjectId) && requestedProjectId > 0) {
+              const projectRow = await client.query<{
+                id: number;
+                customer_id: string | null;
+                project_code: string | null;
+                project_name: string | null;
+              }>(
+                `SELECT id, customer_id::text AS customer_id, project_code, project_name
+                   FROM tblprojects
+                  WHERE id = $1
+                  LIMIT 1`,
+                [requestedProjectId],
+              );
+              if (projectRow.rowCount === 0) {
+                throw new Error(`Project ${requestedProjectId} not found`);
+              }
+              resolvedProjectId = projectRow.rows[0].id;
+              resolvedProjectCode = projectRow.rows[0].project_code;
+              resolvedProjectName = projectRow.rows[0].project_name;
+              const projectCustomerId = this.normalizeText(projectRow.rows[0].customer_id);
+              if (projectCustomerId) {
+                customerId = projectCustomerId;
+              }
+            }
+            // undefined / invalid projectId => leave existing project_id unchanged
+          }
         }
 
         const soParams: unknown[] = [customerId, totalAmount, status];
@@ -6234,13 +6726,27 @@ export class SalesOrderService {
           soParams.push(String(payload.salesType ?? '').trim());
           soUpdates.push(`"${salesTypeColumn}" = $${soParams.length}`);
         }
-        if (projectNameColumn && Object.prototype.hasOwnProperty.call(payload, 'projectName')) {
-          soParams.push(String(payload.projectName ?? '').trim());
-          soUpdates.push(`"${projectNameColumn}" = $${soParams.length}`);
+        if (projectIdColumn && resolvedProjectId !== undefined) {
+          soParams.push(resolvedProjectId);
+          soUpdates.push(`"${projectIdColumn}" = $${soParams.length}`);
         }
-        if (projectCodeColumn && Object.prototype.hasOwnProperty.call(payload, 'projectCode')) {
-          soParams.push(String(payload.projectCode ?? '').trim());
-          soUpdates.push(`"${projectCodeColumn}" = $${soParams.length}`);
+        if (projectNameColumn) {
+          if (resolvedProjectId && resolvedProjectName) {
+            soParams.push(resolvedProjectName);
+            soUpdates.push(`"${projectNameColumn}" = $${soParams.length}`);
+          } else if (Object.prototype.hasOwnProperty.call(payload, 'projectName')) {
+            soParams.push(String(payload.projectName ?? '').trim());
+            soUpdates.push(`"${projectNameColumn}" = $${soParams.length}`);
+          }
+        }
+        if (projectCodeColumn) {
+          if (resolvedProjectId && resolvedProjectCode) {
+            soParams.push(resolvedProjectCode);
+            soUpdates.push(`"${projectCodeColumn}" = $${soParams.length}`);
+          } else if (Object.prototype.hasOwnProperty.call(payload, 'projectCode')) {
+            soParams.push(String(payload.projectCode ?? '').trim());
+            soUpdates.push(`"${projectCodeColumn}" = $${soParams.length}`);
+          }
         }
         if (installerColumn && Object.prototype.hasOwnProperty.call(payload, 'installer')) {
           soParams.push(String(payload.installer ?? '').trim());
@@ -6316,11 +6822,15 @@ export class SalesOrderService {
                 paymentRecord[termsDueDateColumn] = this.deriveTermsDueDate(paymentPayload, method);
               }
               if (paymentStatusColumn) {
-                const explicitStatus = String(paymentPayload.status ?? '').trim().toLowerCase();
-                const normalizedStatus = ['paid', 'unpaid', 'overdue'].includes(explicitStatus)
-                  ? explicitStatus
-                  : this.getAutoPaymentStatus(method);
-                paymentRecord[paymentStatusColumn] = normalizedStatus;
+                paymentRecord[paymentStatusColumn] = this.resolveStoredPaymentStatus(
+                  method,
+                  paymentPayload.status,
+                  {
+                    forceUnpaidUntilVerified:
+                      this.isRemittedOrCompleteStatus(status) &&
+                      !this.isRemittedOrCompleteStatus(existingSales.status),
+                  },
+                );
               }
               if (referenceNoColumn && paymentPayload.referenceNo) paymentRecord[referenceNoColumn] = String(paymentPayload.referenceNo).trim();
               if (paymentDateColumn) paymentRecord[paymentDateColumn] = this.toIsoDateOrNull(paymentPayload.paymentDate);
@@ -6379,6 +6889,8 @@ export class SalesOrderService {
             if (productId === null || capacityId === null) {
               throw new Error('productId and capacityId are required for sales items');
             }
+
+            await assertActiveProductCapacity(client, productId, capacityId);
 
             const itemRecord: Record<string, unknown> = {};
             if (transTypeColumn) itemRecord[transTypeColumn] = transType;
@@ -6789,7 +7301,7 @@ export class SalesOrderService {
         const normalizedRemarks = String(payload.remarks ?? '').trim().toLowerCase();
         const returnedSerialDetails = payload.returnedSerialDetails;
         const shouldMarkReturnedSerialsDefective = Boolean(returnedSerialDetails?.isDefective);
-        const selectedReturnedDefectiveSerials = [...new Set(
+        const selectedReturnedSerials = [...new Set(
           (Array.isArray(returnedSerialDetails?.serialNumbers)
             ? returnedSerialDetails.serialNumbers
             : []
@@ -6797,15 +7309,18 @@ export class SalesOrderService {
             .map((serial) => this.normalizeSerialNumber(serial))
             .filter((serial) => serial.length > 0),
         )];
-        const isReturnedToPendingFlow =
-          normalizedStatus === 'pending' &&
+        const isReturnedUnitsFlow =
           normalizedPreviousStatus === 'for-delivery' &&
-          normalizedRemarks.startsWith('returned units:');
+          normalizedRemarks.startsWith('returned units:') &&
+          (normalizedStatus === 'pending' ||
+            normalizedStatus === 'for-delivery' ||
+            normalizedStatus === 'returned' ||
+            normalizedStatus === 'return');
         const shouldReleaseCancelledSerials = normalizedStatus === 'cancelled';
         const shouldReleaseReturnedSerials =
           normalizedStatus === 'returned' ||
           normalizedStatus === 'return' ||
-          isReturnedToPendingFlow ||
+          isReturnedUnitsFlow ||
           shouldReleaseCancelledSerials;
 
         if (shouldReleaseReturnedSerials) {
@@ -6823,23 +7338,39 @@ export class SalesOrderService {
             throw new Error('Sales reference column is not configured in tblserial_numbers');
           }
 
-          if (
-            shouldMarkReturnedSerialsDefective &&
-            selectedReturnedDefectiveSerials.length === 0
-          ) {
-            throw new Error('Select at least one serial number for defective return.');
+          if (isReturnedUnitsFlow && selectedReturnedSerials.length === 0) {
+            throw new Error('Select at least one product serial number to return.');
           }
 
           if (
             shouldMarkReturnedSerialsDefective &&
-            selectedReturnedDefectiveSerials.length > 0 &&
-            serialNumberColumn
+            selectedReturnedSerials.length === 0
           ) {
-            const linkedSerialResult = await client.query<{ serial_number: string | null }>(
-              `SELECT COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number') AS serial_number
+            throw new Error('Select at least one serial number for defective return.');
+          }
+
+          const isPartialSerialRelease =
+            selectedReturnedSerials.length > 0 && !shouldReleaseCancelledSerials;
+
+          if (isPartialSerialRelease && !serialNumberColumn) {
+            throw new Error('Serial number column is not configured in tblserial_numbers');
+          }
+
+          const affectedProductKeys = new Set<string>();
+
+          if (selectedReturnedSerials.length > 0 && serialNumberColumn) {
+            const linkedSerialResult = await client.query<{
+              serial_number: string | null;
+              product_id: string | null;
+              capacity_id: string | null;
+            }>(
+              `SELECT
+                 COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number') AS serial_number,
+                 COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id') AS product_id,
+                 COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id') AS capacity_id
                FROM tblserial_numbers sn
-               WHERE "${serialSalesIdColumn}" = $1`,
-              [id],
+               WHERE "${serialSalesIdColumn}"::text = $1`,
+              [String(id)],
             );
 
             const linkedSerialSet = new Set(
@@ -6848,13 +7379,29 @@ export class SalesOrderService {
                 .filter((serial) => serial.length > 0),
             );
 
-            const invalidSelectedSerials = selectedReturnedDefectiveSerials.filter(
+            const invalidSelectedSerials = selectedReturnedSerials.filter(
               (serial) => !linkedSerialSet.has(serial.toLowerCase()),
             );
             if (invalidSelectedSerials.length > 0) {
               throw new Error(
-                `Selected defective serials are not linked to this sales order: ${invalidSelectedSerials.join(', ')}`,
+                `Selected serials are not linked to this sales order: ${invalidSelectedSerials.join(', ')}`,
               );
+            }
+
+            const selectedSerialSet = new Set(
+              selectedReturnedSerials.map((serial) => serial.toLowerCase()),
+            );
+            for (const row of linkedSerialResult.rows) {
+              const serial = this.normalizeSerialNumber(row.serial_number).toLowerCase();
+              if (!selectedSerialSet.has(serial)) {
+                continue;
+              }
+
+              const productId = String(row.product_id ?? '').trim();
+              const capacityId = String(row.capacity_id ?? '').trim();
+              if (productId && capacityId) {
+                affectedProductKeys.add(`${productId}::${capacityId}`);
+              }
             }
           }
 
@@ -6891,18 +7438,25 @@ export class SalesOrderService {
             serialResetSet.push(`"${serialDefectDateColumn}" = $${serialResetParams.length}`);
           }
 
-          serialResetParams.push(id);
+          serialResetParams.push(String(id));
+          let serialResetWhere = `"${serialSalesIdColumn}"::text = $${serialResetParams.length}`;
+          if (isPartialSerialRelease && serialNumberColumn) {
+            serialResetParams.push(selectedReturnedSerials.map((serial) => serial.toLowerCase()));
+            serialResetWhere += ` AND LOWER(
+              regexp_replace(BTRIM(COALESCE("${serialNumberColumn}"::text, '')), '\\s+', ' ', 'g')
+            ) = ANY($${serialResetParams.length}::text[])`;
+          }
 
           await client.query(
             `UPDATE tblserial_numbers
              SET ${serialResetSet.join(', ')}
-             WHERE "${serialSalesIdColumn}" = $${serialResetParams.length}`,
+             WHERE ${serialResetWhere}`,
             serialResetParams,
           );
 
           if (
             shouldMarkReturnedSerialsDefective &&
-            selectedReturnedDefectiveSerials.length > 0 &&
+            selectedReturnedSerials.length > 0 &&
             serialNumberColumn
           ) {
             const serialDefectParams: unknown[] = [];
@@ -6930,7 +7484,7 @@ export class SalesOrderService {
             }
 
             if (serialDefectSet.length > 0) {
-              serialDefectParams.push(selectedReturnedDefectiveSerials);
+              serialDefectParams.push(selectedReturnedSerials);
               await client.query(
                 `UPDATE tblserial_numbers
                  SET ${serialDefectSet.join(', ')}
@@ -6946,11 +7500,38 @@ export class SalesOrderService {
             }
           }
 
-          // Restore stock for returned material items (reverse the earlier deduction)
-          await this.releaseReturnedMaterials(client, id, userId);
+          if (isReturnedUnitsFlow) {
+            const previousTotal = this.toOptionalNumber(existingSales.total_amount) ?? 0;
+            const pruneResult = await this.pruneProductItemsAfterPartialReturn(
+              client,
+              id,
+              affectedProductKeys,
+            );
+            const nextStatus = pruneResult.remainingProductCount > 0 ? 'for-delivery' : 'pending';
+            if (this.normalizeWorkflowStatus(status) !== nextStatus && statusColumn) {
+              await client.query(
+                `UPDATE tblsales_order
+                 SET "${statusColumn}" = $1
+                 WHERE id = $2`,
+                [nextStatus, id],
+              );
+              status = nextStatus;
+            }
+            await this.syncPaymentsAfterPartialReturn(
+              client,
+              id,
+              previousTotal,
+              pruneResult.nextTotalAmount,
+            );
+            if (pruneResult.remainingProductCount === 0) {
+              await this.releaseReturnedMaterials(client, id, userId);
+            }
+          } else {
+            await this.releaseReturnedMaterials(client, id, userId);
+          }
         }
 
-        if (normalizedStatus === 'for-delivery') {
+        if (this.normalizeWorkflowStatus(status) === 'for-delivery') {
           await this.updateLinkedSalesSerialStatuses(client, id, 'for-delivery', [
             'reserved',
             'pending',
@@ -7315,6 +7896,205 @@ export class SalesOrderService {
     }
   }
 
+  private async pruneProductItemsAfterPartialReturn(
+    client: PoolClient,
+    salesId: number,
+    affectedProductKeys: Set<string>,
+  ): Promise<{ remainingProductCount: number; nextTotalAmount: number }> {
+    const productResult = await client.query<{
+      id: number;
+      productId: string | null;
+      capacityId: string | null;
+      unitTypesQty: unknown;
+    }>(
+      `SELECT
+         tpi.id,
+         COALESCE(to_jsonb(tpi)->>'productId', to_jsonb(tpi)->>'product_id') AS "productId",
+         COALESCE(to_jsonb(tpi)->>'capacityId', to_jsonb(tpi)->>'capacity_id') AS "capacityId",
+         COALESCE(to_jsonb(tpi)->'unitTypesQty', to_jsonb(tpi)->'unit_types_qty', '[]'::jsonb) AS "unitTypesQty"
+       FROM tbltransaction_product_items tpi
+       WHERE COALESCE(to_jsonb(tpi)->>'salesId', to_jsonb(tpi)->>'sales_id') = $1
+         AND LOWER(COALESCE(
+           to_jsonb(tpi)->>'transType',
+           to_jsonb(tpi)->>'trans_type',
+           'sales'
+         )) = 'sales'
+       ORDER BY tpi.id ASC`,
+      [String(salesId)],
+    );
+
+    const remainingSerialResult = await client.query<{
+      productId: string | null;
+      capacityId: string | null;
+      unitType: string | null;
+    }>(
+      `SELECT
+         COALESCE(to_jsonb(sn)->>'productId', to_jsonb(sn)->>'product_id') AS "productId",
+         COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id') AS "capacityId",
+         COALESCE(to_jsonb(sn)->>'unitType', to_jsonb(sn)->>'unit_type', 'set') AS "unitType"
+       FROM tblserial_numbers sn
+       WHERE COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id') = $1`,
+      [String(salesId)],
+    );
+
+    const remainingByProduct = new Map<string, Map<string, number>>();
+    for (const row of remainingSerialResult.rows) {
+      const productId = String(row.productId ?? '').trim();
+      const capacityId = String(row.capacityId ?? '').trim();
+      if (!productId || !capacityId) {
+        continue;
+      }
+
+      const key = `${productId}::${capacityId}`;
+      const unitType = String(row.unitType ?? 'set').trim().toLowerCase() || 'set';
+      const unitMap = remainingByProduct.get(key) ?? new Map<string, number>();
+      unitMap.set(unitType, (unitMap.get(unitType) ?? 0) + 1);
+      remainingByProduct.set(key, unitMap);
+    }
+
+    const itemColumns = await this.getTableColumns(client, 'tbltransaction_product_items');
+    const unitTypesQtyColumn = this.pickColumn(itemColumns, ['unitTypesQty', 'unit_types_qty']);
+    const totalSetQtyColumn = this.pickColumn(itemColumns, ['totalSetQty', 'total_set_qty']);
+
+    let remainingProductCount = 0;
+
+    for (const item of productResult.rows) {
+      const productId = String(item.productId ?? '').trim();
+      const capacityId = String(item.capacityId ?? '').trim();
+      const key = `${productId}::${capacityId}`;
+      const wasAffected = affectedProductKeys.has(key);
+      const remainingUnits = remainingByProduct.get(key);
+      const remainingSerialCount = remainingUnits
+        ? [...remainingUnits.values()].reduce((sum, count) => sum + count, 0)
+        : 0;
+
+      if (wasAffected && remainingSerialCount === 0) {
+        await client.query(
+          `DELETE FROM tbltransaction_product_items WHERE id::text = $1`,
+          [String(item.id)],
+        );
+        continue;
+      }
+
+      remainingProductCount += 1;
+
+      if (!wasAffected || !remainingUnits) {
+        continue;
+      }
+
+      const existingUnitTypes = this.normalizeUnitTypesQty(item.unitTypesQty);
+      const nextUnitTypes = existingUnitTypes.map((entry) => ({
+        label: entry.label,
+        value: remainingUnits.get(entry.label.toLowerCase()) ?? 0,
+      }));
+
+      for (const [label, value] of remainingUnits) {
+        if (!nextUnitTypes.some((entry) => entry.label.toLowerCase() === label)) {
+          nextUnitTypes.push({ label, value });
+        }
+      }
+
+      const totalSetQty = Math.max(0, ...remainingUnits.values());
+      const updates: string[] = [];
+      const params: unknown[] = [];
+
+      if (unitTypesQtyColumn) {
+        params.push(JSON.stringify(nextUnitTypes));
+        updates.push(`"${unitTypesQtyColumn}" = $${params.length}`);
+      }
+      if (totalSetQtyColumn) {
+        params.push(totalSetQty);
+        updates.push(`"${totalSetQtyColumn}" = $${params.length}`);
+      }
+
+      if (updates.length === 0) {
+        continue;
+      }
+
+      params.push(String(item.id));
+      await client.query(
+        `UPDATE tbltransaction_product_items
+         SET ${updates.join(', ')}
+         WHERE id::text = $${params.length}`,
+        params,
+      );
+    }
+
+    const nextTotalAmount = await this.syncSalesOrderTotalFromComponents(salesId, client);
+    return { remainingProductCount, nextTotalAmount };
+  }
+
+  private async syncPaymentsAfterPartialReturn(
+    client: PoolClient,
+    salesId: number,
+    previousTotal: number,
+    nextTotal: number,
+  ): Promise<void> {
+    if (!Number.isFinite(nextTotal) || nextTotal < 0) {
+      return;
+    }
+
+    const paymentColumns = await this.getTableColumns(client, 'tblso_payments');
+    const soIdColumn = this.pickColumn(paymentColumns, ['so_id', 'soId']);
+    const amountColumn = this.pickColumn(paymentColumns, ['amount']);
+    if (!soIdColumn || !amountColumn) {
+      return;
+    }
+
+    const payments = await client.query<{ id: string; amount: string }>(
+      `SELECT id::text AS id, COALESCE("${amountColumn}", 0)::text AS amount
+       FROM tblso_payments
+       WHERE "${soIdColumn}"::text = $1`,
+      [String(salesId)],
+    );
+
+    if (!payments.rowCount) {
+      return;
+    }
+
+    const rows = payments.rows;
+    const roundedNextTotal = Math.round(nextTotal * 100) / 100;
+
+    if (rows.length === 1) {
+      const currentAmount = Number(rows[0].amount) || 0;
+      const shouldReplace =
+        currentAmount > roundedNextTotal + 0.009 ||
+        Math.abs(currentAmount - previousTotal) <= 0.5;
+      if (!shouldReplace) {
+        return;
+      }
+
+      await client.query(
+        `UPDATE tblso_payments
+         SET "${amountColumn}" = $1
+         WHERE id::text = $2`,
+        [roundedNextTotal, rows[0].id],
+      );
+      return;
+    }
+
+    const paymentSum = rows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
+    if (paymentSum <= 0 || Math.abs(paymentSum - previousTotal) > 0.5) {
+      return;
+    }
+
+    let allocated = 0;
+    for (let index = 0; index < rows.length; index += 1) {
+      const currentAmount = Number(rows[index].amount) || 0;
+      const scaledAmount =
+        index === rows.length - 1
+          ? Math.round((roundedNextTotal - allocated) * 100) / 100
+          : Math.round((currentAmount / paymentSum) * roundedNextTotal * 100) / 100;
+      allocated += scaledAmount;
+      await client.query(
+        `UPDATE tblso_payments
+         SET "${amountColumn}" = $1
+         WHERE id::text = $2`,
+        [scaledAmount, rows[index].id],
+      );
+    }
+  }
+
   private async releaseReturnedMaterials(client: PoolClient, salesId: number, userId?: number) {
     const materialItems = await this.materialTransactionsService.findBySalesId(salesId);
 
@@ -7357,6 +8137,7 @@ export class SalesOrderService {
       isInclusion?: boolean;
       remarks?: string;
     },
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(salesId) || salesId <= 0) {
       return { success: false, message: 'Invalid sales order ID' };
@@ -7446,18 +8227,30 @@ export class SalesOrderService {
         );
       }
 
-      // Update the sales order total_amount to include this item (unless it's an inclusion)
-      const skipTotalAmountUpdate = Boolean((body as { skipTotalAmountUpdate?: boolean }).skipTotalAmountUpdate);
-      if (!skipTotalAmountUpdate && !body.isInclusion && totalPrice > 0) {
-        await this.databaseService.query(
-          `UPDATE tblsales_order
-           SET total_amount = COALESCE(total_amount, 0) + $1
-           WHERE id = $2`,
-          [totalPrice, salesId],
-        );
-      }
+      // Always resync from product + service + excess so skipped incremental updates
+      // (Additional Excess batch persist) cannot leave total_amount stale.
+      await this.syncSalesOrderTotalFromComponents(salesId);
 
-      return { success: true, message: 'Item added successfully', id: result.rows[0]?.id };
+      const miscItemId = result.rows[0]?.id;
+      await this.auditLogService.logMutation({
+        action: 'SALES_ORDER_MISC_ITEM_ADD',
+        entityType: 'sales-order',
+        entityId: salesId,
+        actor: auditActor,
+        description: `Added miscellaneous item "${itemName}" to sales order #${salesId}`,
+        requestBody: body as Record<string, unknown>,
+        after: {
+          miscItemId,
+          category,
+          itemName,
+          quantity,
+          unitPrice,
+          totalPrice,
+        },
+        metadata: { miscItemId, category },
+      });
+
+      return { success: true, message: 'Item added successfully', id: miscItemId };
     } catch (error) {
       return { success: false, message: `Failed to add item: ${error instanceof Error ? error.message : String(error)}` };
     }
@@ -7466,7 +8259,8 @@ export class SalesOrderService {
   async removeMiscellaneousItem(
     salesId: number,
     itemId: number,
-    options?: { skipTotalAmountUpdate?: boolean },
+    _options?: { skipTotalAmountUpdate?: boolean },
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(salesId) || salesId <= 0) {
       return { success: false, message: 'Invalid sales order ID' };
@@ -7479,10 +8273,13 @@ export class SalesOrderService {
     try {
       const existing = await this.databaseService.query<{
         id: number;
-        total_price: string;
-        is_inclusion: boolean;
+        category: string | null;
+        item_name: string | null;
+        quantity: string | null;
+        unit_price: string | null;
+        total_price: string | null;
       }>(
-        `SELECT id, total_price::text, is_inclusion
+        `SELECT id, category, item_name, quantity::text, unit_price::text, total_price::text
          FROM tblso_miscellaneous_items
          WHERE id = $1 AND sales_id = $2
          LIMIT 1`,
@@ -7493,22 +8290,31 @@ export class SalesOrderService {
         return { success: false, message: 'Miscellaneous item not found' };
       }
 
-      const row = existing.rows[0];
-      const totalPrice = Number(row.total_price) || 0;
+      const beforeItem = existing.rows[0];
 
       await this.databaseService.query(
         `DELETE FROM tblso_miscellaneous_items WHERE id = $1 AND sales_id = $2`,
         [itemId, salesId],
       );
 
-      if (!options?.skipTotalAmountUpdate && !row.is_inclusion && totalPrice > 0) {
-        await this.databaseService.query(
-          `UPDATE tblsales_order
-           SET total_amount = GREATEST(COALESCE(total_amount, 0) - $1, 0)
-           WHERE id = $2`,
-          [totalPrice, salesId],
-        );
-      }
+      await this.syncSalesOrderTotalFromComponents(salesId);
+
+      await this.auditLogService.logMutation({
+        action: 'SALES_ORDER_MISC_ITEM_REMOVE',
+        entityType: 'sales-order',
+        entityId: salesId,
+        actor: auditActor,
+        description: `Removed miscellaneous item "${String(beforeItem.item_name ?? '').trim() || `#${itemId}`}" from sales order #${salesId}`,
+        before: {
+          miscItemId: beforeItem.id,
+          category: beforeItem.category,
+          itemName: beforeItem.item_name,
+          quantity: beforeItem.quantity,
+          unitPrice: beforeItem.unit_price,
+          totalPrice: beforeItem.total_price,
+        },
+        metadata: { miscItemId: itemId },
+      });
 
       return { success: true, message: 'Item removed successfully' };
     } catch (error) {

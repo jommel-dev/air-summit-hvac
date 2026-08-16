@@ -7,6 +7,7 @@ import { CreateLoginDto } from './dto/create-login.dto';
 import { UpdateLoginDto } from './dto/update-login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 @Injectable()
 export class LoginService {
@@ -14,6 +15,7 @@ export class LoginService {
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   private getRefreshSecret(): string {
@@ -27,9 +29,10 @@ export class LoginService {
     return this.configService.get<string>('JWT_REFRESH_EXPIRES_IN', '7d');
   }
 
-  async create(createLoginDto: CreateLoginDto) {
+  async create(createLoginDto: CreateLoginDto, auditActor?: AuditActorContext) {
     const { username, password } = createLoginDto;
     const passwordSha1 = createHash('sha1').update(password).digest('hex');
+    const safeUsername = String(username ?? '').trim();
 
     try {
       const result = await this.databaseService.query<{
@@ -88,6 +91,21 @@ export class LoginService {
       );
 
       if (result.rowCount === 0) {
+        await this.auditLogService.logMutation({
+          action: 'AUTH_LOGIN_FAILURE',
+          entityType: 'auth',
+          entityId: safeUsername || null,
+          actor: {
+            ...(auditActor ?? {}),
+            username: auditActor?.username || safeUsername || undefined,
+          },
+          description: `Failed login attempt for ${safeUsername || 'unknown user'}`,
+          requestBody: { username: safeUsername || null },
+          metadata: {
+            reason: 'invalid_credentials',
+          },
+        });
+
         return {
           success: false,
           message: 'Invalid username or password',
@@ -120,6 +138,28 @@ export class LoginService {
           expiresIn: this.getRefreshExpiry() as any,
         },
       );
+
+      await this.auditLogService.logMutation({
+        action: 'AUTH_LOGIN_SUCCESS',
+        entityType: 'auth',
+        entityId: user.id,
+        actor: {
+          userId: user.id,
+          username: user.username,
+          roleName: user.roleName,
+          branchId: user.branchId ?? undefined,
+          ipAddress: auditActor?.ipAddress,
+        },
+        description: `Successful login for ${user.username}`,
+        requestBody: { username: user.username },
+        after: {
+          userId: user.id,
+          username: user.username,
+          roleId: user.roleId,
+          roleName: user.roleName,
+          branchId: user.branchId,
+        },
+      });
 
       return {
         success: true,

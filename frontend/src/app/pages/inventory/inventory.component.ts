@@ -32,12 +32,19 @@ interface BrandOption {
 interface ApiMutationResponse {
   success: boolean;
   message?: string;
+  affectedPendingOrders?: Array<{
+    orderType: 'sales' | 'purchase';
+    id: number;
+    orderNumber: string;
+    status: string;
+  }>;
 }
 
 type InventoryNodeType = 'brand' | 'product' | 'capacity';
 type CapacitySerialTab = 'in-stock' | 'reserved' | 'installed';
 type CreationFormMode = 'all-in-one' | 'brand-only' | 'product-capacity' | 'capacity-only';
 type InventoryEditModalMode = 'product' | 'capacity';
+type InventoryGuardDialogMode = 'delete-product' | 'delete-capacity' | 'delete-brand';
 
 interface SerialEntry {
   serialNumber: string;
@@ -133,6 +140,8 @@ export class InventoryComponent implements OnInit {
 
   isLoading = false;
   errorMessage = '';
+  warningMessage = '';
+  successMessage = '';
 
   brandFolders: BrandFolder[] = [];
   treeSearch = '';
@@ -236,6 +245,27 @@ export class InventoryComponent implements OnInit {
   brandContextMenuX = 0;
   brandContextMenuY = 0;
   brandContextMenuBrandName: string | null = null;
+  productContextMenuVisible = false;
+  productContextMenuX = 0;
+  productContextMenuY = 0;
+  productContextMenuBrandName: string | null = null;
+  productContextMenuProductId: number | null = null;
+  capacityContextMenuVisible = false;
+  capacityContextMenuX = 0;
+  capacityContextMenuY = 0;
+  capacityContextMenuBrandName: string | null = null;
+  capacityContextMenuProductId: number | null = null;
+  capacityContextMenuCapacityId: number | null = null;
+  isDeletingProduct = false;
+  isDeletingCapacity = false;
+  isDeletingBrand = false;
+  isGuardDialogOpen = false;
+  guardDialogMode: InventoryGuardDialogMode | null = null;
+  pendingGuardBrandName: string | null = null;
+  pendingGuardProductId: number | null = null;
+  pendingGuardCapacityId: number | null = null;
+  pendingGuardLabel = '';
+  guardDialogError = '';
   isCreationDrawerOpen = false;
   isLandCostingDrawerOpen = false;
   isEditModalOpen = false;
@@ -817,6 +847,65 @@ export class InventoryComponent implements OnInit {
     this.brandContextMenuBrandName = null;
   }
 
+  openProductContextMenu(event: MouseEvent, brandName: string, productId: number): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.closeBrandContextMenu();
+    this.closeCapacityContextMenu();
+    this.productContextMenuVisible = true;
+    this.productContextMenuX = event.clientX;
+    this.productContextMenuY = event.clientY;
+    this.productContextMenuBrandName = brandName;
+    this.productContextMenuProductId = productId;
+  }
+
+  closeProductContextMenu(): void {
+    this.productContextMenuVisible = false;
+    this.productContextMenuBrandName = null;
+    this.productContextMenuProductId = null;
+  }
+
+  openCapacityContextMenu(
+    event: MouseEvent,
+    brandName: string,
+    productId: number,
+    capacityId: number,
+  ): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.closeBrandContextMenu();
+    this.closeProductContextMenu();
+    this.capacityContextMenuVisible = true;
+    this.capacityContextMenuX = event.clientX;
+    this.capacityContextMenuY = event.clientY;
+    this.capacityContextMenuBrandName = brandName;
+    this.capacityContextMenuProductId = productId;
+    this.capacityContextMenuCapacityId = capacityId;
+  }
+
+  closeCapacityContextMenu(): void {
+    this.capacityContextMenuVisible = false;
+    this.capacityContextMenuBrandName = null;
+    this.capacityContextMenuProductId = null;
+    this.capacityContextMenuCapacityId = null;
+  }
+
+  async onProductContextAction(action: 'delete-product'): Promise<void> {
+    const productId = this.productContextMenuProductId;
+    this.closeProductContextMenu();
+    if (action === 'delete-product' && productId != null) {
+      await this.deleteProduct(productId);
+    }
+  }
+
+  async onCapacityContextAction(action: 'delete-capacity'): Promise<void> {
+    const capacityId = this.capacityContextMenuCapacityId;
+    this.closeCapacityContextMenu();
+    if (action === 'delete-capacity' && capacityId != null) {
+      await this.deleteCapacity(capacityId);
+    }
+  }
+
   async onBrandContextAction(action: 'add-product' | 'edit-brand' | 'delete-brand'): Promise<void> {
     const brandName = this.brandContextMenuBrandName ?? 'Brand';
     this.closeBrandContextMenu();
@@ -840,6 +929,8 @@ export class InventoryComponent implements OnInit {
   @HostListener('document:click')
   onDocumentClick(): void {
     this.closeBrandContextMenu();
+    this.closeProductContextMenu();
+    this.closeCapacityContextMenu();
   }
 
   @HostListener('document:contextmenu', ['$event'])
@@ -849,9 +940,23 @@ export class InventoryComponent implements OnInit {
       !!target &&
       (target.closest('[data-brand-context="true"]') !== null ||
         target.closest('[data-brand-context-menu="true"]') !== null);
+    const isProductContextTarget =
+      !!target &&
+      (target.closest('[data-product-context="true"]') !== null ||
+        target.closest('[data-product-context-menu="true"]') !== null);
+    const isCapacityContextTarget =
+      !!target &&
+      (target.closest('[data-capacity-context="true"]') !== null ||
+        target.closest('[data-capacity-context-menu="true"]') !== null);
 
     if (!isBrandContextTarget) {
       this.closeBrandContextMenu();
+    }
+    if (!isProductContextTarget) {
+      this.closeProductContextMenu();
+    }
+    if (!isCapacityContextTarget) {
+      this.closeCapacityContextMenu();
     }
   }
 
@@ -1843,6 +1948,8 @@ export class InventoryComponent implements OnInit {
   }): Promise<void> {
     this.isLoading = true;
     this.errorMessage = '';
+    this.warningMessage = '';
+    this.successMessage = '';
 
     const requestedBrandName = selection?.brandName ?? this.selectedBrandName;
     const requestedProductId = selection?.productId ?? this.selectedProductId;
@@ -2013,30 +2120,256 @@ export class InventoryComponent implements OnInit {
       return;
     }
 
-    const confirmed = window.confirm(`Delete brand "${brand.name}"?`);
-    if (!confirmed) {
+    this.openGuardDialog('delete-brand', { brandName: brand.name, label: brand.name });
+  }
+
+  get isGuardDialogBusy(): boolean {
+    return this.isDeletingBrand || this.isDeletingProduct || this.isDeletingCapacity;
+  }
+
+  getGuardDialogTitle(): string {
+    if (this.guardDialogMode === 'delete-product') {
+      return 'Delete this product?';
+    }
+    if (this.guardDialogMode === 'delete-capacity') {
+      return 'Delete this capacity?';
+    }
+    return 'Delete this brand?';
+  }
+
+  getGuardDialogMessage(): string {
+    const label = this.pendingGuardLabel;
+    if (this.guardDialogMode === 'delete-product') {
+      return `Delete product "${label}"? It will be hidden from new orders. Pending SO/PO that still use it will need a replacement product.`;
+    }
+    if (this.guardDialogMode === 'delete-capacity') {
+      return `Delete capacity "${label}"? It will be hidden from new orders. Pending SO/PO that still use it will need a replacement capacity.`;
+    }
+    return `Delete brand "${label}"? Brands with active products cannot be removed.`;
+  }
+
+  getGuardDialogConfirmText(): string {
+    if (this.isGuardDialogBusy) {
+      return 'Deleting...';
+    }
+    if (this.guardDialogMode === 'delete-product') {
+      return 'Delete Product';
+    }
+    if (this.guardDialogMode === 'delete-capacity') {
+      return 'Delete Capacity';
+    }
+    return 'Delete Brand';
+  }
+
+  cancelGuardDialog(): void {
+    if (this.isGuardDialogBusy) {
+      return;
+    }
+    this.closeGuardDialog();
+  }
+
+  async confirmGuardDialog(): Promise<void> {
+    if (this.guardDialogMode === 'delete-product' && this.pendingGuardProductId != null) {
+      await this.executeDeleteProduct(this.pendingGuardProductId);
+      return;
+    }
+    if (this.guardDialogMode === 'delete-capacity' && this.pendingGuardCapacityId != null) {
+      await this.executeDeleteCapacity(this.pendingGuardCapacityId);
+      return;
+    }
+    if (this.guardDialogMode === 'delete-brand' && this.pendingGuardBrandName) {
+      await this.executeDeleteBrand(this.pendingGuardBrandName);
+    }
+  }
+
+  private openGuardDialog(
+    mode: InventoryGuardDialogMode,
+    context: { brandName?: string; productId?: number; capacityId?: number; label?: string },
+  ): void {
+    this.guardDialogMode = mode;
+    this.pendingGuardBrandName = context.brandName ?? null;
+    this.pendingGuardProductId = context.productId ?? null;
+    this.pendingGuardCapacityId = context.capacityId ?? null;
+    this.pendingGuardLabel = String(context.label ?? context.brandName ?? '').trim();
+    this.guardDialogError = '';
+    this.isGuardDialogOpen = true;
+  }
+
+  private closeGuardDialog(): void {
+    this.isGuardDialogOpen = false;
+    this.guardDialogMode = null;
+    this.pendingGuardBrandName = null;
+    this.pendingGuardProductId = null;
+    this.pendingGuardCapacityId = null;
+    this.pendingGuardLabel = '';
+    this.guardDialogError = '';
+  }
+
+  private async executeDeleteBrand(brandName: string): Promise<void> {
+    const brand = this.brandFolders.find((folder) => folder.name === brandName) ?? null;
+    if (!brand?.id) {
+      this.errorMessage = 'Brand record is not available for this action';
+      this.closeGuardDialog();
       return;
     }
 
     this.errorMessage = '';
+    this.guardDialogError = '';
+    this.isDeletingBrand = true;
 
     try {
       const response = await apiClient.delete<ApiMutationResponse>(`/brands/${brand.id}`);
 
       if (!response.data.success) {
-        this.errorMessage = response.data.message ?? 'Unable to delete brand';
+        this.guardDialogError = response.data.message ?? 'Unable to delete brand';
         return;
       }
 
+      this.closeGuardDialog();
       await this.loadInventoryFolders();
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
-        this.errorMessage =
+        this.guardDialogError =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Unable to delete brand';
       } else {
-        this.errorMessage = 'Unable to delete brand';
+        this.guardDialogError = 'Unable to delete brand';
       }
+    } finally {
+      this.isDeletingBrand = false;
+    }
+  }
+
+  async deleteSelectedProduct(): Promise<void> {
+    if (this.selectedProductId == null) {
+      return;
+    }
+    await this.deleteProduct(this.selectedProductId);
+  }
+
+  async deleteSelectedCapacity(): Promise<void> {
+    if (this.selectedCapacityId == null) {
+      return;
+    }
+    await this.deleteCapacity(this.selectedCapacityId);
+  }
+
+  private formatAffectedPendingOrders(
+    orders: ApiMutationResponse['affectedPendingOrders'],
+  ): string {
+    const items = Array.isArray(orders) ? orders : [];
+    if (items.length === 0) {
+      return '';
+    }
+
+    const sales = items
+      .filter((item) => item.orderType === 'sales')
+      .map((item) => item.orderNumber);
+    const purchases = items
+      .filter((item) => item.orderType === 'purchase')
+      .map((item) => item.orderNumber);
+
+    const parts: string[] = [];
+    if (sales.length > 0) {
+      parts.push(`Pending SO: ${sales.join(', ')}`);
+    }
+    if (purchases.length > 0) {
+      parts.push(`Pending PO: ${purchases.join(', ')}`);
+    }
+
+    return `Update these orders so they can proceed. ${parts.join('. ')}.`;
+  }
+
+  private async deleteProduct(productId: number): Promise<void> {
+    const product =
+      this.brandFolders
+        .flatMap((folder) => folder.products)
+        .find((item) => item.id === productId) ?? null;
+    const productName = product?.name ?? `Product ${productId}`;
+    this.openGuardDialog('delete-product', { productId, label: productName });
+  }
+
+  private async deleteCapacity(capacityId: number): Promise<void> {
+    const capacity =
+      this.brandFolders
+        .flatMap((folder) => folder.products)
+        .flatMap((product) => product.capacities)
+        .find((item) => item.id === capacityId) ?? null;
+    const capacityName = capacity?.name ?? `Capacity ${capacityId}`;
+    this.openGuardDialog('delete-capacity', { capacityId, label: capacityName });
+  }
+
+  private async executeDeleteProduct(productId: number): Promise<void> {
+    this.errorMessage = '';
+    this.warningMessage = '';
+    this.successMessage = '';
+    this.guardDialogError = '';
+    this.isDeletingProduct = true;
+
+    try {
+      const response = await apiClient.delete<ApiMutationResponse>(`/products/${productId}`);
+      if (!response.data.success) {
+        this.guardDialogError = response.data.message ?? 'Unable to delete product';
+        return;
+      }
+
+      const successMessage = response.data.message ?? 'Product deleted successfully';
+      const warningMessage = this.formatAffectedPendingOrders(response.data.affectedPendingOrders);
+      this.closeGuardDialog();
+      await this.loadInventoryFolders({
+        brandName: this.selectedBrandName,
+        productId: null,
+        capacityId: null,
+      });
+      this.successMessage = successMessage;
+      this.warningMessage = warningMessage;
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.guardDialogError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Unable to delete product';
+      } else {
+        this.guardDialogError = 'Unable to delete product';
+      }
+    } finally {
+      this.isDeletingProduct = false;
+    }
+  }
+
+  private async executeDeleteCapacity(capacityId: number): Promise<void> {
+    this.errorMessage = '';
+    this.warningMessage = '';
+    this.successMessage = '';
+    this.guardDialogError = '';
+    this.isDeletingCapacity = true;
+
+    try {
+      const response = await apiClient.delete<ApiMutationResponse>(`/capacity/${capacityId}`);
+      if (!response.data.success) {
+        this.guardDialogError = response.data.message ?? 'Unable to delete capacity';
+        return;
+      }
+
+      const successMessage = response.data.message ?? 'Capacity deleted successfully';
+      const warningMessage = this.formatAffectedPendingOrders(response.data.affectedPendingOrders);
+      this.closeGuardDialog();
+      await this.loadInventoryFolders({
+        brandName: this.selectedBrandName,
+        productId: this.selectedProductId,
+        capacityId: null,
+      });
+      this.successMessage = successMessage;
+      this.warningMessage = warningMessage;
+    } catch (error: unknown) {
+      if (axios.isAxiosError(error)) {
+        this.guardDialogError =
+          (error.response?.data as { message?: string } | undefined)?.message ??
+          'Unable to delete capacity';
+      } else {
+        this.guardDialogError = 'Unable to delete capacity';
+      }
+    } finally {
+      this.isDeletingCapacity = false;
     }
   }
 

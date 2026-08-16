@@ -16,7 +16,7 @@ describe('PurchaseController', () => {
         PurchaseService,
         { provide: DatabaseService, useValue: {} },
         { provide: MaterialStockService, useValue: {} },
-        { provide: AuditLogService, useValue: {} },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
         { provide: ConfigService, useValue: { get: () => 'test-secret' } },
       ],
     }).compile();

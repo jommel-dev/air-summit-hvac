@@ -29,10 +29,12 @@ import {
   ParseIntPipe,
   UseGuards,
   Request,
+  Req,
 } from '@nestjs/common';
 import { MaterialsService } from './materials.service';
 import { CreateMaterialDto } from './dto/create-material.dto';
 import { UpdateMaterialDto } from './dto/update-material.dto';
+import { buildAuditContext } from 'src/common/utils/build-audit-context';
 
 /**
  * @Controller decorator defines the base route
@@ -69,11 +71,19 @@ export class MaterialsController {
    * =====================================================
    */
   @Post()
-  async create(@Body() createMaterialDto: CreateMaterialDto, @Request() req: any) {
+  async create(
+    @Body() createMaterialDto: CreateMaterialDto,
+    @Request() req: any,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
     // Extract user ID from request (set by auth middleware)
-    const userId = req.user?.id || 1;
-    
-    return this.materialsService.create(createMaterialDto, userId);
+    const userId = Number(req.user?.sub ?? req.user?.id) || 1;
+
+    return this.materialsService.create(
+      createMaterialDto,
+      userId,
+      buildAuditContext(request),
+    );
   }
 
   /**
@@ -177,9 +187,15 @@ export class MaterialsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() updateMaterialDto: UpdateMaterialDto,
     @Request() req: any,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    const userId = req.user?.id || 1;
-    return this.materialsService.update(id, updateMaterialDto, userId);
+    const userId = Number(req.user?.sub ?? req.user?.id) || 1;
+    return this.materialsService.update(
+      id,
+      updateMaterialDto,
+      userId,
+      buildAuditContext(request),
+    );
   }
 
   /**
@@ -196,10 +212,14 @@ export class MaterialsController {
    * =====================================================
    */
   @Delete(':id')
-  async remove(@Param('id', ParseIntPipe) id: number, @Request() req: any) {
-    const userId = req.user?.id || 1;
-    await this.materialsService.remove(id, userId);
-    
+  async remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req: any,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    const userId = Number(req.user?.sub ?? req.user?.id) || 1;
+    await this.materialsService.remove(id, userId, buildAuditContext(request));
+
     return {
       success: true,
       message: 'Material deleted successfully',

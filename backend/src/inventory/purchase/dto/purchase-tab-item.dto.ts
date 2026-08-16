@@ -39,6 +39,7 @@ export class PurchaseTabItemDto {
       productName: string | null;
       unit: string | null;
       productType: string | null;
+      isDeleted?: boolean;
     } | null;
     capacity: {
       id: string | number | null;
@@ -47,6 +48,7 @@ export class PurchaseTabItemDto {
       outdoorModel: string | null;
       srp: number;
       netPrice: number;
+      isDeleted?: boolean;
     } | null;
   }>;
   createdAt!: string | null;

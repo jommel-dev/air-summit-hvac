@@ -1,47 +1,53 @@
 import { inject } from '@angular/core';
-import { CanActivateChildFn, CanActivateFn, CanMatchFn, Router, UrlTree } from '@angular/router';
-import { getAccessToken } from '../services/auth-storage';
+import { CanActivateChildFn, CanActivateFn, CanMatchFn, Router } from '@angular/router';
+import { AuthService } from '../services/auth.service';
 import { MenuKey, PermissionKey, RbacService } from '../services/rbac.service';
 
-function hasToken(): boolean {
-  return Boolean(getAccessToken());
-}
-
-function toDashboard(): UrlTree {
+export const authGuard: CanActivateFn = async () => {
+  const authService = inject(AuthService);
   const router = inject(Router);
-  return router.createUrlTree(['/users/dashboard']);
-}
+  return (await authService.ensureSession()) ? true : router.createUrlTree(['/']);
+};
 
-function toLogin(): UrlTree {
+export const authChildGuard: CanActivateChildFn = async () => {
+  const authService = inject(AuthService);
   const router = inject(Router);
-  return router.createUrlTree(['/']);
-}
-
-export const authGuard: CanActivateFn = () => {
-  return hasToken() ? true : toLogin();
+  return (await authService.ensureSession()) ? true : router.createUrlTree(['/']);
 };
 
-export const authChildGuard: CanActivateChildFn = () => {
-  return hasToken() ? true : toLogin();
+export const guestOnlyGuard: CanActivateFn = async () => {
+  const authService = inject(AuthService);
+  const router = inject(Router);
+  return (await authService.ensureSession())
+    ? router.createUrlTree(['/users/dashboard'])
+    : true;
 };
 
-export const guestOnlyGuard: CanActivateFn = () => {
-  return hasToken() ? toDashboard() : true;
+export const guestOnlyMatchGuard: CanMatchFn = async () => {
+  const authService = inject(AuthService);
+  const router = inject(Router);
+  return (await authService.ensureSession())
+    ? router.createUrlTree(['/users/dashboard'])
+    : true;
 };
 
-export const guestOnlyMatchGuard: CanMatchFn = () => {
-  return hasToken() ? toDashboard() : true;
-};
-
-export const rbacGuard: CanActivateFn = (route) => {
+export const rbacGuard: CanActivateFn = async (route) => {
+  const authService = inject(AuthService);
   const rbacService = inject(RbacService);
+  const router = inject(Router);
+
+  if (!(await authService.ensureSession())) {
+    return router.createUrlTree(['/']);
+  }
 
   const menu = route.data?.['menu'] as MenuKey | undefined;
   const permission = route.data?.['permission'] as PermissionKey | undefined;
 
   if (!menu) {
-    return rbacService.isAuthenticated() ? true : toLogin();
+    return true;
   }
 
-  return rbacService.canAccess(menu, permission) ? true : toDashboard();
+  return rbacService.canAccess(menu, permission)
+    ? true
+    : router.createUrlTree(['/users/dashboard']);
 };

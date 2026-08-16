@@ -24,7 +24,8 @@ import { AddMaterialItemDto } from './dto/add-material-item.dto';
 import { CreateSalesOrderMigrationPreviewDto } from './dto/create-sales-order-migration-preview.dto';
 import { CreateSalesOrderMigrationImportDto } from './dto/create-sales-order-migration-import.dto';
 import { MaterialTransactionsService } from 'src/inventory/material-transactions/material-transactions.service';
-import { AuditActorContext } from 'src/audit-log/audit-log.service';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import { buildAuditContext } from 'src/common/utils/build-audit-context';
 
 @Controller('sales-order')
 @UseGuards(JwtAuthGuard)
@@ -32,23 +33,13 @@ export class SalesOrderController {
   constructor(
     private readonly salesOrderService: SalesOrderService,
     private readonly materialTransactionsService: MaterialTransactionsService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   private buildAuditContext(
     request: { user?: Record<string, unknown>; ip?: string },
   ): AuditActorContext {
-    const userId = Number(request.user?.sub);
-    const branchId = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
-
-    return {
-      userId: Number.isFinite(userId) ? userId : undefined,
-      username: String(request.user?.username ?? '').trim() || undefined,
-      roleName: String(request.user?.roleName ?? request.user?.role_name ?? '').trim() || undefined,
-      branchId: Number.isFinite(branchId) ? branchId : undefined,
-      ipAddress: String(request.ip ?? '').trim() || undefined,
-    };
+    return buildAuditContext(request);
   }
 
   private withEffectiveBranchScope(
@@ -245,12 +236,13 @@ export class SalesOrderController {
   @Post('customers')
   createCustomer(
     @Body() createCustomerDto: CreateCustomerDto,
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     return this.salesOrderService.createCustomer(
       createCustomerDto,
       Number.isFinite(userId) ? userId : undefined,
+      buildAuditContext(request),
     );
   }
 
@@ -258,13 +250,24 @@ export class SalesOrderController {
   updateCustomer(
     @Param('id') id: string,
     @Body() updateCustomerDto: UpdateCustomerDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    return this.salesOrderService.updateCustomer(String(id), updateCustomerDto);
+    return this.salesOrderService.updateCustomer(
+      String(id),
+      updateCustomerDto,
+      buildAuditContext(request),
+    );
   }
 
   @Delete('customers/:id')
-  deleteCustomer(@Param('id') id: string) {
-    return this.salesOrderService.deleteCustomer(String(id));
+  deleteCustomer(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    return this.salesOrderService.deleteCustomer(
+      String(id),
+      buildAuditContext(request),
+    );
   }
 
   @Get('customers/:id/orders')
@@ -330,21 +333,37 @@ export class SalesOrderController {
   }
 
   @Post('branches')
-  createBranch(@Body() body: { branchName?: string; branchAddress?: string | null }) {
-    return this.salesOrderService.createBranch(body.branchName, body.branchAddress);
+  createBranch(
+    @Body() body: { branchName?: string; branchAddress?: string | null },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    return this.salesOrderService.createBranch(
+      body.branchName,
+      body.branchAddress,
+      buildAuditContext(request),
+    );
   }
 
   @Put('branches/:id')
   updateBranch(
     @Param('id') id: string,
     @Body() body: { branchName?: string; branchAddress?: string | null },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    return this.salesOrderService.updateBranch(+id, body.branchName, body.branchAddress);
+    return this.salesOrderService.updateBranch(
+      +id,
+      body.branchName,
+      body.branchAddress,
+      buildAuditContext(request),
+    );
   }
 
   @Delete('branches/:id')
-  deleteBranch(@Param('id') id: string) {
-    return this.salesOrderService.deleteBranch(+id);
+  deleteBranch(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    return this.salesOrderService.deleteBranch(+id, buildAuditContext(request));
   }
 
   @Get('next-so-number')
@@ -355,25 +374,40 @@ export class SalesOrderController {
   @Patch('bulk/assign-installer')
   bulkAssignInstaller(
     @Body() body: { orderIds: number[]; installer: string },
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     return this.salesOrderService.bulkAssignInstaller(
       body.orderIds,
       body.installer,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
   @Patch('bulk/remit')
   bulkRemit(
     @Body() body: { orderIds: number[] },
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     return this.salesOrderService.bulkRemitSalesOrders(
       body.orderIds,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
+    );
+  }
+
+  @Patch(':id/complete-project')
+  completeProjectSalesOrder(
+    @Param('id') id: string,
+    @Req() request: { user?: Record<string, unknown> },
+  ) {
+    const userId = Number(request.user?.sub);
+    return this.salesOrderService.completeProjectSalesOrder(
+      +id,
+      Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -439,6 +473,7 @@ export class SalesOrderController {
   async addMaterialItem(
     @Param('id') id: string,
     @Body() dto: AddMaterialItemDto | AddMaterialItemDto[],
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const payloads = Array.isArray(dto) ? dto : [dto];
 
@@ -452,11 +487,23 @@ export class SalesOrderController {
       discount_price: item.discount_price,
     }));
 
-    if (transformed.length === 1) {
-      return this.materialTransactionsService.create(transformed[0]);
-    }
+    const result =
+      transformed.length === 1
+        ? await this.materialTransactionsService.create(transformed[0])
+        : await this.materialTransactionsService.createMany(transformed);
 
-    return this.materialTransactionsService.createMany(transformed);
+    await this.auditLogService.logMutation({
+      action: 'SALES_ORDER_MATERIAL_ADD',
+      entityType: 'sales-order',
+      entityId: +id,
+      actor: this.buildAuditContext(request),
+      description: `Added ${transformed.length} material item(s) to sales order #${id}`,
+      requestBody: { items: transformed },
+      after: { items: result },
+      metadata: { itemCount: transformed.length },
+    });
+
+    return result;
   }
 
   @Get(':id/materials')
@@ -465,8 +512,26 @@ export class SalesOrderController {
   }
 
   @Delete(':id/materials/:materialItemId')
-  removeMaterialItem(@Param('materialItemId') materialItemId: string) {
-    return this.materialTransactionsService.remove(+materialItemId);
+  async removeMaterialItem(
+    @Param('id') id: string,
+    @Param('materialItemId') materialItemId: string,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    const result = await this.materialTransactionsService.remove(+materialItemId);
+
+    if (result) {
+      await this.auditLogService.logMutation({
+        action: 'SALES_ORDER_MATERIAL_REMOVE',
+        entityType: 'sales-order',
+        entityId: +id,
+        actor: this.buildAuditContext(request),
+        description: `Removed material item #${materialItemId} from sales order #${id}`,
+        before: { materialItemId: +materialItemId },
+        metadata: { materialItemId: +materialItemId },
+      });
+    }
+
+    return result;
   }
 
   // ─── Miscellaneous Items (Materials, Excess, Services) ──────────────
@@ -484,8 +549,13 @@ export class SalesOrderController {
       isInclusion?: boolean;
       remarks?: string;
     },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    return this.salesOrderService.addMiscellaneousItem(+id, body);
+    return this.salesOrderService.addMiscellaneousItem(
+      +id,
+      body,
+      this.buildAuditContext(request),
+    );
   }
 
   @Get(':id/misc-items')
@@ -497,10 +567,16 @@ export class SalesOrderController {
   removeMiscItem(
     @Param('id') id: string,
     @Param('itemId') itemId: string,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
     @Query('skipTotalAmountUpdate') skipTotalAmountUpdate?: string,
   ) {
-    return this.salesOrderService.removeMiscellaneousItem(+id, +itemId, {
-      skipTotalAmountUpdate: String(skipTotalAmountUpdate ?? '').toLowerCase() === 'true',
-    });
+    return this.salesOrderService.removeMiscellaneousItem(
+      +id,
+      +itemId,
+      {
+        skipTotalAmountUpdate: String(skipTotalAmountUpdate ?? '').toLowerCase() === 'true',
+      },
+      this.buildAuditContext(request),
+    );
   }
 }

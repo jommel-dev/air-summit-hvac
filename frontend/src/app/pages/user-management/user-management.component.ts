@@ -21,6 +21,7 @@ interface UserRow {
   username: string;
   fullName: string;
   role: string;
+  branch: string;
   roleMenus: string[];
   rolePermissions: string[];
   status: 'Active' | 'Inactive' | 'Deleted';
@@ -120,6 +121,7 @@ export class UserManagementComponent implements OnInit {
         user.username,
         user.fullName,
         user.role,
+        user.branch,
         user.status,
         ...user.roleMenus,
         ...user.rolePermissions,
@@ -802,6 +804,7 @@ export class UserManagementComponent implements OnInit {
       String(item.fullname ?? item.fullName ?? item.full_name ?? '').trim() ||
       String(item.username ?? '').trim();
     const role = String(item.roleName ?? item.rolename ?? '').trim() || '-';
+    const branch = String(item.branchName ?? item.branchname ?? '').trim() || '-';
     const roleMenus = this.toChipList(item.roleMenus ?? item.rolemenus ?? '');
     const rolePermissions = this.toChipList(item.rolePermission ?? item.rolepermission ?? '');
     const isDeletedRaw = item.isDeleted ?? item.is_deleted;
@@ -826,6 +829,7 @@ export class UserManagementComponent implements OnInit {
       username: String(item.username ?? '').trim(),
       fullName: fullname,
       role,
+      branch,
       roleMenus,
       rolePermissions,
       status: normalizedStatus,

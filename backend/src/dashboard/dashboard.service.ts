@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
@@ -70,7 +71,14 @@ type SalesFinancialSummaryRow = {
 type DashboardSalesDetailMode = 'sales' | 'unpaid' | 'overdues' | 'cheques';
 type DashboardOperationDetailMode = 'receiving' | 'dispatch' | 'installation' | 'stock-alerts';
 type DashboardSettlementMode = 'partial' | 'full' | 'cheque' | 'split';
-type DashboardReceivableVerificationMode = 'cheque' | 'credit-card';
+type DashboardReceivableVerificationMode = 'bank-transfer' | 'cheque' | 'credit-card';
+type DashboardSalesDetailQuery = {
+  page?: number;
+  pageSize?: number;
+  dateFrom?: string | null;
+  dateTo?: string | null;
+  status?: string | null;
+};
 type SalesSettlementStateRow = {
   soId: string;
   totalAmount: string;
@@ -83,6 +91,8 @@ type SalesSettlementStateRow = {
 
 @Injectable()
 export class DashboardService {
+  private readonly receivableVerificationMethodsSql = `'bank-transfer', 'cheque', 'credit-card'`;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly auditLogService: AuditLogService,
@@ -137,6 +147,142 @@ export class DashboardService {
 
   private formatCurrency(value: number): string {
     return `PHP ${value.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
+  }
+
+  private formatReceivableMethod(normalized: string): string {
+    if (normalized === 'bank-transfer') {
+      return 'Bank Transfer';
+    }
+    if (normalized === 'credit-card') {
+      return 'Credit Card';
+    }
+    return 'Cheque';
+  }
+
+  private formatReceivableStatus(normalized: string): string {
+    const status = String(normalized ?? '').trim().toLowerCase();
+    if (['paid', 'posted', 'cleared', 'complete', 'completed', 'remitted'].includes(status)) {
+      return 'verified';
+    }
+    return status || 'unpaid';
+  }
+
+  private isAdminRole(roleName: unknown): boolean {
+    const normalized = String(roleName ?? '').trim().toLowerCase();
+    return normalized.includes('admin') || normalized.includes('super') || normalized.includes('owner');
+  }
+
+  private async assertAdminPasswordForAdjustment(options: {
+    userId?: number | null;
+    username?: string | null;
+    roleName?: string | null;
+    password?: string;
+    authUsername?: string;
+  }): Promise<string> {
+    const password = String(options.password ?? '').trim();
+    if (!password) {
+      throw new BadRequestException('Admin password is required to adjust this receivable');
+    }
+
+    const passwordSha1 = createHash('sha1').update(password).digest('hex');
+    const isAdmin = this.isAdminRole(options.roleName);
+
+    if (isAdmin) {
+      const userId = Number(options.userId);
+      if (!Number.isFinite(userId) || userId <= 0) {
+        throw new BadRequestException('Invalid current user');
+      }
+
+      const adminCheck = await this.databaseService.query<{ id: number }>(
+        `SELECT u.id
+         FROM tblusers u
+         WHERE u.id = $1
+           AND u.password = $2
+         LIMIT 1`,
+        [userId, passwordSha1],
+      );
+
+      if (adminCheck.rowCount === 0) {
+        throw new BadRequestException('Incorrect admin password. Please try again.');
+      }
+
+      return String(options.username ?? options.roleName ?? 'admin').trim() || 'admin';
+    }
+
+    const authUsername = String(options.authUsername ?? '').trim();
+    if (!authUsername) {
+      throw new BadRequestException('Admin username is required to authorize this adjustment');
+    }
+
+    const adminCheck = await this.databaseService.query<{ id: number; username: string }>(
+      `SELECT
+         u.id,
+         COALESCE(to_jsonb(u)->>'username', '') AS username
+       FROM tblusers u
+       LEFT JOIN tblrbac r
+         ON r.id::text = COALESCE(
+           to_jsonb(u)->>'roleId',
+           to_jsonb(u)->>'roleid',
+           to_jsonb(u)->>'role_id'
+         )
+       WHERE LOWER(TRIM(COALESCE(to_jsonb(u)->>'username', ''))) = LOWER(TRIM($1))
+         AND u.password = $2
+         AND (
+           LOWER(COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename', '')) LIKE '%admin%'
+           OR LOWER(COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename', '')) LIKE '%super%'
+           OR LOWER(COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename', '')) LIKE '%owner%'
+         )
+       LIMIT 1`,
+      [authUsername, passwordSha1],
+    );
+
+    if (adminCheck.rowCount === 0) {
+      throw new BadRequestException('Invalid admin credentials. Authorization denied.');
+    }
+
+    return authUsername;
+  }
+
+  private parseDateOnly(value?: string | null): string | null {
+    const text = String(value ?? '').trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      return null;
+    }
+
+    const parsed = new Date(`${text}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : text;
+  }
+
+  private normalizeSalesDetailQuery(query?: DashboardSalesDetailQuery): {
+    page: number;
+    pageSize: number;
+    offset: number;
+    dateFrom: string | null;
+    dateTo: string | null;
+    status: 'pending' | 'verified' | 'all';
+  } {
+    const page = Math.max(1, Math.floor(Number(query?.page) || 1));
+    const pageSize = Math.min(50, Math.max(1, Math.floor(Number(query?.pageSize) || 15)));
+    let dateFrom = this.parseDateOnly(query?.dateFrom);
+    let dateTo = this.parseDateOnly(query?.dateTo);
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+      [dateFrom, dateTo] = [dateTo, dateFrom];
+    }
+
+    const normalizedStatus = String(query?.status ?? '').trim().toLowerCase();
+    const status: 'pending' | 'verified' | 'all' =
+      normalizedStatus === 'verified' || normalizedStatus === 'all'
+        ? normalizedStatus
+        : 'pending';
+
+    return {
+      page,
+      pageSize,
+      offset: (page - 1) * pageSize,
+      dateFrom,
+      dateTo,
+      status,
+    };
   }
 
   private formatPercent(value: number): string {
@@ -297,10 +443,18 @@ export class DashboardService {
     );
   }
 
-  private async updateSalesOrderStatusForSettlement(client: PoolClient, salesOrderId: number, branchId?: number): Promise<void> {
+  private async updateSalesOrderStatusForSettlement(
+    client: PoolClient,
+    salesOrderId: number,
+    branchId?: number,
+    options?: { allowReopenComplete?: boolean },
+  ): Promise<void> {
     const state = await this.loadSalesSettlementState(client, salesOrderId, branchId);
     const currentStatus = this.normalizeStatus(state.normalizedStatus);
-    if (['complete', 'completed', 'cancelled', 'rejected', 'void'].includes(currentStatus)) {
+    if (['cancelled', 'rejected', 'void'].includes(currentStatus)) {
+      return;
+    }
+    if (!options?.allowReopenComplete && ['complete', 'completed'].includes(currentStatus)) {
       return;
     }
 
@@ -367,11 +521,11 @@ export class DashboardService {
           WHERE COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
         ), 0) AS paid_amount,
         COALESCE(SUM(ps.amount) FILTER (
-          WHERE ps.normalized_method IN ('cheque', 'credit-card')
+          WHERE ps.normalized_method IN (${this.receivableVerificationMethodsSql})
             AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
         ), 0) AS outstanding_receivable_amount,
         COUNT(*) FILTER (
-          WHERE ps.normalized_method IN ('cheque', 'credit-card')
+          WHERE ps.normalized_method IN (${this.receivableVerificationMethodsSql})
             AND ps.amount > 0
             AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
         )::int AS outstanding_receivable_count,
@@ -403,13 +557,14 @@ export class DashboardService {
         COALESCE(
           STRING_AGG(
             DISTINCT CASE
+              WHEN ps.normalized_method = 'bank-transfer' THEN 'Bank Transfer'
               WHEN ps.normalized_method = 'credit-card' THEN 'Credit Card'
               WHEN ps.normalized_method = 'cheque' THEN 'Cheque'
               ELSE NULL
             END,
             ', '
           ) FILTER (
-            WHERE ps.normalized_method IN ('cheque', 'credit-card')
+            WHERE ps.normalized_method IN (${this.receivableVerificationMethodsSql})
               AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
           ),
           'Unknown'
@@ -448,7 +603,12 @@ export class DashboardService {
         COALESCE(pt.outstanding_receivable_count, 0) AS outstanding_receivable_count,
         COALESCE(pt.payment_methods, 'Unknown') AS payment_methods,
         COALESCE(pt.credit_terms_methods, '-') AS credit_terms_methods,
-        COALESCE(pt.outstanding_payment_methods, 'Unknown') AS outstanding_payment_methods
+        COALESCE(pt.outstanding_payment_methods, 'Unknown') AS outstanding_payment_methods,
+        REPLACE(REPLACE(LOWER(TRIM(COALESCE(
+          to_jsonb(so)->>'salesType',
+          to_jsonb(so)->>'sales_type',
+          ''
+        ))), '_', '-'), ' ', '-') AS sales_type
       FROM tblsales_order so
       LEFT JOIN tblcustomer c
         ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
@@ -472,6 +632,7 @@ export class DashboardService {
       CASE
         WHEN ${alias}.paid_amount > 0 THEN ${alias}.paid_amount
         WHEN ${alias}.remaining_amount <= 0
+          AND COALESCE(${alias}.outstanding_receivable_amount, 0) <= 0
           AND ${alias}.normalized_status IN ('paid', 'remitted', 'complete', 'completed')
           THEN ${alias}.total_amount
         ELSE 0
@@ -480,20 +641,17 @@ export class DashboardService {
   }
 
   private getRecordedSalesPredicate(alias: string): string {
-    // Only include cheque payments if their status is paid/posted/cleared/complete/completed/remitted
-    // Exclude all other cheques from collected sales
-    // All other payment methods remain included as before
+    // Bank Transfer, Cheque, and Credit Card stay out of Collected Sales until dashboard Verify.
+    // Project SOs are SOA/Billing/Settlement based — never count as Collected Sales
     return `(
       ${this.getRecordedSalesAmountExpression(alias)} > 0
       AND ${alias}.normalized_status IN ('remitted', 'complete', 'completed')
-      AND (
-        POSITION('cheque' IN COALESCE(${alias}.payment_methods, '')) = 0
-        OR EXISTS (
-          SELECT 1 FROM payment_scope ps
-          WHERE ps.so_id = ${alias}.so_id
-            AND ps.normalized_method = 'cheque'
-            AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
-        )
+      AND COALESCE(${alias}.sales_type, '') <> 'project'
+      AND NOT EXISTS (
+        SELECT 1 FROM payment_scope ps
+        WHERE ps.so_id = ${alias}.so_id
+          AND ps.normalized_method IN (${this.receivableVerificationMethodsSql})
+          AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
       )
     )`;
   }
@@ -504,6 +662,18 @@ export class DashboardService {
       AND ${alias}.normalized_status IN ('remitted', 'complete', 'completed')
       AND COALESCE(${alias}.credit_terms_methods, '-') <> '-'
     )`;
+  }
+
+  private getOverdueDueDatePredicate(alias: string): string {
+    return `${alias}.due_date IS NOT NULL AND (${alias}.due_date AT TIME ZONE 'UTC')::date < CURRENT_DATE`;
+  }
+
+  private getUnpaidBalancePredicate(alias: string): string {
+    return `${this.getOpenBalancePredicate(alias)} AND NOT (${this.getOverdueDueDatePredicate(alias)})`;
+  }
+
+  private getOverdueBalancePredicate(alias: string): string {
+    return `${this.getOpenBalancePredicate(alias)} AND ${this.getOverdueDueDatePredicate(alias)}`;
   }
 
   async getOverview(branchId?: number): Promise<DashboardResponse> {
@@ -619,16 +789,16 @@ export class DashboardService {
 
       const recordedSalesPredicate = this.getRecordedSalesPredicate('ss');
       const recordedSalesAmountExpression = this.getRecordedSalesAmountExpression('ss');
-      const openBalancePredicate = this.getOpenBalancePredicate('ss');
-      const overdueBalancePredicate = `${openBalancePredicate} AND ss.due_date IS NOT NULL AND (ss.due_date AT TIME ZONE 'UTC')::date < CURRENT_DATE`;
+      const unpaidBalancePredicate = this.getUnpaidBalancePredicate('ss');
+      const overdueBalancePredicate = this.getOverdueBalancePredicate('ss');
 
       const salesSummaryResult = await this.databaseService.query<SalesFinancialSummaryRow>(
         `${this.getSalesDashboardBaseCte()}
          SELECT
            COALESCE(SUM(${recordedSalesAmountExpression}) FILTER (WHERE ${recordedSalesPredicate}), 0)::text AS "settledAmount",
            COUNT(*) FILTER (WHERE ${recordedSalesPredicate})::text AS "settledCount",
-           COALESCE(SUM(ss.remaining_amount) FILTER (WHERE ${openBalancePredicate}), 0)::text AS "unpaidAmount",
-           COUNT(*) FILTER (WHERE ${openBalancePredicate})::text AS "unpaidCount",
+           COALESCE(SUM(ss.remaining_amount) FILTER (WHERE ${unpaidBalancePredicate}), 0)::text AS "unpaidAmount",
+           COUNT(*) FILTER (WHERE ${unpaidBalancePredicate})::text AS "unpaidCount",
            COALESCE(SUM(ss.remaining_amount) FILTER (WHERE ${overdueBalancePredicate}), 0)::text AS "overdueAmount",
            COUNT(*) FILTER (WHERE ${overdueBalancePredicate})::text AS "overdueCount",
            COALESCE(SUM(ss.outstanding_receivable_amount) FILTER (WHERE ss.normalized_status IN ('remitted', 'complete', 'completed')), 0)::text AS "chequeAmount",
@@ -844,7 +1014,12 @@ export class DashboardService {
            WHERE LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'sales')) = 'sales'
          )
          SELECT
-           COALESCE(to_jsonb(b)->>'name', 'Unknown Brand') AS label,
+           COALESCE(
+             NULLIF(TRIM(to_jsonb(b)->>'name'), ''),
+             NULLIF(TRIM(to_jsonb(b)->>'brandName'), ''),
+             NULLIF(TRIM(to_jsonb(b)->>'brand_name'), ''),
+             'Unknown Brand'
+           ) AS label,
            COALESCE(
              (SUM(((CASE WHEN item_scope.discount_price > 0 THEN item_scope.discount_price ELSE item_scope.sell_price END) - item_scope.unit_price) * item_scope.qty)
                / NULLIF(SUM((CASE WHEN item_scope.discount_price > 0 THEN item_scope.discount_price ELSE item_scope.sell_price END) * item_scope.qty), 0)
@@ -855,8 +1030,13 @@ export class DashboardService {
          LEFT JOIN tblproducts p
            ON p.id::text = item_scope.product_id
          LEFT JOIN tblbrands b
-           ON b.id::text = COALESCE(to_jsonb(p)->>'brand_id', to_jsonb(p)->>'brandId', '')
-         GROUP BY COALESCE(to_jsonb(b)->>'name', 'Unknown Brand')
+           ON b.id::text = COALESCE(
+             to_jsonb(p)->>'brandId',
+             to_jsonb(p)->>'brand_id',
+             to_jsonb(p)->>'brandid',
+             ''
+           )
+         GROUP BY 1
          ORDER BY margin DESC
          LIMIT 4`,
       );
@@ -1042,7 +1222,7 @@ export class DashboardService {
         {
           label: 'Cheque & Card Receivables',
           value: this.formatCurrency(chequeReceivableAmount),
-          change: `${this.formatInteger(chequeReceivableCount)} outstanding cheques`,
+          change: `${this.formatInteger(chequeReceivableCount)} awaiting verification`,
           trend: chequeReceivableAmount > 0 ? 'down' : 'up',
         },
       ];
@@ -1117,13 +1297,41 @@ export class DashboardService {
     }
   }
 
-  async getSalesDetail(mode: DashboardSalesDetailMode, branchId?: number): Promise<{ success: boolean; items: unknown[] }> {
+  async getSalesDetail(
+    mode: DashboardSalesDetailMode,
+    branchId?: number,
+    query?: DashboardSalesDetailQuery,
+  ): Promise<{
+    success: boolean;
+    items: unknown[];
+    total: number;
+    page: number;
+    pageSize: number;
+    receivableAmount?: number;
+    receivedAmount?: number;
+    overallAmount?: number;
+  }> {
+    const empty = {
+      success: false,
+      items: [],
+      total: 0,
+      page: 1,
+      pageSize: 15,
+      receivableAmount: 0,
+      receivedAmount: 0,
+      overallAmount: 0,
+    };
     try {
       const branchParam = branchId ? String(branchId) : null;
+      const { page, pageSize, offset, dateFrom, dateTo, status } = this.normalizeSalesDetailQuery(query);
+      const queryParams: unknown[] = [branchParam, dateFrom, dateTo, pageSize, offset];
       const recordedSalesPredicate = this.getRecordedSalesPredicate('ss');
       const recordedSalesAmountExpression = this.getRecordedSalesAmountExpression('ss');
-      const openBalancePredicate = this.getOpenBalancePredicate('ss');
-      const overdueBalancePredicate = `${openBalancePredicate} AND ss.due_date IS NOT NULL AND (ss.due_date AT TIME ZONE 'UTC')::date < CURRENT_DATE`;
+      const unpaidBalancePredicate = this.getUnpaidBalancePredicate('ss');
+      const overdueBalancePredicate = this.getOverdueBalancePredicate('ss');
+      const createdAtDateFilter = `
+             AND ($2::date IS NULL OR (ss.created_at AT TIME ZONE 'UTC')::date >= $2::date)
+             AND ($3::date IS NULL OR (ss.created_at AT TIME ZONE 'UTC')::date <= $3::date)`;
 
       if (mode === 'sales') {
         const result = await this.databaseService.query<{
@@ -1133,6 +1341,7 @@ export class DashboardService {
           status: string;
           date: string;
           method: string;
+          total: string;
         }>(
           `${this.getSalesDashboardBaseCte()}
            SELECT
@@ -1147,17 +1356,22 @@ export class DashboardService {
                ELSE 'paid'
              END::text AS status,
              ss.created_at::text AS date,
-             ss.payment_methods::text AS method
+             ss.payment_methods::text AS method,
+             COUNT(*) OVER()::text AS total
            FROM sales_scope ss
            WHERE ${recordedSalesPredicate}
              AND ($1::text IS NULL OR ss.branch_id = $1::text)
+             ${createdAtDateFilter}
            ORDER BY ss.created_at DESC
-           LIMIT 100`,
-          [branchParam],
+           LIMIT $4 OFFSET $5`,
+          queryParams,
         );
 
         return {
           success: true,
+          page,
+          pageSize,
+          total: this.toNumber(result.rows[0]?.total),
           items: result.rows.map((row) => ({
             id: row.id,
             soNumber: row.soNumber,
@@ -1180,6 +1394,8 @@ export class DashboardService {
           downPayment: string;
           method: string;
           dueDate: string;
+          daysUntilDue: string | null;
+          total: string;
         }>(
           `${this.getSalesDashboardBaseCte()},
            down_payment_scope AS (
@@ -1201,53 +1417,60 @@ export class DashboardService {
              ss.paid_amount::text AS "paidAmount",
              COALESCE(dp.total_down_payment, 0)::text AS "downPayment",
              ss.credit_terms_methods::text AS method,
-             ss.due_date::text AS "dueDate"
+             ss.due_date::text AS "dueDate",
+             CASE
+               WHEN ss.due_date IS NULL THEN NULL
+               ELSE ((ss.due_date AT TIME ZONE 'UTC')::date - CURRENT_DATE)::text
+             END AS "daysUntilDue",
+             COUNT(*) OVER()::text AS total
            FROM sales_scope ss
            LEFT JOIN down_payment_scope dp ON dp.so_id = ss.so_id
-           WHERE ${mode === 'overdues' ? overdueBalancePredicate : openBalancePredicate}
+           WHERE ${mode === 'overdues' ? overdueBalancePredicate : unpaidBalancePredicate}
              AND ($1::text IS NULL OR ss.branch_id = $1::text)
+             ${createdAtDateFilter}
            ORDER BY ss.due_date ASC NULLS LAST, ss.created_at DESC
-           LIMIT 100`,
-          [branchParam],
+           LIMIT $4 OFFSET $5`,
+          queryParams,
         );
 
         return {
           success: true,
+          page,
+          pageSize,
+          total: this.toNumber(result.rows[0]?.total),
           items: result.rows.map((row) => {
-            const total = this.toNumber(row.totalAmount);
+            const totalAmount = this.toNumber(row.totalAmount);
             const paid = this.toNumber(row.paidAmount);
             const dp = this.toNumber(row.downPayment);
-            const balance = Math.max(total - paid - dp, 0);
+            const balance = Math.max(totalAmount - paid - dp, 0);
             return {
               id: row.soId,
               soId: Number(row.soId),
               soNumber: row.soNumber,
               customer: row.customer,
-              totalAmount: total,
+              totalAmount,
               paidAmount: paid,
               downPayment: dp,
               method: row.method,
               balance,
               dueDate: row.dueDate ? new Date(row.dueDate) : null,
+              daysUntilDue: row.daysUntilDue == null || row.daysUntilDue === ''
+                ? null
+                : this.toNumber(row.daysUntilDue),
             };
           }),
         };
       }
 
       if (mode === 'cheques') {
-        const result = await this.databaseService.query<{
-          paymentId: string;
-          soNumber: string;
-          customer: string;
-          method: string;
-          referenceNo: string;
-          chequeNo: string;
-          amount: string;
-          bank: string;
-          postDated: string;
-          status: string;
-        }>(
-          `WITH payment_scope AS (
+        const verifiedStatusesSql = `'paid', 'posted', 'cleared', 'complete', 'completed', 'remitted'`;
+        const receivableStatusFilter =
+          status === 'verified'
+            ? `AND COALESCE(NULLIF(rb.normalized_status, ''), 'unpaid') IN (${verifiedStatusesSql})`
+            : status === 'all'
+              ? ''
+              : `AND COALESCE(NULLIF(rb.normalized_status, ''), 'unpaid') NOT IN (${verifiedStatusesSql})`;
+        const receivableBaseCte = `WITH payment_scope AS (
              SELECT
                sp.id::text AS payment_id,
                COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
@@ -1263,51 +1486,116 @@ export class DashboardService {
                COALESCE(to_jsonb(sp)->>'bank_name', to_jsonb(sp)->>'bankName', '-') AS bank_name,
                COALESCE(to_jsonb(sp)->>'post_dated', to_jsonb(sp)->>'postDated', null) AS post_dated
              FROM tblso_payments sp
-           )
-           SELECT
-             ps.payment_id::text AS "paymentId",
-             COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS "soNumber",
-             COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS customer,
-             ps.normalized_method::text AS method,
-             ps.reference_no::text AS "referenceNo",
-             ps.check_no::text AS "chequeNo",
-             ps.amount::text AS amount,
-             ps.bank_name::text AS bank,
-             COALESCE(ps.post_dated::text, '') AS "postDated",
-             COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid')::text AS status
-           FROM payment_scope ps
-           LEFT JOIN tblsales_order so ON so.id::text = ps.so_id
-           LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
-           WHERE ps.normalized_method IN ('cheque', 'credit-card')
-             AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
-             AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', 'pending'))), '_', '-'), ' ', '-') IN ('remitted', 'complete', 'completed')
-             AND ($1::text IS NULL OR COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') = $1::text)
-           ORDER BY so.id DESC
-           LIMIT 100`,
-          [branchParam],
-        );
+           ),
+           receivable_base AS (
+             SELECT
+               ps.payment_id,
+               ps.so_id,
+               ps.amount,
+               ps.normalized_method,
+               ps.normalized_status,
+               ps.reference_no,
+               ps.check_no,
+               ps.bank_name,
+               ps.post_dated,
+               so.id AS so_pk,
+               COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS so_number,
+               COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS customer
+             FROM payment_scope ps
+             LEFT JOIN tblsales_order so ON so.id::text = ps.so_id
+             LEFT JOIN tblcustomer c ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
+             WHERE ps.normalized_method IN (${this.receivableVerificationMethodsSql})
+               AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', 'pending'))), '_', '-'), ' ', '-') IN ('remitted', 'complete', 'completed')
+               AND ($1::text IS NULL OR COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') = $1::text)
+               AND ($2::date IS NULL OR (
+                 COALESCE(NULLIF(to_jsonb(so)->>'created_at', ''), NULLIF(to_jsonb(so)->>'createdAt', ''))::timestamptz AT TIME ZONE 'UTC'
+               )::date >= $2::date)
+               AND ($3::date IS NULL OR (
+                 COALESCE(NULLIF(to_jsonb(so)->>'created_at', ''), NULLIF(to_jsonb(so)->>'createdAt', ''))::timestamptz AT TIME ZONE 'UTC'
+               )::date <= $3::date)
+           )`;
 
+        const [totalsResult, result] = await Promise.all([
+          this.databaseService.query<{
+            receivableAmount: string;
+            receivedAmount: string;
+            overallAmount: string;
+          }>(
+            `${receivableBaseCte}
+             SELECT
+               COALESCE(SUM(rb.amount) FILTER (
+                 WHERE COALESCE(NULLIF(rb.normalized_status, ''), 'unpaid') NOT IN (${verifiedStatusesSql})
+               ), 0)::text AS "receivableAmount",
+               COALESCE(SUM(rb.amount) FILTER (
+                 WHERE COALESCE(NULLIF(rb.normalized_status, ''), 'unpaid') IN (${verifiedStatusesSql})
+               ), 0)::text AS "receivedAmount",
+               COALESCE(SUM(rb.amount), 0)::text AS "overallAmount"
+             FROM receivable_base rb`,
+            [branchParam, dateFrom, dateTo],
+          ),
+          this.databaseService.query<{
+            paymentId: string;
+            soNumber: string;
+            customer: string;
+            method: string;
+            referenceNo: string;
+            chequeNo: string;
+            amount: string;
+            bank: string;
+            postDated: string;
+            status: string;
+            total: string;
+          }>(
+            `${receivableBaseCte}
+             SELECT
+               rb.payment_id::text AS "paymentId",
+               rb.so_number::text AS "soNumber",
+               rb.customer::text AS customer,
+               rb.normalized_method::text AS method,
+               rb.reference_no::text AS "referenceNo",
+               rb.check_no::text AS "chequeNo",
+               rb.amount::text AS amount,
+               rb.bank_name::text AS bank,
+               COALESCE(rb.post_dated::text, '') AS "postDated",
+               COALESCE(NULLIF(rb.normalized_status, ''), 'unpaid')::text AS status,
+               COUNT(*) OVER()::text AS total
+             FROM receivable_base rb
+             WHERE TRUE
+               ${receivableStatusFilter}
+             ORDER BY rb.so_pk DESC
+             LIMIT $4 OFFSET $5`,
+            queryParams,
+          ),
+        ]);
+
+        const totals = totalsResult.rows[0];
         return {
           success: true,
+          page,
+          pageSize,
+          total: this.toNumber(result.rows[0]?.total),
+          receivableAmount: this.toNumber(totals?.receivableAmount),
+          receivedAmount: this.toNumber(totals?.receivedAmount),
+          overallAmount: this.toNumber(totals?.overallAmount),
           items: result.rows.map((row) => ({
             id: row.paymentId,
             paymentId: row.paymentId,
             soNumber: row.soNumber,
             customer: row.customer,
-            method: row.method === 'credit-card' ? 'Credit Card' : 'Cheque',
-            referenceNo: row.method === 'credit-card' ? row.referenceNo : row.chequeNo,
+            method: this.formatReceivableMethod(row.method),
+            referenceNo: row.method === 'cheque' ? row.chequeNo : row.referenceNo,
             chequeNo: row.chequeNo,
             amount: this.toNumber(row.amount),
             bank: row.bank,
             postDated: row.postDated ? new Date(row.postDated) : null,
-            status: row.status,
+            status: this.formatReceivableStatus(row.status),
           })),
         };
       }
 
-      return { success: false, items: [] };
+      return { ...empty, page, pageSize };
     } catch (error) {
-      return { success: false, items: [] };
+      return empty;
     }
   }
 
@@ -1433,11 +1721,20 @@ export class DashboardService {
   async verifySalesReceivable(
     payload: { paymentId?: number; method?: DashboardReceivableVerificationMode },
     branchId?: number,
+    auditActor?: AuditActorContext,
   ): Promise<{ success: boolean; message: string }> {
     const paymentId = String(payload.paymentId ?? '').trim();
     if (!paymentId) {
       throw new BadRequestException('A valid paymentId is required');
     }
+
+    const verifiedHolder: {
+      current: {
+        paymentId: string;
+        salesOrderId: string;
+        method: string;
+      } | null;
+    } = { current: null };
 
     await this.databaseService.withTransaction(async (client) => {
       const result = await client.query<{
@@ -1464,8 +1761,8 @@ export class DashboardService {
       }
 
       const payment = result.rows[0];
-      if (!['cheque', 'credit-card'].includes(payment.method)) {
-        throw new BadRequestException('Only cheque or credit card receivables can be verified here');
+      if (!['bank-transfer', 'cheque', 'credit-card'].includes(payment.method)) {
+        throw new BadRequestException('Only bank transfer, cheque, or credit card receivables can be verified here');
       }
       if (branchId && payment.branchId && payment.branchId !== String(branchId)) {
         throw new NotFoundException('Receivable payment not found in the current branch');
@@ -1494,11 +1791,171 @@ export class DashboardService {
       );
 
       await this.updateSalesOrderStatusForSettlement(client, Number(payment.salesOrderId), branchId);
+      verifiedHolder.current = {
+        paymentId: payment.paymentId,
+        salesOrderId: payment.salesOrderId,
+        method: payment.method,
+      };
+    });
+
+    await this.auditLogService.logMutation({
+      action: 'DASHBOARD_VERIFY_RECEIVABLE',
+      entityType: 'sales-payment',
+      entityId: Number(paymentId),
+      actor: auditActor,
+      description: `Verified ${verifiedHolder.current?.method ?? 'receivable'} payment #${paymentId}`,
+      requestBody: payload as Record<string, unknown>,
+      before: { status: 'unpaid', ...(verifiedHolder.current ?? {}) },
+      after: { status: 'paid', ...(verifiedHolder.current ?? {}) },
+      metadata: {
+        method: verifiedHolder.current?.method,
+        salesOrderId: verifiedHolder.current?.salesOrderId
+          ? Number(verifiedHolder.current.salesOrderId)
+          : undefined,
+      },
     });
 
     return {
       success: true,
       message: 'Receivable payment verified successfully',
+    };
+  }
+
+  async adjustSalesReceivable(
+    payload: {
+      paymentId?: number;
+      method?: DashboardReceivableVerificationMode;
+      password?: string;
+      remarks?: string;
+      authUsername?: string;
+    },
+    branchId?: number,
+    auditActor?: AuditActorContext,
+  ): Promise<{ success: boolean; message: string }> {
+    const paymentId = String(payload.paymentId ?? '').trim();
+    if (!paymentId) {
+      throw new BadRequestException('A valid paymentId is required');
+    }
+
+    const remarks = String(payload.remarks ?? '').trim();
+    if (remarks.length < 5) {
+      throw new BadRequestException('Please provide remarks explaining why this payment should be adjusted');
+    }
+
+    const authorizedBy = await this.assertAdminPasswordForAdjustment({
+      userId: auditActor?.userId,
+      username: auditActor?.username,
+      roleName: auditActor?.roleName,
+      password: payload.password,
+      authUsername: payload.authUsername,
+    });
+
+    const adjustedHolder: {
+      current: {
+        paymentId: string;
+        salesOrderId: string;
+        method: string;
+        status: string;
+      } | null;
+    } = { current: null };
+
+    await this.databaseService.withTransaction(async (client) => {
+      const result = await client.query<{
+        paymentId: string;
+        salesOrderId: string;
+        method: string;
+        status: string;
+        branchId: string | null;
+      }>(
+        `SELECT
+           sp.id::text AS "paymentId",
+           COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS "salesOrderId",
+           REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'method', ''))), '_', '-'), ' ', '-') AS method,
+           REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'status', ''))), '_', '-'), ' ', '-') AS status,
+           NULLIF(COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', ''), '') AS "branchId"
+         FROM tblso_payments sp
+         LEFT JOIN tblsales_order so
+           ON so.id::text = COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId')
+         WHERE sp.id::text = $1
+         LIMIT 1`,
+        [paymentId],
+      );
+
+      if (result.rowCount === 0) {
+        throw new NotFoundException('Receivable payment not found');
+      }
+
+      const payment = result.rows[0];
+      if (!['bank-transfer', 'cheque', 'credit-card'].includes(payment.method)) {
+        throw new BadRequestException('Only bank transfer, cheque, or credit card receivables can be adjusted here');
+      }
+      if (!['paid', 'posted', 'cleared', 'complete', 'completed', 'remitted', 'verified'].includes(payment.status)) {
+        throw new BadRequestException('Only verified receivables can be adjusted back to pending');
+      }
+      if (branchId && payment.branchId && payment.branchId !== String(branchId)) {
+        throw new NotFoundException('Receivable payment not found in the current branch');
+      }
+
+      const paymentColumns = await this.getTableColumns(client, 'tblso_payments');
+      const statusColumn = this.pickColumn(paymentColumns, ['status']);
+      const paymentDateColumn = this.pickColumn(paymentColumns, ['payment_date', 'paymentDate']);
+      if (!statusColumn) {
+        throw new BadRequestException('Sales payment status column is not configured as expected');
+      }
+
+      const updateParams: unknown[] = ['unpaid'];
+      const updates = [`"${statusColumn}" = $1`];
+      if (paymentDateColumn) {
+        updateParams.push(null);
+        updates.push(`"${paymentDateColumn}" = $${updateParams.length}`);
+      }
+      updateParams.push(paymentId);
+
+      await client.query(
+        `UPDATE tblso_payments
+         SET ${updates.join(', ')}
+         WHERE id::text = $${updateParams.length}`,
+        updateParams,
+      );
+
+      await this.updateSalesOrderStatusForSettlement(client, Number(payment.salesOrderId), branchId, {
+        allowReopenComplete: true,
+      });
+      adjustedHolder.current = {
+        paymentId: payment.paymentId,
+        salesOrderId: payment.salesOrderId,
+        method: payment.method,
+        status: payment.status,
+      };
+    });
+
+    await this.auditLogService.logMutation({
+      action: 'DASHBOARD_ADJUST_RECEIVABLE',
+      entityType: 'sales-payment',
+      entityId: Number(paymentId),
+      actor: auditActor,
+      description: `Adjusted ${adjustedHolder.current?.method ?? 'receivable'} payment #${paymentId} back to pending`,
+      requestBody: {
+        paymentId: payload.paymentId,
+        method: payload.method,
+        remarks,
+        authUsername: payload.authUsername,
+      },
+      before: { status: 'paid', ...(adjustedHolder.current ?? {}) },
+      after: { status: 'unpaid', ...(adjustedHolder.current ?? {}) },
+      metadata: {
+        method: adjustedHolder.current?.method,
+        remarks,
+        authorizedBy,
+        salesOrderId: adjustedHolder.current?.salesOrderId
+          ? Number(adjustedHolder.current.salesOrderId)
+          : undefined,
+      },
+    });
+
+    return {
+      success: true,
+      message: 'Receivable payment adjusted back to pending',
     };
   }
 

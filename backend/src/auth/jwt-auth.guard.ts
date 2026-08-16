@@ -66,10 +66,14 @@ export class JwtAuthGuard implements CanActivate {
       }
 
       const payloadRecord = payload as Record<string, unknown>;
+      const tokenBranchId = this.toPositiveNumber(
+        payloadRecord?.branchId ?? payloadRecord?.branch_id ?? payloadRecord?.branch,
+      );
       const effectiveBranchId = this.resolveEffectiveBranchId(payloadRecord, request);
 
       request.user = {
         ...payloadRecord,
+        tokenBranchId,
         branchId: effectiveBranchId,
         branch_id: effectiveBranchId,
       };

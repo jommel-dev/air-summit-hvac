@@ -8,12 +8,46 @@ function isBrowser(): boolean {
   return typeof window !== 'undefined';
 }
 
+/**
+ * sessionStorage is tab-scoped, so a logged-in tab would not share the
+ * session with a new tab on "/". Always keep auth tokens in localStorage.
+ */
+function migrateAuthKeysFromSessionStorage(): void {
+  const keys = [
+    ACCESS_TOKEN_KEY,
+    REFRESH_TOKEN_KEY,
+    EFFECTIVE_PERMISSION_KEYS,
+    DENIED_PERMISSION_KEYS,
+  ];
+
+  let migrated = false;
+
+  for (const key of keys) {
+    if (localStorage.getItem(key)) {
+      sessionStorage.removeItem(key);
+      continue;
+    }
+
+    const fromSession = sessionStorage.getItem(key);
+    if (fromSession) {
+      localStorage.setItem(key, fromSession);
+      sessionStorage.removeItem(key);
+      migrated = true;
+    }
+  }
+
+  if (migrated || localStorage.getItem(ACCESS_TOKEN_KEY)) {
+    localStorage.setItem(SESSION_PERSIST_KEY, '1');
+  }
+}
+
 export function getAccessToken(): string | null {
   if (!isBrowser()) {
     return null;
   }
 
-  return localStorage.getItem(ACCESS_TOKEN_KEY) ?? sessionStorage.getItem(ACCESS_TOKEN_KEY);
+  migrateAuthKeysFromSessionStorage();
+  return localStorage.getItem(ACCESS_TOKEN_KEY);
 }
 
 export function getRefreshToken(): string | null {
@@ -21,53 +55,38 @@ export function getRefreshToken(): string | null {
     return null;
   }
 
-  return localStorage.getItem(REFRESH_TOKEN_KEY) ?? sessionStorage.getItem(REFRESH_TOKEN_KEY);
+  migrateAuthKeysFromSessionStorage();
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
 export function isSessionPersistent(): boolean {
-  if (!isBrowser()) {
-    return false;
-  }
-
-  return localStorage.getItem(SESSION_PERSIST_KEY) === '1';
+  // Auth tokens are always shared via localStorage across tabs.
+  return true;
 }
 
-export function setAccessToken(token: string, persist: boolean): void {
+export function setAccessToken(token: string, _persist = true): void {
   if (!isBrowser()) {
     return;
   }
 
-  if (persist) {
-    localStorage.setItem(ACCESS_TOKEN_KEY, token);
-    sessionStorage.removeItem(ACCESS_TOKEN_KEY);
-    return;
-  }
-
-  sessionStorage.setItem(ACCESS_TOKEN_KEY, token);
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.setItem(ACCESS_TOKEN_KEY, token);
+  sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+  localStorage.setItem(SESSION_PERSIST_KEY, '1');
 }
 
-export function setSessionTokens(accessToken: string, refreshToken: string, persist: boolean): void {
+export function setSessionTokens(accessToken: string, refreshToken: string, _persist = true): void {
   if (!isBrowser()) {
     return;
   }
 
-  const targetStorage = persist ? localStorage : sessionStorage;
-  const sourceStorage = persist ? sessionStorage : localStorage;
+  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+  localStorage.setItem(SESSION_PERSIST_KEY, '1');
 
-  targetStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-  targetStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
-
-  sourceStorage.removeItem(ACCESS_TOKEN_KEY);
-  sourceStorage.removeItem(REFRESH_TOKEN_KEY);
-  sourceStorage.removeItem(EFFECTIVE_PERMISSION_KEYS);
-  sourceStorage.removeItem(DENIED_PERMISSION_KEYS);
-
-  if (persist) {
-    localStorage.setItem(SESSION_PERSIST_KEY, '1');
-  } else {
-    localStorage.removeItem(SESSION_PERSIST_KEY);
-  }
+  sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+  sessionStorage.removeItem(REFRESH_TOKEN_KEY);
+  sessionStorage.removeItem(EFFECTIVE_PERMISSION_KEYS);
+  sessionStorage.removeItem(DENIED_PERMISSION_KEYS);
 }
 
 export function getStoredEffectivePermissionKeys(): string[] {
@@ -106,10 +125,8 @@ export function setStoredEffectivePermissionKeys(keys: string[], persist: boolea
     .filter((entry) => entry.length > 0)
     .sort((left, right) => left.localeCompare(right));
 
-  const targetStorage = persist ? localStorage : sessionStorage;
-  const sourceStorage = persist ? sessionStorage : localStorage;
-  targetStorage.setItem(EFFECTIVE_PERMISSION_KEYS, JSON.stringify(normalized));
-  sourceStorage.removeItem(EFFECTIVE_PERMISSION_KEYS);
+  localStorage.setItem(EFFECTIVE_PERMISSION_KEYS, JSON.stringify(normalized));
+  sessionStorage.removeItem(EFFECTIVE_PERMISSION_KEYS);
 }
 
 export function getStoredDeniedPermissionKeys(): string[] {
@@ -148,10 +165,8 @@ export function setStoredDeniedPermissionKeys(keys: string[], persist: boolean):
     .filter((entry) => entry.length > 0)
     .sort((left, right) => left.localeCompare(right));
 
-  const targetStorage = persist ? localStorage : sessionStorage;
-  const sourceStorage = persist ? sessionStorage : localStorage;
-  targetStorage.setItem(DENIED_PERMISSION_KEYS, JSON.stringify(normalized));
-  sourceStorage.removeItem(DENIED_PERMISSION_KEYS);
+  localStorage.setItem(DENIED_PERMISSION_KEYS, JSON.stringify(normalized));
+  sessionStorage.removeItem(DENIED_PERMISSION_KEYS);
 }
 
 export function clearStoredEffectivePermissionKeys(): void {

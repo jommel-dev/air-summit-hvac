@@ -4,10 +4,12 @@ import { ConfigService } from '@nestjs/config';
 import { LoginService } from './login.service';
 import { LoginController } from './login.controller';
 import { DatabaseModule } from 'src/database/database.module';
+import { AuditLogModule } from 'src/audit-log/audit-log.module';
 
 @Module({
   imports: [
     DatabaseModule,
+    AuditLogModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({

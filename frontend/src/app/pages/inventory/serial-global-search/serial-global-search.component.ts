@@ -1,8 +1,11 @@
-import { Component, signal, computed, OnInit } from '@angular/core';
+import { Component, signal, computed, OnInit, ViewChild, ElementRef, DestroyRef } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
 import { apiClient } from '../../../shared/services/api-client';
 import { NotificationService } from '../../../shared/services/notification.service';
+import { PageBreadcrumbComponent } from '../../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 
 export interface GlobalSearchResult {
   id: number;
@@ -91,15 +94,26 @@ export interface ProductCapacity {
 @Component({
   selector: 'app-serial-global-search',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, PageBreadcrumbComponent],
   templateUrl: './serial-global-search.component.html',
 })
 export class SerialGlobalSearchComponent implements OnInit {
   private readonly notificationService: NotificationService;
+  private readonly route: ActivatedRoute;
+  private readonly destroyRef: DestroyRef;
+
+  @ViewChild('csvInput') csvInput?: ElementRef<HTMLInputElement>;
+
+  searchMode = signal<'quick' | 'bulk'>('quick');
 
   // Search state
   searchQuery = signal<string>('');
+  bulkText = signal<string>('');
+  csvFileName = signal<string>('');
   results = signal<GlobalSearchResult[]>([]);
+  notFoundSerials = signal<string[]>([]);
+  queriedCount = signal<number>(0);
+  hasSearched = signal<boolean>(false);
   totalResults = signal<number>(0);
   currentPage = signal<number>(1);
   pageSize = signal<number>(20);
@@ -170,12 +184,61 @@ export class SerialGlobalSearchComponent implements OnInit {
   // Computed: selected count
   selectedCount = computed(() => this.selectedIds().size);
 
-  constructor(notificationService: NotificationService) {
+  parsedBulkSerials = computed(() => this.parseSerialsFromText(this.bulkText()));
+
+  bulkSerialCount = computed(() => this.parsedBulkSerials().length);
+
+  defectiveCount = computed(() => this.results().filter((row) => row.isDefective).length);
+
+  returnedCount = computed(() => this.results().filter((row) => row.isReturned).length);
+
+  inStockCount = computed(() =>
+    this.results().filter((row) => (row.status ?? '').toLowerCase() === 'in-stock').length,
+  );
+
+  constructor(
+    notificationService: NotificationService,
+    route: ActivatedRoute,
+    destroyRef: DestroyRef,
+  ) {
     this.notificationService = notificationService;
+    this.route = route;
+    this.destroyRef = destroyRef;
   }
 
   ngOnInit(): void {
-    // No initial load needed - user triggers search
+    this.route.queryParamMap.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((params) => {
+      const query = (params.get('q') ?? '').trim();
+      const mode = (params.get('mode') ?? '').trim().toLowerCase();
+      const isBulk = mode === 'bulk' || this.looksLikeBulkQuery(query);
+
+      if (isBulk) {
+        this.searchMode.set('bulk');
+        if (query) {
+          this.bulkText.set(query.replace(/,/g, '\n'));
+          void this.onBulkSearch();
+        }
+        return;
+      }
+
+      if (query) {
+        this.searchMode.set('quick');
+        this.searchQuery.set(query);
+        void this.onSearch();
+      }
+    });
+  }
+
+  setSearchMode(mode: 'quick' | 'bulk'): void {
+    if (this.searchMode() === mode) {
+      return;
+    }
+    this.searchMode.set(mode);
+    this.searchValidationError.set('');
+  }
+
+  looksLikeBulkQuery(query: string): boolean {
+    return /[,;\n\t]/.test(query);
   }
 
   async onSearch(): Promise<void> {
@@ -191,11 +254,138 @@ export class SerialGlobalSearchComponent implements OnInit {
     this.selectedIds.set(new Set());
     this.detailSerial.set(null);
     this.eventHistory.set([]);
+    this.notFoundSerials.set([]);
+    this.queriedCount.set(0);
 
     await this.fetchResults();
   }
 
+  async onBulkSearch(): Promise<void> {
+    const serials = this.parsedBulkSerials();
+
+    if (serials.length === 0) {
+      this.searchValidationError.set('Add at least one serial number, or upload a CSV file.');
+      return;
+    }
+
+    if (serials.length > 5000) {
+      this.searchValidationError.set('Maximum 5000 serial numbers per bulk search.');
+      return;
+    }
+
+    this.searchValidationError.set('');
+    this.currentPage.set(1);
+    this.selectedIds.set(new Set());
+    this.detailSerial.set(null);
+    this.eventHistory.set([]);
+    this.hasSearched.set(true);
+    this.isLoading.set(true);
+
+    try {
+      const response = await apiClient.post<{
+        success: boolean;
+        items?: GlobalSearchResult[];
+        total?: number;
+        queriedCount?: number;
+        notFound?: string[];
+        message?: string;
+      }>('/serial-number/bulk-search', {
+        serialNumbers: serials,
+      });
+
+      if (response.data.success) {
+        this.results.set(response.data.items ?? []);
+        this.totalResults.set(response.data.total ?? response.data.items?.length ?? 0);
+        this.queriedCount.set(response.data.queriedCount ?? serials.length);
+        this.notFoundSerials.set(response.data.notFound ?? []);
+      } else {
+        this.results.set([]);
+        this.totalResults.set(0);
+        this.queriedCount.set(serials.length);
+        this.notFoundSerials.set([]);
+        this.notificationService.error(
+          'Search Failed',
+          response.data.message ?? 'Failed to search serial numbers.',
+        );
+      }
+    } catch (err: any) {
+      this.notificationService.error(
+        'Search Error',
+        err?.response?.data?.message ?? 'Failed to search serial numbers.',
+      );
+      this.results.set([]);
+      this.totalResults.set(0);
+      this.queriedCount.set(0);
+      this.notFoundSerials.set([]);
+    } finally {
+      this.isLoading.set(false);
+    }
+  }
+
+  downloadCsvTemplate(): void {
+    const bom = '\uFEFF';
+    const content = `${bom}serialNumber\nSN-000001\nSN-000002\n`;
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'serial_bulk_search_template.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  triggerCsvUpload(): void {
+    this.csvInput?.nativeElement.click();
+  }
+
+  async onCsvFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement | null;
+    const file = input?.files?.[0] ?? null;
+
+    if (input) {
+      input.value = '';
+    }
+
+    if (!file) {
+      return;
+    }
+
+    const maxSizeBytes = 10 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      this.searchValidationError.set('File too large. Maximum file size is 10MB.');
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const serials = this.parseSerialsFromText(text);
+      if (serials.length === 0) {
+        this.searchValidationError.set('No serial numbers found in the CSV file.');
+        this.csvFileName.set('');
+        return;
+      }
+
+      this.csvFileName.set(file.name);
+      this.bulkText.set(serials.join('\n'));
+      this.searchValidationError.set('');
+      this.notificationService.success(
+        'CSV Loaded',
+        `${serials.length} serial number${serials.length === 1 ? '' : 's'} ready to search.`,
+      );
+    } catch {
+      this.searchValidationError.set('Failed to read the CSV file.');
+      this.csvFileName.set('');
+    }
+  }
+
+  clearBulkInput(): void {
+    this.bulkText.set('');
+    this.csvFileName.set('');
+    this.searchValidationError.set('');
+  }
+
   async onPageChange(page: number): Promise<void> {
+    if (this.searchMode() === 'bulk') return;
     if (page < 1 || page > this.totalPages()) return;
     this.currentPage.set(page);
     await this.fetchResults();
@@ -490,15 +680,15 @@ export class SerialGlobalSearchComponent implements OnInit {
     const statusLower = (status ?? '').toLowerCase();
     switch (statusLower) {
       case 'in-stock':
-        return 'bg-green-100 text-green-800';
+        return 'bg-green-100 text-green-800 dark:bg-green-500/15 dark:text-green-300';
       case 'reserved':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-500/15 dark:text-yellow-300';
       case 'installed':
-        return 'bg-blue-100 text-blue-800';
+        return 'bg-blue-100 text-blue-800 dark:bg-blue-500/15 dark:text-blue-300';
       case 'delivered':
-        return 'bg-purple-100 text-purple-800';
+        return 'bg-purple-100 text-purple-800 dark:bg-purple-500/15 dark:text-purple-300';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
     }
   }
 
@@ -507,6 +697,7 @@ export class SerialGlobalSearchComponent implements OnInit {
     if (query.length < 2) return;
 
     this.isLoading.set(true);
+    this.hasSearched.set(true);
 
     try {
       const response = await apiClient.get<{
@@ -540,5 +731,88 @@ export class SerialGlobalSearchComponent implements OnInit {
     } finally {
       this.isLoading.set(false);
     }
+  }
+
+  private parseSerialsFromText(text: string): string[] {
+    const cleaned = String(text ?? '').replace(/^\uFEFF/, '').trim();
+    if (!cleaned) {
+      return [];
+    }
+
+    const lines = cleaned
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    if (lines.length === 0) {
+      return [];
+    }
+
+    const firstCells = this.splitCsvLine(lines[0]);
+    const headerIndex = firstCells.findIndex((cell) =>
+      /^(serial\s*number|serial_number|serialnumber|serial)$/i.test(cell.trim()),
+    );
+
+    const values: string[] = [];
+    if (headerIndex >= 0) {
+      for (const line of lines.slice(1)) {
+        const cells = this.splitCsvLine(line);
+        const value = (cells[headerIndex] ?? '').trim().replace(/^["']|["']$/g, '');
+        if (value) {
+          values.push(value);
+        }
+      }
+    } else {
+      for (const line of lines) {
+        const parts = line
+          .split(/[,;\t]+/)
+          .map((part) => part.trim().replace(/^["']|["']$/g, ''))
+          .filter((part) => part.length > 0);
+        values.push(...parts);
+      }
+    }
+
+    const seen = new Set<string>();
+    const unique: string[] = [];
+    for (const value of values) {
+      const key = value.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      unique.push(value);
+    }
+
+    return unique;
+  }
+
+  private splitCsvLine(line: string): string[] {
+    const cells: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index];
+      if (char === '"') {
+        if (inQuotes && line[index + 1] === '"') {
+          current += '"';
+          index += 1;
+        } else {
+          inQuotes = !inQuotes;
+        }
+        continue;
+      }
+
+      if (char === ',' && !inQuotes) {
+        cells.push(current);
+        current = '';
+        continue;
+      }
+
+      current += char;
+    }
+
+    cells.push(current);
+    return cells.map((cell) => cell.trim());
   }
 }

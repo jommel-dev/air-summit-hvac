@@ -19,10 +19,12 @@ export interface PurchaseOrderItem {
     product?: {
       id: string | number | null;
       productName: string | null;
+      isDeleted?: boolean;
     } | null;
     capacity?: {
       id: string | number | null;
       capacity: string | null;
+      isDeleted?: boolean;
     } | null;
   }>;
   isTransferPO?: boolean;
@@ -63,6 +65,10 @@ export interface PurchaseOrderDetailProductItem {
   salesId: number | null;
   status: string;
   serialNumbers: Record<string, string[]>;
+  productName?: string;
+  capacityName?: string;
+  isProductDeleted?: boolean;
+  isCapacityDeleted?: boolean;
 }
 
 export interface PurchaseOrderDetailItem {
@@ -294,6 +300,9 @@ export interface VendorPayload {
 export interface ProductCapacityOption {
   id: number;
   name: string;
+  sellPrice?: number;
+  unitPrice?: number;
+  netPrice?: number;
 }
 
 export interface ProductOption {
@@ -303,6 +312,23 @@ export interface ProductOption {
   unit?: string;
   unitTypes?: string[];
   capacities: ProductCapacityOption[];
+}
+
+export interface PendingCatalogAlertItem {
+  productId: number | null;
+  capacityId: number | null;
+  productName: string;
+  capacityName: string;
+  productDeleted: boolean;
+  capacityDeleted: boolean;
+}
+
+export interface PendingCatalogAlert {
+  orderType: 'sales' | 'purchase';
+  id: number;
+  orderNumber: string;
+  status: string;
+  items: PendingCatalogAlertItem[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -456,7 +482,37 @@ export class PurchaseOrderService {
 
   async getProducts(): Promise<ProductOption[]> {
     const response = await apiClient.get<{ success: boolean; items?: ProductOption[] }>('/products');
-    return response.data.items ?? [];
+    const items = response.data.items ?? [];
+    return items.map((product) => ({
+      ...product,
+      capacities: this.normalizeProductCapacities(product.capacities),
+    }));
+  }
+
+  private normalizeProductCapacities(capacities: unknown): ProductCapacityOption[] {
+    const parsed =
+      typeof capacities === 'string'
+        ? (JSON.parse(capacities) as unknown)
+        : capacities;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.map((capacity: ProductCapacityOption & { net_price?: number; srp?: number }) => ({
+      ...capacity,
+      id: Number(capacity.id),
+      name: String(capacity.name ?? ''),
+      unitPrice: Number(capacity.unitPrice ?? capacity.netPrice ?? capacity.net_price ?? 0) || 0,
+      sellPrice: Number(capacity.sellPrice ?? capacity.srp ?? 0) || 0,
+    }));
+  }
+
+  async getPendingCatalogAlerts(): Promise<PendingCatalogAlert[]> {
+    const response = await apiClient.get<{
+      success: boolean;
+      purchaseOrders?: PendingCatalogAlert[];
+    }>('/products/pending-catalog-alerts');
+    return response.data.purchaseOrders ?? [];
   }
 
   async scanPurchaseSerial(payload: {

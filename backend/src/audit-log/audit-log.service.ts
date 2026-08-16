@@ -96,17 +96,68 @@ export class AuditLogService {
     }
   }
 
-  async findAll(
-    query: {
-      page?: unknown;
-      limit?: unknown;
-      search?: unknown;
-      action?: unknown;
-      entityType?: unknown;
-      entityId?: unknown;
-    },
-    branchId?: number,
-  ) {
+  private async resolveSerialScanContext(
+    action: string | null,
+    metadata: Record<string, unknown> | null,
+  ): Promise<{
+    serialNumber: unknown;
+    productName: string | null;
+    capacity: string | null;
+    brand: string | null;
+  }> {
+    const serialNumber = metadata?.serialNumber ?? null;
+    if (action !== 'SERIAL_SCAN_SUCCESS' && action !== 'SERIAL_SCAN_FAILURE') {
+      return { serialNumber, productName: null, capacity: null, brand: null };
+    }
+
+    const productId = metadata?.expectedProductId ?? metadata?.productId;
+    if (productId == null || String(productId).trim() === '') {
+      return { serialNumber, productName: null, capacity: null, brand: null };
+    }
+
+    try {
+      const product = await this.databaseService.query<{
+        productName: string | null;
+        capacity: string | null;
+        brandName: string | null;
+      }>(
+        `SELECT
+           COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name') AS "productName",
+           COALESCE(to_jsonb(c)->>'capacity', '') AS capacity,
+           COALESCE(to_jsonb(b)->>'brandName', to_jsonb(b)->>'brand_name', to_jsonb(b)->>'name') AS "brandName"
+         FROM tblproducts p
+         LEFT JOIN tblcapacity c
+           ON COALESCE(to_jsonb(c)->>'prodId', to_jsonb(c)->>'prod_id') = p.id::text
+         LEFT JOIN tblbrands b
+           ON b.id::text = COALESCE(to_jsonb(p)->>'brandId', to_jsonb(p)->>'brand_id')
+         WHERE p.id::text = $1
+         LIMIT 1`,
+        [String(productId)],
+      );
+
+      return {
+        serialNumber,
+        productName: product.rows[0]?.productName ?? null,
+        capacity: product.rows[0]?.capacity || null,
+        brand: product.rows[0]?.brandName ?? null,
+      };
+    } catch (error) {
+      console.error('[AuditLogService] Failed to resolve serial scan product context', {
+        productId,
+        error: error instanceof Error ? error.message : error,
+      });
+      return { serialNumber, productName: null, capacity: null, brand: null };
+    }
+  }
+
+  async findAll(query: {
+    page?: unknown;
+    limit?: unknown;
+    search?: unknown;
+    action?: unknown;
+    entityType?: unknown;
+    entityId?: unknown;
+  }) {
     const page = this.normalizePage(query.page);
     const limit = this.normalizeLimit(query.limit);
     const offset = (page - 1) * limit;
@@ -121,11 +172,6 @@ export class AuditLogService {
 
     const params: unknown[] = [];
     const whereParts: string[] = [];
-
-    if (branchId) {
-      params.push(branchId);
-      whereParts.push(`al.branch_id = $${params.length}`);
-    }
 
     if (search) {
       params.push(`%${search}%`);
@@ -196,48 +242,28 @@ export class AuditLogService {
     const items = await Promise.all(
       result.rows.map(async (row) => {
         const metadata = this.toPlainMetadata(row.metadata);
-
-        let productName = null;
-        let capacity = null;
-        let brand = null;
-
-        if (row.action === 'SERIAL_SCAN_SUCCESS' || row.action === 'SERIAL_SCAN_FAILURE') {
-          const productId = metadata?.expectedProductId;
-          if (productId) {
-            const product = await this.databaseService.query(
-              `SELECT p."productName", c."capacity", b."brandName"
-              FROM tblproducts p
-              LEFT JOIN tblcapacity c ON c."prodId" = p.id
-              LEFT JOIN tblbrands b ON b.id = p."brandId"
-              WHERE p.id = $1`,
-              [productId]
-            );
-            productName = product.rows[0]?.productName ?? null;
-            capacity = product.rows[0]?.capacityName ?? null;
-            brand = product.rows[0]?.brandName ?? null;
-          }
-        }
+        const serialContext = await this.resolveSerialScanContext(row.action, metadata);
 
         return {
           id: Number(row.id),
-          action: row.action,
-          entityType: row.entityType,
-          entityId: row.entityId,
+          action: String(row.action ?? '').trim(),
+          entityType: String(row.entityType ?? '').trim(),
+          entityId: String(row.entityId ?? '').trim(),
           userId: row.userId ? Number(row.userId) : null,
-          username: row.username,
-          roleName: row.roleName,
+          username: String(row.username ?? '').trim(),
+          roleName: String(row.roleName ?? '').trim(),
           branchId: row.branchId ? Number(row.branchId) : null,
-          ipAddress: row.ipAddress,
-          serialNumber: metadata?.serialNumber ?? null,
-          productName,
-          capacity,
-          brand,
+          ipAddress: String(row.ipAddress ?? '').trim(),
+          description: String(metadata?.description ?? '').trim(),
+          serialNumber: metadata?.serialNumber ?? serialContext.serialNumber,
+          productName: serialContext.productName,
+          capacity: serialContext.capacity,
+          brand: serialContext.brand,
           metadata,
           createdAt: row.createdAt,
         };
-      })
+      }),
     );
-
 
     return {
       success: true,
@@ -249,44 +275,11 @@ export class AuditLogService {
         totalPages: Math.max(1, Math.ceil(total / limit)),
       },
     };
-    // return {
-    //   success: true,
-    //   items: result.rows.map((row) => {
-    //     const metadata = this.toPlainMetadata(row.metadata);
-    //     return {
-    //       id: Number(row.id),
-    //       action: String(row.action ?? '').trim(),
-    //       entityType: String(row.entityType ?? '').trim(),
-    //       entityId: String(row.entityId ?? '').trim(),
-    //       userId: row.userId ? Number(row.userId) : null,
-    //       username: String(row.username ?? '').trim(),
-    //       roleName: String(row.roleName ?? '').trim(),
-    //       branchId: row.branchId ? Number(row.branchId) : null,
-    //       ipAddress: String(row.ipAddress ?? '').trim(),
-    //       description: String(metadata?.description ?? '').trim(),
-    //       metadata,
-    //       createdAt: row.createdAt,
-    //     };
-    //   }),
-    //   meta: {
-    //     page,
-    //     limit,
-    //     total,
-    //     totalPages: Math.max(1, Math.ceil(total / limit)),
-    //   },
-    // };
   }
 
-  async findOne(id: number, branchId?: number) {
+  async findOne(id: number) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid audit log id' };
-    }
-
-    const params: unknown[] = [id];
-    let branchSql = '';
-    if (branchId) {
-      params.push(branchId);
-      branchSql = `AND al.branch_id = $2`;
     }
 
     const result = await this.databaseService.query<AuditLogListRow>(
@@ -304,9 +297,8 @@ export class AuditLogService {
          al.created_at::text AS "createdAt"
        FROM tblaudit_logs al
        WHERE al.id = $1
-       ${branchSql}
        LIMIT 1`,
-      params,
+      [id],
     );
 
     if (result.rowCount === 0) {

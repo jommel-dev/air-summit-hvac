@@ -20,6 +20,8 @@ export interface UserApiItem {
   branchId?: number | null;
   branchid?: number | null;
   branch_id?: number | null;
+  branchName?: string | null;
+  branchname?: string | null;
   status?: number | string | null;
   isDeleted?: boolean | string | number | null;
   is_deleted?: boolean | string | number | null;

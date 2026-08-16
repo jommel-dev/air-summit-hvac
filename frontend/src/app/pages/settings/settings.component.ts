@@ -422,6 +422,7 @@ export class SettingsComponent implements OnInit {
   formatAuditEntityType(value: string | null | undefined): string {
     return String(value ?? '')
       .trim()
+      .replace(/([a-z])([A-Z])/g, '$1 $2')
       .replace(/[_-]+/g, ' ')
       .replace(/\b\w/g, (char) => char.toUpperCase()) || 'Unknown Entity';
   }

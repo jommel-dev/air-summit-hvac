@@ -3,10 +3,15 @@ import { CreateBrandDto } from './dto/create-brand.dto';
 import { UpdateBrandDto } from './dto/update-brand.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import { catalogActiveSql } from 'src/common/utils/catalog-soft-delete';
 
 @Injectable()
 export class BrandsService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   private async getTableColumns(
     executor: { query: PoolClient['query'] },
@@ -36,7 +41,7 @@ export class BrandsService {
     );
   }
 
-  async create(createBrandDto: CreateBrandDto) {
+  async create(createBrandDto: CreateBrandDto, auditActor?: AuditActorContext) {
     const brandName = String(createBrandDto.name ?? '').trim();
     if (!brandName) {
       return {
@@ -75,11 +80,22 @@ export class BrandsService {
       [brandName],
     );
 
+    const brandId = insertResult.rows[0]?.id ?? null;
+    await this.auditLogService.logMutation({
+      action: 'BRAND_CREATE',
+      entityType: 'brand',
+      entityId: brandId,
+      actor: auditActor,
+      description: `Created brand ${brandName}`,
+      requestBody: createBrandDto as unknown as Record<string, unknown>,
+      after: { id: brandId, name: brandName },
+    });
+
     return {
       success: true,
       message: 'Brand created successfully',
       item: {
-        id: insertResult.rows[0]?.id ?? null,
+        id: brandId,
         name: brandName,
       },
     };
@@ -161,7 +177,11 @@ export class BrandsService {
     };
   }
 
-  async update(id: number, updateBrandDto: UpdateBrandDto) {
+  async update(
+    id: number,
+    updateBrandDto: UpdateBrandDto,
+    auditActor?: AuditActorContext,
+  ) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid brand id' };
     }
@@ -212,6 +232,16 @@ export class BrandsService {
       return { success: false, message: `Brand ${id} not found` };
     }
 
+    await this.auditLogService.logMutation({
+      action: 'BRAND_UPDATE',
+      entityType: 'brand',
+      entityId: id,
+      actor: auditActor,
+      description: `Updated brand ${brandName}`,
+      requestBody: updateBrandDto as unknown as Record<string, unknown>,
+      after: { id, name: brandName },
+    });
+
     return {
       success: true,
       message: 'Brand updated successfully',
@@ -235,6 +265,7 @@ export class BrandsService {
          to_jsonb(p)->>'brand_id',
          to_jsonb(p)->>'brandid'
        ) = $1::text
+         AND ${catalogActiveSql('p')}
        LIMIT 1`,
       [String(id)],
     );

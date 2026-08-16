@@ -4,6 +4,7 @@ import { Component, HostListener, OnDestroy, OnInit, ViewChild } from '@angular/
 import { FormsModule } from '@angular/forms';
 import { DatePickerComponent } from '../../shared/components/form/date-picker/date-picker.component';
 import { ActivatedRoute } from '@angular/router';
+import { Subscription, skip } from 'rxjs';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { PageBreadcrumbComponent } from '../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 import {
@@ -22,6 +23,7 @@ import {
   SalesOrderExpenseDetailsPayload,
   SalesReturnSerialOptionGroup,
   SalesOrderService,
+  PendingCatalogAlert,
 } from '../../shared/services/sales-order.service';
 import { MaterialTransactionItem } from '../../shared/services/sales-order-material.service';
 import axios from 'axios';
@@ -96,6 +98,10 @@ interface SalesProductFormItem {
   discountPrice: number | string;
   unitTypes: SalesUnitTypeFormItem[];
   totalSetQty: number;
+  isProductDeleted?: boolean;
+  isCapacityDeleted?: boolean;
+  deletedProductName?: string;
+  deletedCapacityName?: string;
 }
 
 interface SalesServiceFormItem {
@@ -237,6 +243,7 @@ export class SalesOrderComponent {
   }
   private readonly searchDebounceMs = 300;
   private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private queryParamsSub: Subscription | null = null;
   private customerDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly serialScanDebounceMs = 120;
   private readonly serialBatchSize = 50;
@@ -578,11 +585,13 @@ export class SalesOrderComponent {
   migrationEditedPayloadByRow: Record<number, SalesOrderPayload> = {};
   isSubmitting = false;
   isRemitting = false;
+  isCompletingProject = false;
   isSendingForDelivery = false;
   customerOptions: SalesCustomerOption[] = [];
   customerSearch = '';
   isCustomerDropdownOpen = false;
   catalogProducts: ProductOption[] = [];
+  pendingCatalogAlerts: PendingCatalogAlert[] = [];
   productSearchQuery = '';
   isProductDropdownOpen = false;
   serviceNameSearchQuery = '';
@@ -685,6 +694,13 @@ export class SalesOrderComponent {
       this.activeTab = requestedTab;
     }
 
+    const searchFromQuery = (this.route.snapshot.queryParamMap.get('search') ?? '').trim();
+    if (searchFromQuery) {
+      this.search = searchFromQuery;
+      this.page = 1;
+      this.pageInput = 1;
+    }
+
     void this.loadTabData(this.activeTab);
     void this.loadReferenceData();
     void this.loadCustomerOptions();
@@ -699,9 +715,35 @@ export class SalesOrderComponent {
     if (Number.isInteger(editId) && editId > 0) {
       void this.openEditDrawerById(editId);
     }
+
+    const viewId = Number(this.route.snapshot.queryParamMap.get('viewId'));
+    if (Number.isInteger(viewId) && viewId > 0) {
+      void this.openViewDrawerById(viewId);
+    }
+
+    this.queryParamsSub = this.route.queryParamMap.pipe(skip(1)).subscribe((params) => {
+      const incomingSearch = (params.get('search') ?? '').trim();
+      if (params.has('search') && incomingSearch !== this.search) {
+        this.search = incomingSearch;
+        this.page = 1;
+        this.pageInput = 1;
+        void this.loadTabData(this.activeTab);
+      }
+
+      const incomingViewId = Number(params.get('viewId'));
+      if (Number.isInteger(incomingViewId) && incomingViewId > 0) {
+        void this.openViewDrawerById(incomingViewId);
+      }
+
+      const incomingEditId = Number(params.get('editId'));
+      if (Number.isInteger(incomingEditId) && incomingEditId > 0) {
+        void this.openEditDrawerById(incomingEditId);
+      }
+    });
   }
 
   ngOnDestroy(): void {
+    this.queryParamsSub?.unsubscribe();
     if (this.searchDebounceTimer) {
       clearTimeout(this.searchDebounceTimer);
       this.searchDebounceTimer = null;
@@ -1165,7 +1207,7 @@ export class SalesOrderComponent {
       { key: 'schedules', label: 'Schedules' },
       { key: 'sub-dealers', label: 'Sub Dealers' },
       { key: 'services', label: 'Services' },
-      { key: 'projects', label: 'Projects' },
+      { key: 'projects', label: 'Project Orders' },
       { key: 'distribution', label: 'Distribution' },
       { key: 'sales-receivable', label: 'Sales Receivable' },
       { key: 'remitted-sales', label: 'Remitted Sales' },
@@ -1435,13 +1477,28 @@ export class SalesOrderComponent {
         return;
       }
 
-      // Update form with selected project
+      // Update form with selected project and inherit customer from project master
       this.form.projectId = project.id;
       this.form.projectCode = project.projectCode;
       this.form.projectName = project.projectName;
       this.selectedProjectDetails = projectDetails;
       this.projectSearchResults = [];
       this.projectSearchInput = '';
+
+      const inheritedCustomerId = String(
+        projectDetails.customerId ?? project.customerId ?? '',
+      ).trim();
+      if (inheritedCustomerId) {
+        this.customerMode = 'existing';
+        this.form.customer_id = inheritedCustomerId;
+        this.customerSearch = projectDetails.customerName || '';
+        this.form.customer.name = projectDetails.customerName || '';
+        this.form.customer.contact_person = projectDetails.pocName || '';
+        this.form.customer.contact_number = projectDetails.pocPhone || '';
+        this.form.customer.email = projectDetails.pocEmail || '';
+        // Prefer full customer record when available in options
+        this.selectCustomer(inheritedCustomerId);
+      }
     } catch (error) {
       console.error('Failed to select project:', error);
     }
@@ -1454,6 +1511,10 @@ export class SalesOrderComponent {
     this.selectedProjectDetails = null;
     this.projectSearchInput = '';
     this.projectSearchResults = [];
+    if (this.form.salesType === 'project') {
+      this.form.customer_id = '';
+      this.customerSearch = '';
+    }
   }
 
   getFilteredCustomerOptions(): SalesCustomerOption[] {
@@ -1474,9 +1535,12 @@ export class SalesOrderComponent {
       return;
     }
     const found = this.catalogProducts.find((p) => String(p.id) === String(item.productId));
-    this.productSearchQuery = found
-      ? `${found.name}${found.brandName ? ' (' + found.brandName + ')' : ''}`
-      : '';
+    if (found) {
+      this.productSearchQuery = `${found.name}${found.brandName ? ' (' + found.brandName + ')' : ''}`;
+      return;
+    }
+    const deletedName = String(item.deletedProductName ?? '').trim();
+    this.productSearchQuery = deletedName ? `${deletedName} (deleted)` : '';
   }
 
   onProductSearchFocus(): void {
@@ -1510,6 +1574,10 @@ export class SalesOrderComponent {
     nextItems[index] = {
       ...nextItems[index],
       productId: String(product.id),
+      isProductDeleted: false,
+      isCapacityDeleted: false,
+      deletedProductName: '',
+      deletedCapacityName: '',
     };
     this.form.productItems = nextItems;
     this.productSearchQuery = `${product.name}${product.brandName ? ' (' + product.brandName + ')' : ''}`;
@@ -1525,6 +1593,58 @@ export class SalesOrderComponent {
       const brand = String(p.brandName ?? '').toLowerCase();
       return name.includes(q) || brand.includes(q) || `${name} (${brand})`.includes(q);
     });
+  }
+
+  isProductItemDeleted(item?: SalesProductFormItem | null): boolean {
+    if (!item) {
+      return false;
+    }
+    if (item.isProductDeleted || item.isCapacityDeleted) {
+      return true;
+    }
+    if (!item.productId || this.catalogProducts.length === 0) {
+      return false;
+    }
+    const product = this.catalogProducts.find((entry) => String(entry.id) === String(item.productId));
+    if (!product) {
+      return true;
+    }
+    if (!item.capacityId) {
+      return false;
+    }
+    return !product.capacities.some((capacity) => String(capacity.id) === String(item.capacityId));
+  }
+
+  getProductItemDeletedWarning(item?: SalesProductFormItem | null): string {
+    if (!this.isProductItemDeleted(item) || !item) {
+      return '';
+    }
+    const productName = String(item.deletedProductName ?? '').trim() || `Product #${item.productId}`;
+    const capacityName = String(item.deletedCapacityName ?? '').trim();
+    if (item.isCapacityDeleted && !item.isProductDeleted && capacityName) {
+      return `Capacity "${capacityName}" was deleted. Choose another capacity immediately.`;
+    }
+    return `${productName}${capacityName ? ` (${capacityName})` : ''} was deleted. Choose another product immediately.`;
+  }
+
+  hasDeletedCatalogItems(orderId: number): boolean {
+    return this.pendingCatalogAlerts.some((alert) => alert.id === orderId);
+  }
+
+  get pendingDeletedSalesAlerts(): PendingCatalogAlert[] {
+    return this.pendingCatalogAlerts;
+  }
+
+  async openPendingDeletedSalesOrder(alert: PendingCatalogAlert): Promise<void> {
+    await this.openEditDrawerById(alert.id);
+  }
+
+  private async loadPendingCatalogAlerts(): Promise<void> {
+    try {
+      this.pendingCatalogAlerts = await this.salesOrderService.getPendingCatalogAlerts();
+    } catch {
+      this.pendingCatalogAlerts = [];
+    }
   }
 
   syncServiceNameSearchQuery(): void {
@@ -1617,8 +1737,8 @@ export class SalesOrderComponent {
     }
   }
 
-  closeReturnModal(): void {
-    if (this.isReturnModalLoading || this.returningOrderIds.has(this.pendingReturnOrder?.id ?? -1)) {
+  closeReturnModal(forceClose = false): void {
+    if (!forceClose && (this.isReturnModalLoading || this.returningOrderIds.has(this.pendingReturnOrder?.id ?? -1))) {
       return;
     }
 
@@ -1635,13 +1755,35 @@ export class SalesOrderComponent {
 
   onReturnDefectiveChange(value: boolean): void {
     this.returnForm.isDefective = value;
-    if (!value) {
-      this.selectedReturnedSerialNumbers = new Set<string>();
-    }
   }
 
   isReturnedSerialSelected(serialNumber: string): boolean {
     return this.selectedReturnedSerialNumbers.has(this.normalizeSerial(serialNumber));
+  }
+
+  isReturnProductFullySelected(group: SalesReturnSerialOptionGroup): boolean {
+    return group.serials.length > 0 && group.serials.every((serial) => this.isReturnedSerialSelected(serial));
+  }
+
+  getReturnProductSelectedCount(group: SalesReturnSerialOptionGroup): number {
+    return group.serials.filter((serial) => this.isReturnedSerialSelected(serial)).length;
+  }
+
+  toggleReturnProductSelection(group: SalesReturnSerialOptionGroup, checked: boolean): void {
+    const next = new Set(this.selectedReturnedSerialNumbers);
+    for (const serial of group.serials) {
+      const normalizedSerial = this.normalizeSerial(serial);
+      if (!normalizedSerial) {
+        continue;
+      }
+
+      if (checked) {
+        next.add(normalizedSerial);
+      } else {
+        next.delete(normalizedSerial);
+      }
+    }
+    this.selectedReturnedSerialNumbers = next;
   }
 
   toggleReturnedSerialSelection(serialNumber: string, checked: boolean): void {
@@ -1671,8 +1813,8 @@ export class SalesOrderComponent {
       return;
     }
 
-    if (this.returnForm.isDefective && this.selectedReturnedSerialNumbers.size === 0) {
-      this.returnModalError = 'Select one or more indoor or outdoor serial numbers for defective return.';
+    if (this.selectedReturnedSerialNumbers.size === 0) {
+      this.returnModalError = 'Select at least one product, capacity, and serial number to return.';
       return;
     }
 
@@ -1680,18 +1822,22 @@ export class SalesOrderComponent {
     this.uiError = '';
     this.returnModalError = '';
 
+    const totalReturnableSerials = this.returnSerialGroups.reduce(
+      (sum, group) => sum + group.serials.length,
+      0,
+    );
+    const isPartialReturn = this.selectedReturnedSerialNumbers.size < totalReturnableSerials;
+
     try {
       const response = await this.salesOrderService.updateSalesOrder(order.id, {
         productItems: [],
-        status: 'pending',
+        status: isPartialReturn ? 'for-delivery' : 'pending',
         remarks: `Returned Units: ${remarks}`,
         returnedSerialDetails: {
           isDefective: this.returnForm.isDefective,
           defectReason: this.returnForm.isDefective ? remarks : undefined,
           defectDate: this.returnForm.isDefective ? new Date().toISOString() : null,
-          serialNumbers: this.returnForm.isDefective
-            ? [...this.selectedReturnedSerialNumbers]
-            : undefined,
+          serialNumbers: [...this.selectedReturnedSerialNumbers],
         },
       });
 
@@ -1700,10 +1846,16 @@ export class SalesOrderComponent {
         return;
       }
 
-      this.uiMessage = this.returnForm.isDefective
-        ? 'Returned units were recorded, linked serials were marked defective, and the SO status moved back to Pending.'
-        : 'Returned units has been recorded and status moved back to Pending.';
-      this.closeReturnModal();
+      if (isPartialReturn) {
+        this.uiMessage = this.returnForm.isDefective
+          ? 'Selected units were returned and marked defective. Remaining products stayed as For Delivery.'
+          : 'Selected units were returned and removed from the SO. Remaining products stayed as For Delivery.';
+      } else {
+        this.uiMessage = this.returnForm.isDefective
+          ? 'All selected product items were returned, marked defective, removed from the SO, and status moved back to Pending.'
+          : 'All product items were returned, removed from the SO, and status moved back to Pending.';
+      }
+      this.closeReturnModal(true);
       await this.loadTabData(this.activeTab);
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
@@ -1718,39 +1870,71 @@ export class SalesOrderComponent {
     }
   }
 
+  formatReturnUnitLabel(value: string | null | undefined): string {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) {
+      return 'Unit';
+    }
+
+    return normalized
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .split(' ')
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  }
+
   private buildReturnSerialGroups(detail: SalesOrderDetailItem): SalesReturnSerialOptionGroup[] {
-    const grouped = new Map<string, string[]>();
+    return (detail.productItems ?? [])
+      .map((item, index) => {
+        const unitGroups: SalesReturnSerialOptionGroup['unitGroups'] = [];
+        const allSerials: string[] = [];
+        const seen = new Set<string>();
 
-    for (const item of detail.productItems ?? []) {
-      for (const [unitLabel, serials] of Object.entries(item.serialNumbers ?? {})) {
-        const normalizedUnitLabel = String(unitLabel ?? '').trim();
-        if (!normalizedUnitLabel || !Array.isArray(serials)) {
-          continue;
-        }
-
-        const existing = grouped.get(normalizedUnitLabel) ?? [];
-        const seen = new Set(existing.map((serial) => this.normalizeSerial(serial).toLowerCase()));
-
-        for (const serial of serials) {
-          const normalizedSerial = this.normalizeSerial(serial);
-          const normalizedKey = normalizedSerial.toLowerCase();
-          if (!normalizedSerial || seen.has(normalizedKey)) {
+        for (const [unitLabel, serials] of Object.entries(item.serialNumbers ?? {})) {
+          const normalizedUnitLabel = String(unitLabel ?? '').trim();
+          if (!normalizedUnitLabel || normalizedUnitLabel.toLowerCase() === 'status' || !Array.isArray(serials)) {
             continue;
           }
 
-          seen.add(normalizedKey);
-          existing.push(normalizedSerial);
+          const unitSerials: string[] = [];
+          for (const serial of serials) {
+            const normalizedSerial = this.normalizeSerial(serial);
+            const normalizedKey = normalizedSerial.toLowerCase();
+            if (!normalizedSerial || seen.has(normalizedKey)) {
+              continue;
+            }
+
+            seen.add(normalizedKey);
+            unitSerials.push(normalizedSerial);
+            allSerials.push(normalizedSerial);
+          }
+
+          if (unitSerials.length > 0) {
+            unitGroups.push({ unitLabel: normalizedUnitLabel, serials: unitSerials });
+          }
         }
 
-        if (existing.length > 0) {
-          grouped.set(normalizedUnitLabel, existing);
-        }
-      }
-    }
+        const product = this.catalogProducts.find((entry) => String(entry.id) === String(item.productId));
+        const capacity = product?.capacities?.find((entry) => String(entry.id) === String(item.capacityId));
+        const brand = String(product?.brandName ?? '').trim();
+        const productName = String(product?.name ?? '').trim() || `Product #${item.productId}`;
+        const capacityName = String(capacity?.name ?? '').trim() || `Capacity #${item.capacityId}`;
 
-    return [...grouped.entries()]
-      .map(([unitLabel, serials]) => ({ unitLabel, serials }))
-      .sort((left, right) => left.unitLabel.localeCompare(right.unitLabel));
+        return {
+          key: `${item.id || index}::${item.productId}::${item.capacityId}`,
+          productItemId: Number(item.id) || index,
+          productId: String(item.productId ?? ''),
+          capacityId: String(item.capacityId ?? ''),
+          productLabel: [brand, productName].filter((entry) => entry.length > 0).join(' '),
+          capacityLabel: capacityName,
+          totalSetQty: Number(item.totalSetQty) || 0,
+          unitGroups,
+          serials: allSerials,
+        };
+      })
+      .filter((group) => group.serials.length > 0)
+      .sort((left, right) => left.productLabel.localeCompare(right.productLabel));
   }
 
   canSendForDeliveryFromDrawer(): boolean {
@@ -1760,6 +1944,20 @@ export class SalesOrderComponent {
 
     const normalizedStatus = String(this.form.status ?? '').trim().toLowerCase();
     return !['for-delivery', 'for delivery', 'for_delivery', 'remitted', 'complete', 'completed'].includes(normalizedStatus);
+  }
+
+  canCompleteProjectSalesFromDrawer(): boolean {
+    if (this.drawerMode !== 'edit' || this.isMigrationDrawerMode) {
+      return false;
+    }
+    if (String(this.form.salesType ?? '').trim().toLowerCase() !== 'project') {
+      return false;
+    }
+    const normalizedStatus = String(this.form.status ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_]+/g, '-');
+    return !['complete', 'completed', 'cancelled', 'rejected', 'remitted'].includes(normalizedStatus);
   }
 
   private isServiceOnlySalesType(salesType?: string): boolean {
@@ -1781,6 +1979,15 @@ export class SalesOrderComponent {
       .toLowerCase()
       .replace(/[\s_]/g, '-');
     return !['remitted', 'complete', 'completed', 'cancelled', 'rejected'].includes(normalized);
+  }
+
+  private validateDeletedCatalogItems(): string | null {
+    for (const [index, item] of this.form.productItems.entries()) {
+      if (this.isProductItemDeleted(item)) {
+        return this.getProductItemDeletedWarning(item) || `Product item ${index + 1} uses a deleted product. Choose another product immediately.`;
+      }
+    }
+    return null;
   }
 
   private validateProductSerialRequirements(targetStatus?: string): string | null {
@@ -3699,7 +3906,26 @@ export class SalesOrderComponent {
   }
 
   async openViewDrawer(order: SalesOrderRow): Promise<void> {
-    this.viewDrawerOrder = order;
+    await this.openViewDrawerById(order.id, order);
+  }
+
+  private async openViewDrawerById(orderId: number, fallbackOrder?: SalesOrderRow): Promise<void> {
+    const fallback: SalesOrderRow =
+      fallbackOrder ??
+      {
+        id: orderId,
+        soNumber: '',
+        customerName: '',
+        totalAmount: 0,
+        paymentMethod: '',
+        status: 'pending',
+        salesType: '',
+        scheduleDate: '-',
+        serialCount: 0,
+        createdAt: null,
+      };
+
+    this.viewDrawerOrder = fallback;
     this.isViewDrawerOpen = true;
     this.isViewDrawerLoading = true;
     this.viewDrawerDetail = null;
@@ -3707,10 +3933,21 @@ export class SalesOrderComponent {
 
     try {
       const [detail, miscResponse] = await Promise.all([
-        this.salesOrderService.getSalesOrderById(order.id),
-        apiClient.get<any>(`/sales-order/${order.id}/misc-items`),
+        this.salesOrderService.getSalesOrderById(orderId),
+        apiClient.get<any>(`/sales-order/${orderId}/misc-items`),
       ]);
       this.viewDrawerDetail = detail;
+      this.viewDrawerOrder = {
+        ...fallback,
+        id: detail.id,
+        soNumber: detail.soNumber || fallback.soNumber,
+        customerName: detail.customerName || fallback.customerName,
+        totalAmount: Number(detail.totalAmount) || fallback.totalAmount,
+        status: detail.status || fallback.status,
+        salesType: detail.salesType || fallback.salesType,
+        scheduleDate: detail.scheduleDate || fallback.scheduleDate,
+        installer: detail.installer || fallback.installer,
+      };
       const miscPayload = miscResponse?.data;
       this.viewDrawerMiscItems = Array.isArray(miscPayload)
         ? miscPayload
@@ -3736,13 +3973,40 @@ export class SalesOrderComponent {
 
   viewResolveProductName(productId: string | number): string {
     const product = this.catalogProducts.find(p => String(p.id) === String(productId));
-    return product?.name ?? `Product #${productId}`;
+    if (product?.name) {
+      return product.name;
+    }
+    const formItem = (this.form.productItems as SalesProductFormItem[]).find(
+      (item: SalesProductFormItem) => String(item.productId) === String(productId),
+    );
+    const deletedName = String(formItem?.deletedProductName ?? '').trim();
+    if (deletedName) {
+      return `${deletedName} (deleted)`;
+    }
+    const alertItem = this.pendingCatalogAlerts
+      .flatMap((alert) => alert.items)
+      .find((item) => String(item.productId) === String(productId));
+    if (alertItem?.productName) {
+      return `${alertItem.productName} (deleted)`;
+    }
+    return `Product #${productId}`;
   }
 
   viewResolveCapacityName(productId: string | number, capacityId: string | number): string {
     const product = this.catalogProducts.find(p => String(p.id) === String(productId));
     const capacity = product?.capacities?.find(c => String(c.id) === String(capacityId));
-    return capacity?.name ?? '';
+    if (capacity?.name) {
+      return capacity.name;
+    }
+    const formItem = (this.form.productItems as SalesProductFormItem[]).find(
+      (item: SalesProductFormItem) =>
+        String(item.productId) === String(productId) && String(item.capacityId) === String(capacityId),
+    );
+    const deletedName = String(formItem?.deletedCapacityName ?? '').trim();
+    if (deletedName) {
+      return `${deletedName} (deleted)`;
+    }
+    return '';
   }
 
   viewGetSerialEntries(serialNumbers: Record<string, string[]> | null | undefined): Array<{ label: string; serials: string[] }> {
@@ -3920,45 +4184,6 @@ export class SalesOrderComponent {
       void this.confirmMarkOrderAsReceived();
       this.closeGuardDialog();
       return;
-    }
-
-    if (
-      this.guardDialogMode === 'close-confirm' &&
-      this.drawerMode === 'edit' &&
-      this.editingSalesId &&
-      this.hasUnsavedDrawerChanges()
-    ) {
-      if (this.isSubmitting) {
-        return;
-      }
-
-      this.uiError = '';
-      this.uiMessage = '';
-      this.isSubmitting = true;
-
-      try {
-        const response = await this.persistEditedSalesOrder();
-        if (!response.success) {
-          this.openErrorModal(
-            'Save Error',
-            response.message ?? 'Failed to update sales order before closing',
-          );
-          return;
-        }
-
-        this.uiMessage = response.message ?? 'Sales order updated successfully';
-      } catch (error: unknown) {
-        const errorMessage = axios.isAxiosError(error)
-          ? (error.response?.data as { message?: string } | undefined)?.message ??
-            'Failed to update sales order before closing'
-          : error instanceof Error
-            ? error.message
-            : 'Failed to update sales order before closing';
-        this.openErrorModal('Save Error', errorMessage);
-        return;
-      } finally {
-        this.isSubmitting = false;
-      }
     }
 
     this.closeDrawer(true);
@@ -4161,6 +4386,7 @@ export class SalesOrderComponent {
       this.orders = this.mapListItemsToRows(result.items);
       this.selectedOrderIds.clear();
       this.applyMeta(result.meta);
+      void this.loadPendingCatalogAlerts();
     } catch (error: unknown) {
       console.error('[Tab Debug] loadTabData error:', error);
       if (axios.isAxiosError(error)) {
@@ -4349,9 +4575,7 @@ export class SalesOrderComponent {
       return;
     }
 
-    if (!String(payment.status ?? '').trim()) {
-      payment.status = this.getAutoPaymentStatus(payment.method);
-    }
+    payment.status = this.getAutoPaymentStatus(payment.method);
 
     if (payment.method !== 'Terms' && payment.method !== 'Terms with DP' && payment.method !== 'Installment') {
       payment.terms = '';
@@ -4993,6 +5217,11 @@ export class SalesOrderComponent {
   async saveDesignForm(): Promise<void> {
     this.syncMigrationDrawerQuantitiesFromSerials();
     const salesType = this.form.salesType;
+    const deletedCatalogError = this.validateDeletedCatalogItems();
+    if (deletedCatalogError) {
+      this.uiError = deletedCatalogError;
+      return;
+    }
     const validationError = this.validateProductSerialRequirements();
     if (validationError) {
       this.uiError = validationError;
@@ -5015,6 +5244,11 @@ export class SalesOrderComponent {
       }
     }
 
+    if (salesType === 'project' && !this.form.projectId) {
+      this.uiError = 'Please select an existing project before saving this sales order.';
+      return;
+    }
+
     if (['service', 'sales and service', 'concern'].includes(salesType)) {
       const hasService = (this.form.serviceItems ?? []).some((item: any) =>
         String(item.serviceName ?? '').trim().length > 0 ||
@@ -5035,6 +5269,7 @@ export class SalesOrderComponent {
       }
     }
 
+    this.recalculateTotalAmount();
     const payload = this.buildPayload();
 
     if (this.isMigrationDrawerMode) {
@@ -5100,6 +5335,13 @@ export class SalesOrderComponent {
     if (this.drawerMode !== 'edit' || this.isRemitting || this.isSubmitting) {
       return;
     }
+    if (String(this.form.salesType ?? '').trim().toLowerCase() === 'project') {
+      this.openErrorModal(
+        'Remit Error',
+        'Project orders use Complete Project SO. Payment is handled via Project SOA / Settlement.',
+      );
+      return;
+    }
 
     this.uiError = '';
     this.uiMessage = '';
@@ -5127,6 +5369,56 @@ export class SalesOrderComponent {
       this.openErrorModal('Remit Error', errorMessage);
     } finally {
       this.isRemitting = false;
+    }
+  }
+
+  async completeProjectSales(): Promise<void> {
+    if (
+      this.drawerMode !== 'edit' ||
+      !this.editingSalesId ||
+      this.isCompletingProject ||
+      this.isSubmitting ||
+      this.isRemitting
+    ) {
+      return;
+    }
+    if (!this.canCompleteProjectSalesFromDrawer()) {
+      return;
+    }
+
+    this.uiError = '';
+    this.uiMessage = '';
+    this.isCompletingProject = true;
+
+    try {
+      // Persist latest edits first (keep current status), then complete via project path
+      const saved = await this.persistEditedSalesOrder();
+      if (!saved.success) {
+        this.openErrorModal('Complete Error', saved.message ?? 'Failed to save before completing');
+        return;
+      }
+
+      const response = await this.salesOrderService.completeProjectSalesOrder(this.editingSalesId);
+      if (!response.success) {
+        this.openErrorModal('Complete Error', response.message ?? 'Failed to complete project sales order');
+        return;
+      }
+
+      this.uiMessage =
+        response.message ??
+        'Project sales order completed. Not counted in Collected Sales — use Project SOA / Settlement.';
+      this.closeDrawer(true);
+      this.page = 1;
+      await this.loadTabData(this.activeTab);
+    } catch (error: unknown) {
+      let errorMessage = 'Failed to complete project sales order';
+      if (axios.isAxiosError(error)) {
+        errorMessage =
+          (error.response?.data as { message?: string } | undefined)?.message ?? errorMessage;
+      }
+      this.openErrorModal('Complete Error', errorMessage);
+    } finally {
+      this.isCompletingProject = false;
     }
   }
 
@@ -5217,7 +5509,8 @@ export class SalesOrderComponent {
       return { success: false, message: 'Invalid sales order id for update' };
     }
 
-    const payload = this.buildPayload();
+    this.recalculateTotalAmount();
+    const payload = this.buildPayload(targetStatus);
     if (targetStatus) {
       payload.status = targetStatus;
     }
@@ -5231,7 +5524,7 @@ export class SalesOrderComponent {
     return response;
   }
 
-  private buildPayload(): SalesOrderPayload {
+  private buildPayload(targetStatus?: string): SalesOrderPayload {
     const customerType = this.form.salesType === 'sub-dealer' ? 'sub_dealer' : 'regular';
     const normalizedCustomerName = String(this.form.customer.name ?? '').trim();
     const customerPayload: any = {
@@ -5315,22 +5608,26 @@ export class SalesOrderComponent {
         Number(item.amount) > 0 ||
         String(item.expenseDescription ?? '').trim().length > 0,
       ),
-      paymentDetails: this.form.paymentDetails.map((payment: any) => ({
-        method: payment.method || undefined,
-        amount: Number(payment.amount) || 0,
-        terms: payment.terms || undefined,
-        termsDueDate: payment.termsDueDate || null,
-        status: payment.status || undefined,
-        referenceNo: payment.referenceNo || undefined,
-        paymentDate: payment.paymentDate || null,
-        issuedBy: payment.issuedBy || undefined,
-        ccCharge: payment.ccCharge || undefined,
-        checkNo: payment.checkNo || undefined,
-        bankName: payment.bankName || undefined,
-        bankAccount: payment.bankAccount || undefined,
-        postDated: payment.postDated || undefined,
-        downPayment: Number(payment.downPayment) || 0,
-      })),
+      // Project jobs bill via Project SOA / Settlement — no SO-level payment required
+      paymentDetails:
+        this.form.salesType === 'project'
+          ? []
+          : this.form.paymentDetails.map((payment: any) => ({
+              method: payment.method || undefined,
+              amount: Number(payment.amount) || 0,
+              terms: payment.terms || undefined,
+              termsDueDate: payment.termsDueDate || null,
+              status: this.resolvePersistedPaymentStatus(payment, targetStatus),
+              referenceNo: payment.referenceNo || undefined,
+              paymentDate: payment.paymentDate || null,
+              issuedBy: payment.issuedBy || undefined,
+              ccCharge: payment.ccCharge || undefined,
+              checkNo: payment.checkNo || undefined,
+              bankName: payment.bankName || undefined,
+              bankAccount: payment.bankAccount || undefined,
+              postDated: payment.postDated || undefined,
+              downPayment: Number(payment.downPayment) || 0,
+            })),
       productItems: this.form.productItems
         .filter((item: any) => Boolean(item.productId) && Boolean(item.capacityId))
         .map((item: any) => ({
@@ -5703,6 +6000,10 @@ export class SalesOrderComponent {
       discountPrice: Number(product.discountPrice) || 0,
       unitTypes,
       totalSetQty: resolvedSetQty,
+      isProductDeleted: Boolean(product.isProductDeleted),
+      isCapacityDeleted: Boolean(product.isCapacityDeleted),
+      deletedProductName: String(product.productName ?? '').trim(),
+      deletedCapacityName: String(product.capacityName ?? '').trim(),
     };
   }
 
@@ -5717,7 +6018,7 @@ export class SalesOrderComponent {
             terms: payment.terms ?? '',
             termsDueDate: this.toDateInputValue(payment.termsDueDate),
             autoTermsDueDate: true,
-            status: payment.status ?? 'paid',
+            status: payment.status || this.getAutoPaymentStatus(this.toPaymentMethod(payment.method)),
             isAmountManual: false,
             referenceNo: payment.referenceNo ?? '',
             paymentDate: this.toDateInputValue(payment.paymentDate),
@@ -5841,12 +6142,31 @@ export class SalesOrderComponent {
     }
   }
 
+  isReceivableVerificationMethod(method: SalesPaymentFormItem['method'] | string | undefined): boolean {
+    return method === 'Bank Transfer' || method === 'Cheque' || method === 'Credit Card';
+  }
+
   private getAutoPaymentStatus(method: SalesPaymentFormItem['method']): string {
-    if (method === 'Cash' || method === 'Bank Transfer') {
+    if (method === 'Cash') {
       return 'paid';
     }
 
     return 'unpaid';
+  }
+
+  private resolvePersistedPaymentStatus(
+    payment: SalesPaymentFormItem,
+    targetStatus?: string,
+  ): string | undefined {
+    const normalizedTarget = String(targetStatus ?? '').trim().toLowerCase().replace(/_/g, '-');
+    if (
+      this.isReceivableVerificationMethod(payment.method) &&
+      ['remitted', 'complete', 'completed'].includes(normalizedTarget)
+    ) {
+      return 'unpaid';
+    }
+
+    return payment.status || undefined;
   }
 
   private toPaymentMethod(value: unknown): SalesPaymentFormItem['method'] {
@@ -6602,6 +6922,10 @@ export class SalesOrderComponent {
 
     if (!this.isCreditCardMethod(order.paymentMethod) || percent <= 0) {
       if ((order.paymentCount ?? 0) > 0) {
+        // Partial returns leave the old payment row; list Amount should follow remaining products.
+        if (totalAmount > 0 && paidAmount > totalAmount + 0.009) {
+          return totalAmount;
+        }
         return paidAmount > 0 ? paidAmount : totalAmount;
       }
       return totalAmount;
@@ -6623,12 +6947,16 @@ export class SalesOrderComponent {
         Math.abs(strippedInt * factor - paidAmount) <= 0.02 &&
         strippedInt > totalAmount + 1;
 
-      // Payment already stores post-CC amount on a larger base.
-      if (looksLikePostCc) {
-        return Math.round(paidAmount * 100) / 100;
+      // Stale payment from before a partial return — use remaining SO total + CC.
+      if (looksLikePostCc && totalWithCc > 0) {
+        return totalWithCc;
       }
 
       // Payment still stores pre-CC base (product + service + excess).
+      if (totalAmount > 0 && paidAmount > totalAmount + 0.009) {
+        return totalWithCc > 0 ? totalWithCc : totalAmount;
+      }
+
       return Math.round(paidAmount * factor * 100) / 100;
     }
 
@@ -6692,6 +7020,11 @@ export class SalesOrderComponent {
       );
     }
 
+    const payments = this.viewDrawerDetail?.paymentDetails ?? [];
+    if (payments.length === 1 && baseAmount > 0 && storedAmount > baseAmount + 0.009) {
+      return baseAmount;
+    }
+
     return storedAmount > 0 ? storedAmount : baseAmount;
   }
 
@@ -6708,12 +7041,7 @@ export class SalesOrderComponent {
   }
 
   getViewDisplayTotalAmount(): number {
-    const payments: SalesOrderDetailPayment[] = this.viewDrawerDetail?.paymentDetails ?? [];
-    if (payments.length > 0) {
-      return this.getViewPaymentTotal();
-    }
-
-    return this.getViewBaseTotalAmount();
+    return this.getViewBaseTotalAmount() + this.getViewCcChargeAmount();
   }
 
   getViewAdditionalExcessItems(): Array<{

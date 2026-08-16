@@ -1,6 +1,8 @@
 import { Component, HostListener, OnInit } from '@angular/core';
 import { DecimalPipe, DatePipe } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { apiClient } from '../../../shared/services/api-client';
+import { RbacService } from '../../../shared/services/rbac.service';
 import {
   DashboardActivityItem,
   DashboardKpiCard,
@@ -15,7 +17,7 @@ import {
 
 @Component({
   selector: 'app-ecommerce',
-  imports: [DecimalPipe, DatePipe],
+  imports: [DecimalPipe, DatePipe, FormsModule],
   templateUrl: './ecommerce.component.html',
 })
 export class EcommerceComponent implements OnInit {
@@ -83,6 +85,30 @@ export class EcommerceComponent implements OnInit {
   expandedSalesSummaryMode: DashboardSalesDetailMode | null = null;
   salesSummaryDetailItems: Array<{ id?: string | number; [key: string]: unknown }> = [];
   salesSummaryLoading = false;
+  salesSummaryPage = 1;
+  salesSummaryPageSize = 15;
+  salesSummaryTotal = 0;
+  salesSummaryDateFrom = '';
+  salesSummaryDateTo = '';
+  salesSummaryReceivableStatus: 'pending' | 'verified' | 'all' = 'pending';
+  salesSummaryReceivableAmount = 0;
+  salesSummaryReceivedAmount = 0;
+  salesSummaryOverallAmount = 0;
+  verifyingReceivableId: string | null = null;
+  adjustingReceivableId: string | null = null;
+  adjustmentTarget: {
+    paymentId: string;
+    soNumber: string;
+    customer: string;
+    method: DashboardReceivableVerificationMode;
+    methodLabel: string;
+    amount: string;
+    referenceNo: string;
+  } | null = null;
+  adjustmentRemarks = '';
+  adjustmentPassword = '';
+  adjustmentAuthUsername = '';
+  adjustmentError = '';
   settlementBusy = false;
   settlementError = '';
   settlementTarget: {
@@ -98,7 +124,6 @@ export class EcommerceComponent implements OnInit {
   settlementBankName = '';
   settlementCheckNo = '';
   settlementPostDated = '';
-  verifyingReceivableId: string | null = null;
 
   // Operations Control Modal
   expandedOperationMode: DashboardOperationDetailMode | null = null;
@@ -117,7 +142,10 @@ export class EcommerceComponent implements OnInit {
   feedbackItems: Array<{ id: number; rating: number; wouldRecommend: boolean; insights: string | null; name: string | null; createdAt: string }> = [];
   feedbackLoading = false;
 
-  constructor(private readonly dashboardService: DashboardService) {}
+  constructor(
+    private readonly dashboardService: DashboardService,
+    private readonly rbacService: RbacService,
+  ) {}
 
   ngOnInit(): void {
     void this.loadDashboardOverview();
@@ -213,6 +241,10 @@ export class EcommerceComponent implements OnInit {
     this.closeOperationDetail();
     this.closeSettlementModal();
     this.expandedSalesSummaryMode = mode;
+    this.salesSummaryPage = 1;
+    this.salesSummaryDateFrom = '';
+    this.salesSummaryDateTo = '';
+    this.salesSummaryReceivableStatus = 'pending';
     this.salesSummaryLoading = true;
     void this.fetchSalesSummaryDetail(mode);
   }
@@ -221,7 +253,68 @@ export class EcommerceComponent implements OnInit {
     this.expandedSalesSummaryMode = null;
     this.salesSummaryDetailItems = [];
     this.salesSummaryLoading = false;
+    this.salesSummaryPage = 1;
+    this.salesSummaryTotal = 0;
+    this.salesSummaryDateFrom = '';
+    this.salesSummaryDateTo = '';
+    this.salesSummaryReceivableStatus = 'pending';
+    this.salesSummaryReceivableAmount = 0;
+    this.salesSummaryReceivedAmount = 0;
+    this.salesSummaryOverallAmount = 0;
+    this.closeAdjustmentModal();
     this.closeSettlementModal();
+  }
+
+  get salesSummaryTotalPages(): number {
+    return Math.max(1, Math.ceil(this.salesSummaryTotal / this.salesSummaryPageSize));
+  }
+
+  get salesSummaryRangeStart(): number {
+    if (this.salesSummaryTotal <= 0) {
+      return 0;
+    }
+    return (this.salesSummaryPage - 1) * this.salesSummaryPageSize + 1;
+  }
+
+  get salesSummaryRangeEnd(): number {
+    return Math.min(this.salesSummaryPage * this.salesSummaryPageSize, this.salesSummaryTotal);
+  }
+
+  onSalesSummaryDateFilterChange(): void {
+    this.salesSummaryPage = 1;
+    void this.reloadSalesSummaryDetail();
+  }
+
+  clearSalesSummaryDateFilter(): void {
+    if (!this.salesSummaryDateFrom && !this.salesSummaryDateTo) {
+      return;
+    }
+    this.salesSummaryDateFrom = '';
+    this.salesSummaryDateTo = '';
+    this.salesSummaryPage = 1;
+    void this.reloadSalesSummaryDetail();
+  }
+
+  onSalesSummaryReceivableStatusChange(): void {
+    this.salesSummaryPage = 1;
+    void this.reloadSalesSummaryDetail();
+  }
+
+  goToSalesSummaryPage(page: number): void {
+    const nextPage = Math.min(this.salesSummaryTotalPages, Math.max(1, Math.floor(page)));
+    if (nextPage === this.salesSummaryPage) {
+      return;
+    }
+    this.salesSummaryPage = nextPage;
+    void this.reloadSalesSummaryDetail();
+  }
+
+  private reloadSalesSummaryDetail(): void {
+    if (!this.expandedSalesSummaryMode) {
+      return;
+    }
+    this.salesSummaryLoading = true;
+    void this.fetchSalesSummaryDetail(this.expandedSalesSummaryMode);
   }
 
   openOperationDetail(mode: DashboardOperationDetailMode): void {
@@ -239,6 +332,11 @@ export class EcommerceComponent implements OnInit {
 
   @HostListener('document:keydown.escape')
   onEscape(): void {
+    if (this.adjustmentTarget) {
+      this.closeAdjustmentModal();
+      return;
+    }
+
     if (this.expandedSalesSummaryMode) {
       this.closeSalesSummaryDetail();
       return;
@@ -283,6 +381,51 @@ export class EcommerceComponent implements OnInit {
     });
   }
 
+  formatDueCountdown(value: unknown, mode: 'unpaid' | 'overdues'): string {
+    if (value == null || value === '') {
+      return '-';
+    }
+
+    const days = Number(value);
+    if (!Number.isFinite(days)) {
+      return '-';
+    }
+
+    if (mode === 'overdues') {
+      const overdueDays = Math.max(Math.abs(days), 1);
+      return overdueDays === 1 ? '1 day overdue' : `${overdueDays} days overdue`;
+    }
+
+    if (days === 0) {
+      return 'Due today';
+    }
+
+    return days === 1 ? '1 day remaining' : `${days} days remaining`;
+  }
+
+  getDueCountdownClass(value: unknown): string {
+    const baseClass = 'px-4 py-3 text-sm font-semibold';
+
+    if (value == null || value === '') {
+      return `${baseClass} text-gray-500 dark:text-gray-400`;
+    }
+
+    const days = Number(value);
+    if (!Number.isFinite(days)) {
+      return `${baseClass} text-gray-500 dark:text-gray-400`;
+    }
+
+    if (days < 0) {
+      return `${baseClass} text-error-600 dark:text-error-400`;
+    }
+
+    if (days === 0 || days <= 7) {
+      return `${baseClass} text-warning-600 dark:text-warning-400`;
+    }
+
+    return `${baseClass} text-success-600 dark:text-success-400`;
+  }
+
   formatTextValue(value: unknown, fallback = '-'): string {
     const text = String(value ?? '').trim();
     return text.length > 0 ? text : fallback;
@@ -291,7 +434,7 @@ export class EcommerceComponent implements OnInit {
   getSalesStatusClass(status: unknown): string {
     const normalized = String(status ?? '').trim().toLowerCase();
 
-    if (['paid', 'posted', 'cleared', 'approved', 'delivered', 'released', 'remitted'].includes(normalized)) {
+    if (['paid', 'posted', 'cleared', 'approved', 'delivered', 'released', 'remitted', 'verified'].includes(normalized)) {
       return 'bg-success-50 text-success-700 dark:bg-success-500/15 dark:text-success-400';
     }
 
@@ -484,7 +627,12 @@ export class EcommerceComponent implements OnInit {
     }
 
     const methodText = String(item['method'] ?? '').trim().toLowerCase();
-    const method: DashboardReceivableVerificationMode = methodText === 'credit card' ? 'credit-card' : 'cheque';
+    const method: DashboardReceivableVerificationMode =
+      methodText === 'credit card'
+        ? 'credit-card'
+        : methodText === 'bank transfer'
+          ? 'bank-transfer'
+          : 'cheque';
     this.verifyingReceivableId = paymentId;
 
     try {
@@ -502,7 +650,119 @@ export class EcommerceComponent implements OnInit {
     }
   }
 
+  get requiresAdminCredentialsForAdjustment(): boolean {
+    const roleName = String(this.rbacService.getPayload()?.roleName ?? '')
+      .trim()
+      .toLowerCase();
+    return (
+      !roleName.includes('admin') &&
+      !roleName.includes('super') &&
+      !roleName.includes('owner')
+    );
+  }
+
+  openAdjustmentModal(item: { [key: string]: unknown }): void {
+    if (!this.isReceivableAlreadyVerified(item) || this.adjustingReceivableId) {
+      return;
+    }
+
+    const paymentId = String(item['paymentId'] ?? '').trim();
+    if (!paymentId) {
+      return;
+    }
+
+    const methodText = String(item['method'] ?? '').trim().toLowerCase();
+    const method: DashboardReceivableVerificationMode =
+      methodText === 'credit card'
+        ? 'credit-card'
+        : methodText === 'bank transfer'
+          ? 'bank-transfer'
+          : 'cheque';
+
+    this.adjustmentTarget = {
+      paymentId,
+      soNumber: this.formatTextValue(item['soNumber']),
+      customer: this.formatTextValue(item['customer']),
+      method,
+      methodLabel: this.formatTextValue(item['method']),
+      amount: this.formatCurrencyValue(item['amount']),
+      referenceNo: this.formatTextValue(item['referenceNo']),
+    };
+    this.adjustmentRemarks = '';
+    this.adjustmentPassword = '';
+    this.adjustmentAuthUsername = '';
+    this.adjustmentError = '';
+  }
+
+  closeAdjustmentModal(): void {
+    if (this.adjustingReceivableId) {
+      return;
+    }
+
+    this.adjustmentTarget = null;
+    this.adjustmentRemarks = '';
+    this.adjustmentPassword = '';
+    this.adjustmentAuthUsername = '';
+    this.adjustmentError = '';
+  }
+
+  async confirmAdjustment(): Promise<void> {
+    const target = this.adjustmentTarget;
+    if (!target || this.adjustingReceivableId) {
+      return;
+    }
+
+    const remarks = this.adjustmentRemarks.trim();
+    const password = this.adjustmentPassword.trim();
+    const authUsername = this.adjustmentAuthUsername.trim();
+
+    if (remarks.length < 5) {
+      this.adjustmentError = 'Please enter remarks explaining why this payment should be adjusted.';
+      return;
+    }
+
+    if (this.requiresAdminCredentialsForAdjustment) {
+      if (!authUsername || !password) {
+        this.adjustmentError = 'Admin username and password are required to authorize this adjustment.';
+        return;
+      }
+    } else if (!password) {
+      this.adjustmentError = 'Your password is required to adjust this receivable.';
+      return;
+    }
+
+    this.adjustmentError = '';
+    this.adjustingReceivableId = target.paymentId;
+
+    try {
+      await this.dashboardService.adjustReceivable({
+        paymentId: target.paymentId as unknown as number,
+        method: target.method,
+        password,
+        remarks,
+        ...(this.requiresAdminCredentialsForAdjustment ? { authUsername } : {}),
+      });
+
+      this.adjustingReceivableId = null;
+      this.closeAdjustmentModal();
+
+      const currentMode = this.expandedSalesSummaryMode;
+      await this.loadDashboardOverview();
+      if (currentMode) {
+        this.salesSummaryLoading = true;
+        await this.fetchSalesSummaryDetail(currentMode);
+      }
+    } catch (error: unknown) {
+      this.adjustmentError = error instanceof Error ? error.message : 'Unable to adjust receivable.';
+      this.adjustingReceivableId = null;
+    }
+  }
+
   canVerifyReceivable(item: { [key: string]: unknown }): boolean {
+    if (this.isReceivableAlreadyVerified(item)) {
+      return false;
+    }
+
     const methodText = String(item['method'] ?? '').trim().toLowerCase();
     if (methodText !== 'cheque') {
       return true;
@@ -528,7 +788,16 @@ export class EcommerceComponent implements OnInit {
     return postDatedLocal <= today;
   }
 
+  isReceivableAlreadyVerified(item: { [key: string]: unknown }): boolean {
+    const status = String(item['status'] ?? '').trim().toLowerCase();
+    return ['verified', 'paid', 'posted', 'cleared', 'complete', 'completed', 'remitted'].includes(status);
+  }
+
   getReceivableVerifyLabel(item: { [key: string]: unknown }): string {
+    if (this.isReceivableAlreadyVerified(item)) {
+      return 'Verified';
+    }
+
     if (this.canVerifyReceivable(item)) {
       const paymentId = String(item['paymentId'] ?? '').trim();
       return this.verifyingReceivableId !== null && this.verifyingReceivableId === paymentId ? 'Verifying…' : 'Verify';
@@ -539,11 +808,33 @@ export class EcommerceComponent implements OnInit {
 
   async fetchSalesSummaryDetail(mode: DashboardSalesDetailMode): Promise<void> {
     try {
-      const items = await this.dashboardService.getSalesDetail(mode);
-      this.salesSummaryDetailItems = items;
+      const result = await this.dashboardService.getSalesDetail(mode, {
+        page: this.salesSummaryPage,
+        pageSize: this.salesSummaryPageSize,
+        dateFrom: this.salesSummaryDateFrom || undefined,
+        dateTo: this.salesSummaryDateTo || undefined,
+        status: mode === 'cheques' ? this.salesSummaryReceivableStatus : undefined,
+      });
+      const lastPage = Math.max(1, Math.ceil((result.total || 0) / (result.pageSize || this.salesSummaryPageSize)));
+      if (result.items.length === 0 && result.total > 0 && this.salesSummaryPage > lastPage) {
+        this.salesSummaryPage = lastPage;
+        await this.fetchSalesSummaryDetail(mode);
+        return;
+      }
+      this.salesSummaryDetailItems = result.items;
+      this.salesSummaryTotal = result.total;
+      this.salesSummaryPage = result.page;
+      this.salesSummaryPageSize = result.pageSize;
+      this.salesSummaryReceivableAmount = result.receivableAmount ?? 0;
+      this.salesSummaryReceivedAmount = result.receivedAmount ?? 0;
+      this.salesSummaryOverallAmount = result.overallAmount ?? 0;
     } catch (error: unknown) {
       console.error('Failed to fetch sales detail:', error);
       this.salesSummaryDetailItems = [];
+      this.salesSummaryTotal = 0;
+      this.salesSummaryReceivableAmount = 0;
+      this.salesSummaryReceivedAmount = 0;
+      this.salesSummaryOverallAmount = 0;
     } finally {
       this.salesSummaryLoading = false;
     }

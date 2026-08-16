@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 import { UpdateBusinessProfileDto } from './dto/update-business-profile.dto';
 
 type BusinessProfileKey =
@@ -43,9 +44,49 @@ type BusinessProfileKey =
   | 'gjNumberPrefix'
   | 'gjNumberSuffix';
 
+const ASSET_FIELD_KEYS = new Set([
+  'businessLogo',
+  'businessLogoLight',
+  'businessLogoDark',
+  'drTemplatePdf',
+  'printSignaturePreparedBy',
+  'printSignatureCheckedBy',
+  'printSignatureApprovedBy',
+]);
+
 @Injectable()
 export class SettingsService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
+
+  private sanitizeSettingsRequestBody(
+    dto: UpdateBusinessProfileDto | Record<string, unknown>,
+  ): Record<string, unknown> {
+    const body: Record<string, unknown> = { ...(dto as Record<string, unknown>) };
+    for (const key of Object.keys(body)) {
+      if (!ASSET_FIELD_KEYS.has(key)) {
+        continue;
+      }
+      const value = body[key];
+      if (typeof value === 'string' && value.length > 0) {
+        body[key] = value.startsWith('data:')
+          ? '[REDACTED_DATA_URL]'
+          : '[REDACTED_ASSET]';
+      }
+    }
+    return body;
+  }
+
+  private toProfileSnapshot(
+    item: Record<string, unknown> | null | undefined,
+  ): Record<string, unknown> | null {
+    if (!item || typeof item !== 'object') {
+      return null;
+    }
+    return this.sanitizeSettingsRequestBody(item);
+  }
 
   private normalizeNullableText(value: unknown): string | null {
     if (value === undefined) {
@@ -248,8 +289,19 @@ export class SettingsService {
     }
   }
 
-  async updateBusinessProfile(dto: UpdateBusinessProfileDto) {
+  async updateBusinessProfile(
+    dto: UpdateBusinessProfileDto,
+    auditActor?: AuditActorContext,
+    options?: { skipAudit?: boolean },
+  ) {
     try {
+      const beforeResult = options?.skipAudit
+        ? null
+        : await this.getBusinessProfile();
+      const beforeSnapshot = this.toProfileSnapshot(
+        (beforeResult as { item?: Record<string, unknown> } | null)?.item,
+      );
+
       const settingsId = await this.ensureSettingsRow();
       const columns = await this.getSettingsColumns();
 
@@ -371,7 +423,28 @@ export class SettingsService {
         );
       }
 
-      return this.getBusinessProfile();
+      const result = await this.getBusinessProfile();
+
+      if (!options?.skipAudit && result?.success !== false) {
+        const afterSnapshot = this.toProfileSnapshot(
+          (result as { item?: Record<string, unknown> }).item,
+        );
+        const afterId = Number(afterSnapshot?.id);
+        await this.auditLogService.logMutation({
+          action: 'SETTINGS_UPDATE',
+          entityType: 'settings',
+          entityId:
+            settingsId ||
+            (Number.isFinite(afterId) && afterId > 0 ? afterId : null),
+          actor: auditActor,
+          description: 'Updated business profile / settings',
+          requestBody: this.sanitizeSettingsRequestBody(dto),
+          before: beforeSnapshot,
+          after: afterSnapshot,
+        });
+      }
+
+      return result;
     } catch (error) {
       return {
         success: false,
@@ -396,6 +469,7 @@ export class SettingsService {
       | 'printSignatureCheckedBy'
       | 'printSignatureApprovedBy',
     file: any,
+    auditActor?: AuditActorContext,
   ) {
     if (!file || !file.buffer || file.size <= 0) {
       return {
@@ -422,6 +496,34 @@ export class SettingsService {
       [key]: this.convertFileToDataUrl(file),
     };
 
-    return this.updateBusinessProfile(payload);
+    const result = await this.updateBusinessProfile(payload, auditActor, { skipAudit: true });
+
+    if (result?.success !== false) {
+      const settingsId = Number(
+        (result as { item?: { id?: string | number } })?.item?.id ?? 0,
+      );
+      await this.auditLogService.logMutation({
+        action: 'SETTINGS_ASSET_UPLOAD',
+        entityType: 'settings',
+        entityId: Number.isFinite(settingsId) && settingsId > 0 ? settingsId : null,
+        actor: auditActor,
+        description: `Uploaded settings asset ${key}`,
+        requestBody: {
+          assetKey: key,
+          originalName: String(file.originalname ?? '').trim() || null,
+          mimeType: String(file.mimetype ?? '').trim() || null,
+          size: Number(file.size) || null,
+        },
+        after: {
+          assetKey: key,
+          uploaded: true,
+        },
+        metadata: {
+          assetKey: key,
+        },
+      });
+    }
+
+    return result;
   }
 }

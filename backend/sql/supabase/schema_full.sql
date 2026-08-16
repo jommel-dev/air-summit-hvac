@@ -110,9 +110,12 @@ CREATE TABLE IF NOT EXISTS public.tblproducts (
   updated_by BIGINT NULL,
   deleted_at VARCHAR NULL,
   deleted_by BIGINT NULL,
-  CONSTRAINT tblproducts_id_key UNIQUE (id),
-  CONSTRAINT tblproducts_productName_key UNIQUE ("productName")
+  CONSTRAINT tblproducts_id_key UNIQUE (id)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS tblproducts_productname_active_uidx
+  ON public.tblproducts ("productName")
+  WHERE deleted_at IS NULL;
 
 -- 2.2 Capacity (Product Variants)
 CREATE TABLE IF NOT EXISTS public.tblcapacity (
@@ -127,7 +130,9 @@ CREATE TABLE IF NOT EXISTS public.tblcapacity (
   "stockCount" BIGINT NULL DEFAULT 0,
   "supplierId" BIGINT NULL,
   "purchaseOrderId" BIGINT NULL,
-  "purchaseOrderNo" VARCHAR NULL
+  "purchaseOrderNo" VARCHAR NULL,
+  deleted_at TIMESTAMPTZ NULL,
+  deleted_by BIGINT NULL
 );
 
 -- 2.3 Capacity Net Price History
@@ -442,6 +447,10 @@ CREATE TABLE IF NOT EXISTS public.tblprojects (
   project_manager_id BIGINT REFERENCES public.tblusers(id) ON DELETE SET NULL,
   project_status VARCHAR(20) NOT NULL DEFAULT 'planning' CHECK (project_status IN ('planning', 'ongoing', 'completed', 'cancelled')),
   project_notes TEXT NULL,
+  customer_id UUID NULL REFERENCES public.tblcustomer(id) ON UPDATE CASCADE ON DELETE SET NULL,
+  poc_name TEXT NULL,
+  poc_phone VARCHAR(50) NULL,
+  poc_email VARCHAR(255) NULL,
   branch_id BIGINT NULL,
   created_by BIGINT REFERENCES public.tblusers(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -453,6 +462,7 @@ CREATE INDEX IF NOT EXISTS idx_tblprojects_project_name ON public.tblprojects(pr
 CREATE INDEX IF NOT EXISTS idx_tblprojects_project_status ON public.tblprojects(project_status);
 CREATE INDEX IF NOT EXISTS idx_tblprojects_branch_id ON public.tblprojects(branch_id);
 CREATE INDEX IF NOT EXISTS idx_tblprojects_project_owner_id ON public.tblprojects(project_owner_id);
+CREATE INDEX IF NOT EXISTS idx_tblprojects_customer_id ON public.tblprojects(customer_id);
 
 -- Add FK from sales_order to projects
 ALTER TABLE public.tblsales_order
@@ -726,6 +736,7 @@ CREATE TABLE IF NOT EXISTS public.tblstatement_of_account (
   id BIGSERIAL PRIMARY KEY,
   soa_number TEXT GENERATED ALWAYS AS ('SOA-' || LPAD(id::TEXT, 6, '0')) STORED,
   customer_id UUID NOT NULL REFERENCES public.tblcustomer(id) ON UPDATE CASCADE ON DELETE CASCADE,
+  project_id BIGINT NULL REFERENCES public.tblprojects(id) ON UPDATE CASCADE ON DELETE SET NULL,
   period_from DATE NOT NULL,
   period_to DATE NOT NULL,
   opening_balance NUMERIC(12, 2) DEFAULT 0,
@@ -743,6 +754,8 @@ CREATE TABLE IF NOT EXISTS public.tblstatement_of_account (
 CREATE INDEX IF NOT EXISTS idx_soa_customer_id ON public.tblstatement_of_account(customer_id);
 CREATE INDEX IF NOT EXISTS idx_soa_status ON public.tblstatement_of_account(soa_status);
 CREATE INDEX IF NOT EXISTS idx_soa_period ON public.tblstatement_of_account(period_from, period_to);
+CREATE INDEX IF NOT EXISTS idx_soa_project_id ON public.tblstatement_of_account(project_id)
+  WHERE project_id IS NOT NULL;
 
 -- ============================================================
 -- SECTION 13: ACCOUNTING

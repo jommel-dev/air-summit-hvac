@@ -1,7 +1,20 @@
 <div class="p-6">
-  <div class="mb-6">
-    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Projects</h1>
-    <p class="text-gray-600 dark:text-gray-400">View and manage project definitions with their related sales orders</p>
+  <div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Projects</h1>
+      <p class="text-gray-600 dark:text-gray-400">
+        Create and manage project jobs, then link sales orders, SOA, billing, and settlements.
+      </p>
+    </div>
+    @if (canCreate()) {
+      <button
+        type="button"
+        (click)="openCreateForm()"
+        class="inline-flex items-center rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
+      >
+        Create Project
+      </button>
+    }
   </div>
 
   @if (errorMessage) {
@@ -9,54 +22,39 @@
       {{ errorMessage }}
     </div>
   }
+  @if (successMessage) {
+    <div class="mb-4 rounded-lg border border-green-300 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-400">
+      {{ successMessage }}
+    </div>
+  }
 
-  <div class="mb-6 flex gap-4">
-    <div class="flex-1">
+  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/3 xl:p-6">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">Project Master</h3>
       <input
         type="text"
         [(ngModel)]="search"
         (input)="onSearchChange()"
-        placeholder="Search projects by code or name..."
-        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+        placeholder="Search by code, name, or customer..."
+        class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 sm:max-w-xs"
       />
     </div>
-  </div>
-
-  <div class="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/3 xl:p-6">
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <h3 class="text-base font-semibold text-gray-800 dark:text-white/90">Projects</h3>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Project master list with drawer details, aligned to system design.</p>
-      </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <input
-          type="text"
-          [(ngModel)]="search"
-          (input)="onSearchChange()"
-          placeholder="Search projects by code or name..."
-          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900 sm:max-w-xs"
-        />
-      </div>
-    </div>
-
 
     @if (isLoading) {
       <div class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">Loading projects...</div>
-    } @else if (errorMessage) {
-      <div class="rounded-lg border border-error-300 bg-error-50 px-4 py-3 text-sm text-error-600 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
-        {{ errorMessage }}
-      </div>
     } @else {
       <div class="mt-5 overflow-x-auto">
-        <app-table className="w-full min-w-225">
+        <app-table className="w-full min-w-280">
           <thead>
             <tr class="border-b border-gray-200 dark:border-gray-800">
               <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">Code</th>
               <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">Name</th>
-              <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">Type</th>
-              <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">Owner</th>
+              <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">Customer</th>
+              <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">POC</th>
               <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">Status</th>
               <th class="px-4 py-2 text-left text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">Related SOs</th>
+              <th class="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">Paid Balance</th>
+              <th class="px-4 py-2 text-right text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">Current Balance</th>
               <th class="px-4 py-2"></th>
             </tr>
           </thead>
@@ -65,16 +63,22 @@
               <tr class="border-b border-gray-100 dark:border-gray-800">
                 <td class="px-4 py-2">{{ project.projectCode }}</td>
                 <td class="px-4 py-2">{{ project.projectName }}</td>
-                <td class="px-4 py-2">{{ project.projectType }}</td>
-                <td class="px-4 py-2">{{ project.projectOwner }}</td>
+                <td class="px-4 py-2">{{ project.customerName || '—' }}</td>
+                <td class="px-4 py-2">{{ project.pocName || '—' }}</td>
                 <td class="px-4 py-2">
                   <span class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold {{ getStatusColor(project.projectStatus) }}">
                     {{ project.projectStatus }}
                   </span>
                 </td>
                 <td class="px-4 py-2">{{ project.relatedSOCount }}</td>
+                <td class="px-4 py-2 text-right tabular-nums text-gray-800 dark:text-gray-100">{{ formatCurrency(project.paidAmount) }}</td>
+                <td class="px-4 py-2 text-right tabular-nums text-gray-800 dark:text-gray-100">{{ formatCurrency(project.balance) }}</td>
                 <td class="px-4 py-2 text-right">
-                  <button type="button" class="inline-flex items-center rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand-600" (click)="openProjectDrawer(project)">
+                  <button
+                    type="button"
+                    class="inline-flex items-center rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand-600"
+                    (click)="openProjectDrawer(project)"
+                  >
                     View
                   </button>
                 </td>
@@ -83,113 +87,488 @@
           </tbody>
         </app-table>
       </div>
+
       @if (totalPages > 1) {
         <div class="border-t border-gray-200 px-4 py-3 dark:border-gray-800">
           <div class="flex items-center justify-between">
-            <button
-              type="button"
-              [disabled]="page <= 1"
-              (click)="onPageChange(page - 1)"
-              class="rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700"
-            >
-              Previous
-            </button>
-            <span class="text-sm text-gray-600 dark:text-gray-400">
-              Page {{ page }} of {{ totalPages }}
-            </span>
-            <button
-              type="button"
-              [disabled]="page >= totalPages"
-              (click)="onPageChange(page + 1)"
-              class="rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700"
-            >
-              Next
-            </button>
+            <button type="button" [disabled]="page <= 1" (click)="onPageChange(page - 1)" class="rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700">Previous</button>
+            <span class="text-sm text-gray-600 dark:text-gray-400">Page {{ page }} of {{ totalPages }}</span>
+            <button type="button" [disabled]="page >= totalPages" (click)="onPageChange(page + 1)" class="rounded border border-gray-300 px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700">Next</button>
           </div>
         </div>
       }
     }
+  </div>
 
-    <!-- Project Details Drawer (right-side) -->
-    <app-modal
-      [isOpen]="isDrawerOpen"
-      [isFullscreen]="true"
-      [showCloseButton]="false"
-      (close)="closeDrawer()"
-      className="fixed inset-0 flex items-stretch justify-end z-[100200] p-0"
-    >
-      <div *ngIf="selectedProject" class="w-full max-w-3xl md:w-[700px] h-full bg-white dark:bg-gray-900 shadow-2xl border-l border-gray-200 dark:border-gray-800 flex flex-col animate-slide-in-right relative">
-        <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 z-10">
-          <h2 class="text-lg font-semibold text-gray-900 dark:text-white">Project Details</h2>
+  <!-- Create / Edit form -->
+  <app-modal [isOpen]="isFormOpen" [showCloseButton]="true" (close)="closeForm()" className="relative z-[100300] w-full max-w-3xl rounded-2xl bg-white p-6 dark:bg-gray-900">
+    <h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
+      {{ formMode === 'create' ? 'Create Project' : 'Edit Project' }}
+    </h2>
+    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Code *</label>
+        <input [(ngModel)]="form.projectCode" name="projectCode" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Project Name *</label>
+        <input [(ngModel)]="form.projectName" name="projectName" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+      </div>
+      <div class="md:col-span-2 relative">
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Customer *</label>
+        <input
+          type="text"
+          [ngModel]="customerSearch"
+          (ngModelChange)="onCustomerSearchChange($event)"
+          (focus)="isCustomerDropdownOpen = true"
+          name="customerSearch"
+          placeholder="Search customer..."
+          class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+        />
+        @if (isCustomerDropdownOpen && customerOptions.length > 0) {
+          <div class="absolute z-40 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900">
+            @for (customer of customerOptions; track customer.id) {
+              <button type="button" (mousedown)="$event.preventDefault()" (click)="selectCustomer(customer)" class="flex w-full px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-800">
+                {{ customer.name }}
+              </button>
+            }
+          </div>
+        }
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">POC Name</label>
+        <input [(ngModel)]="form.pocName" name="pocName" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">POC Phone</label>
+        <input [(ngModel)]="form.pocPhone" name="pocPhone" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">POC Email</label>
+        <input [(ngModel)]="form.pocEmail" name="pocEmail" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Status</label>
+        <select [(ngModel)]="form.projectStatus" name="projectStatus" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900">
+          <option value="planning">planning</option>
+          <option value="ongoing">ongoing</option>
+          <option value="completed">completed</option>
+          <option value="cancelled">cancelled</option>
+        </select>
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Type</label>
+        <input [(ngModel)]="form.projectType" name="projectType" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Owner</label>
+        <input [(ngModel)]="form.projectOwner" name="projectOwner" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Manager</label>
+        <input [(ngModel)]="form.projectManager" name="projectManager" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+      </div>
+      <div class="md:col-span-2">
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Location</label>
+        <input [(ngModel)]="form.projectLocation" name="projectLocation" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Start Date</label>
+        <input type="date" [(ngModel)]="form.projectStartDate" name="projectStartDate" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+      </div>
+      <div>
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">End Date</label>
+        <input type="date" [(ngModel)]="form.projectEndDate" name="projectEndDate" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+      </div>
+      <div class="md:col-span-2">
+        <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Notes</label>
+        <textarea [(ngModel)]="form.projectNotes" name="projectNotes" rows="3" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
+      </div>
+    </div>
+    <div class="mt-5 flex justify-end gap-2">
+      <button type="button" (click)="closeForm()" class="rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-700">Cancel</button>
+      <button type="button" (click)="saveProject()" [disabled]="isSaving" class="rounded-lg bg-brand-500 px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
+        {{ isSaving ? 'Saving…' : 'Save Project' }}
+      </button>
+    </div>
+  </app-modal>
+
+  <!-- View Drawer -->
+  <app-modal
+    [isOpen]="isDrawerOpen"
+    [isFullscreen]="true"
+    [showCloseButton]="false"
+    (close)="closeDrawer()"
+    className="fixed inset-0 flex items-stretch justify-end z-[100200] p-0"
+  >
+    <div *ngIf="selectedProject" class="relative flex h-full w-full max-w-3xl flex-col border-l border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900 md:w-[720px]">
+      <div class="sticky top-0 z-10 flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4 dark:border-gray-800 dark:bg-gray-900">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ selectedProject.projectCode }}</h2>
+        <div class="flex items-center gap-2">
+          @if (canEdit()) {
+            <button type="button" (click)="openEditForm()" class="rounded border border-gray-300 px-3 py-1 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800">Edit</button>
+          }
+          @if (canDelete()) {
+            <button type="button" (click)="deleteProject()" class="rounded border border-red-300 px-3 py-1 text-sm text-red-600 hover:bg-red-50 dark:border-red-700">Delete</button>
+          }
           <button type="button" (click)="closeDrawer()" class="rounded border border-gray-300 px-3 py-1 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800">Close</button>
         </div>
-        <div class="flex-1 overflow-y-auto p-6">
-          <div class="grid grid-cols-2 gap-4">
+      </div>
+
+      <div class="flex-1 space-y-6 overflow-y-auto p-6">
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Status</label>
             <div>
-              <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Project Code</label>
-              <p class="text-lg font-semibold text-gray-900 dark:text-white">{{ selectedProject.projectCode }}</p>
-            </div>
-            <div>
-              <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Status</label>
               <span class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold {{ getStatusColor(selectedProject.projectStatus) }}">
                 {{ selectedProject.projectStatus }}
               </span>
             </div>
-            <div class="col-span-2">
-              <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Project Name</label>
-              <p class="text-gray-900 dark:text-white">{{ selectedProject.projectName }}</p>
+          </div>
+          <div>
+            <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Name</label>
+            <p class="text-gray-900 dark:text-white">{{ selectedProject.projectName }}</p>
+          </div>
+          <div>
+            <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Customer</label>
+            <p class="text-gray-900 dark:text-white">{{ selectedProject.customerName || '—' }}</p>
+          </div>
+          <div>
+            <label class="text-sm font-medium text-gray-600 dark:text-gray-400">POC</label>
+            <p class="text-gray-900 dark:text-white">
+              {{ selectedProject.pocName || '—' }}
+              @if (selectedProject.pocPhone) { <span class="text-gray-500"> · {{ selectedProject.pocPhone }}</span> }
+            </p>
+          </div>
+          <div>
+            <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Location</label>
+            <p class="text-gray-900 dark:text-white">{{ selectedProject.projectLocation || 'N/A' }}</p>
+          </div>
+          <div>
+            <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Manager</label>
+            <p class="text-gray-900 dark:text-white">{{ selectedProject.projectManager || 'N/A' }}</p>
+          </div>
+        </div>
+
+        <!-- Billing -->
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <div class="mb-3 flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-gray-800 dark:text-white">Billing</h3>
+            <button type="button" (click)="openSettlement()" [disabled]="!billing || billing.balance <= 0" class="rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-50">
+              Record Settlement
+            </button>
+          </div>
+          <div class="grid grid-cols-3 gap-3 text-sm">
+            <div>
+              <p class="text-gray-500">Total</p>
+              <p class="font-semibold text-gray-900 dark:text-white">{{ formatCurrency(billing?.totalAmount) }}</p>
             </div>
             <div>
-              <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Type</label>
-              <p class="text-gray-900 dark:text-white">{{ selectedProject.projectType }}</p>
+              <p class="text-gray-500">Paid</p>
+              <p class="font-semibold text-gray-900 dark:text-white">{{ formatCurrency(billing?.paidAmount) }}</p>
             </div>
             <div>
-              <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Owner</label>
-              <p class="text-gray-900 dark:text-white">{{ selectedProject.projectOwner }}</p>
-            </div>
-            <div>
-              <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Location</label>
-              <p class="text-gray-900 dark:text-white">{{ selectedProject.projectLocation || 'N/A' }}</p>
-            </div>
-            <div>
-              <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Manager</label>
-              <p class="text-gray-900 dark:text-white">{{ selectedProject.projectManager || 'N/A' }}</p>
-            </div>
-            <div>
-              <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Start Date</label>
-              <p class="text-gray-900 dark:text-white">{{ selectedProject.projectStartDate || 'N/A' }}</p>
-            </div>
-            <div>
-              <label class="text-sm font-medium text-gray-600 dark:text-gray-400">End Date</label>
-              <p class="text-gray-900 dark:text-white">{{ selectedProject.projectEndDate || 'N/A' }}</p>
+              <p class="text-gray-500">Balance</p>
+              <p class="font-semibold text-gray-900 dark:text-white">{{ formatCurrency(billing?.balance) }}</p>
             </div>
           </div>
-          <div *ngIf="selectedProject.projectNotes" class="mt-4">
-            <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Notes</label>
-            <p class="text-gray-900 dark:text-white">{{ selectedProject.projectNotes }}</p>
+        </section>
+
+        <!-- SOA -->
+        <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
+          <h3 class="mb-3 text-sm font-semibold text-gray-800 dark:text-white">Statement of Account</h3>
+          <div class="mb-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+            <input type="date" [(ngModel)]="soaPeriodFrom" name="soaPeriodFrom" class="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            <input type="date" [(ngModel)]="soaPeriodTo" name="soaPeriodTo" class="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            <input type="date" [(ngModel)]="soaDueDate" name="soaDueDate" class="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900" />
+            <button type="button" (click)="generateSoa()" [disabled]="soaBusy" class="rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
+              {{ soaBusy ? 'Generating…' : 'Generate SOA' }}
+            </button>
           </div>
-          <div class="mt-6">
-            <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Related Sales Orders ({{ selectedProject.relatedSalesOrders.length }})</label>
-            <div *ngIf="selectedProject.relatedSalesOrders.length === 0" class="text-gray-500 dark:text-gray-400">No sales orders linked to this project</div>
-            <div *ngIf="selectedProject.relatedSalesOrders.length > 0" class="mt-2 max-h-64 overflow-y-auto space-y-2">
+          <input [(ngModel)]="soaNotes" name="soaNotes" placeholder="Notes (optional)" class="mb-3 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" />
+          @if (statements.length === 0) {
+            <p class="text-sm text-gray-500">No SOA generated yet for this project.</p>
+          } @else {
+            <div class="space-y-2">
+              @for (soa of statements; track soa.id) {
+                <div class="rounded border border-gray-200 p-3 text-sm dark:border-gray-700">
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2">
+                        <span class="font-medium text-gray-900 dark:text-white">{{ soa.soaNumber }}</span>
+                        <span class="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide {{ getSoaStatusColor(soa.soaStatus) }}">
+                          {{ soa.soaStatus }}
+                        </span>
+                      </div>
+                      <p class="mt-1 text-gray-600 dark:text-gray-400">{{ soa.periodFrom }} → {{ soa.periodTo }}</p>
+                      <p class="text-gray-900 dark:text-white">Charges {{ formatCurrency(soa.totalCharges) }} · Closing {{ formatCurrency(soa.closingBalance) }}</p>
+                    </div>
+                    <div class="flex shrink-0 flex-col gap-1.5">
+                      <button
+                        type="button"
+                        (click)="previewSoaPdf(soa)"
+                        class="rounded-lg border border-brand-300 px-2.5 py-1 text-xs font-medium text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                      >
+                        View / Print PDF
+                      </button>
+                      @if ((soa.soaStatus || '').toLowerCase() === 'draft') {
+                        <button
+                          type="button"
+                          (click)="markSoaSent(soa)"
+                          [disabled]="soaBusy"
+                          class="rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                        >
+                          Mark as Sent
+                        </button>
+                      }
+                    </div>
+                  </div>
+                </div>
+              }
+            </div>
+          }
+        </section>
+
+        <!-- Related SOs -->
+        <section>
+          <h3 class="mb-2 text-sm font-semibold text-gray-800 dark:text-white">
+            Related Sales Orders ({{ selectedProject.relatedSalesOrders.length }})
+          </h3>
+          @if (selectedProject.relatedSalesOrders.length === 0) {
+            <p class="text-sm text-gray-500">No sales orders linked yet. Create an SO with sales type "project" and select this project.</p>
+          } @else {
+            <div class="max-h-72 space-y-2 overflow-y-auto">
               <div *ngFor="let so of selectedProject.relatedSalesOrders; trackBy: trackBySOId" class="rounded border border-gray-200 p-3 dark:border-gray-700">
-                <div class="flex items-center justify-between">
-                  <div>
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
                     <p class="font-medium text-gray-900 dark:text-white">{{ so.soNumber }}</p>
                     <p class="text-sm text-gray-600 dark:text-gray-400">{{ so.customerName }}</p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Schedule / Delivery:
+                      <span class="font-medium text-gray-700 dark:text-gray-300">{{ formatScheduleDate(so.scheduleDate) }}</span>
+                    </p>
                   </div>
-                  <div class="text-right">
-                    <span class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold {{ getSOStatusColor(so.status) }}">
-                      {{ so.status }}
-                    </span>
-                    <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">${{ so.totalAmount }}</p>
+                  <div class="shrink-0 text-right">
+                    <span class="inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold {{ getSOStatusColor(so.status) }}">{{ so.status }}</span>
+                    <p class="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">{{ formatCurrency(so.totalAmount) }}</p>
+                    <p class="text-xs text-gray-500">Bal {{ formatCurrency(so.balance) }}</p>
+                    <button
+                      type="button"
+                      (click)="viewRelatedSalesOrder(so)"
+                      class="mt-2 rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                    >
+                      View Details
+                    </button>
                   </div>
                 </div>
               </div>
             </div>
+          }
+        </section>
+      </div>
+    </div>
+  </app-modal>
+
+  <!-- Settlement modal -->
+  @if (isSettlementOpen) {
+    <div
+      class="fixed inset-0 z-[100300] bg-black/50 transition-opacity backdrop-blur-sm dark:bg-black/70"
+      (click)="closeSettlement()"
+    ></div>
+
+    <div class="fixed inset-x-4 top-1/2 z-[100301] mx-auto w-full max-w-2xl -translate-y-1/2 overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+      <div class="flex items-center justify-between border-b border-gray-200 bg-linear-to-r from-brand-50 to-brand-100/50 px-6 py-4 dark:border-gray-800 dark:from-gray-800 dark:to-gray-900">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-800 dark:text-white/90">Settle Project</h3>
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {{ selectedProject?.projectCode }} • {{ selectedProject?.customerName || 'No customer' }} • Balance {{ formatCurrency(settlementTargetBalance) }}
+          </p>
+        </div>
+        <button
+          type="button"
+          (click)="closeSettlement()"
+          class="rounded-lg bg-white p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:bg-gray-800 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+        >
+          <svg class="h-6 w-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      <div class="space-y-5 p-6">
+        <div class="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <button type="button" (click)="setSettlementMode('partial')" class="rounded-xl border px-4 py-3 text-left" [class]="getSettlementActionClass('partial')">
+            <p class="text-sm font-semibold">Partial</p>
+            <p class="mt-1 text-xs opacity-80">Record a received partial payment.</p>
+          </button>
+          <button type="button" (click)="setSettlementMode('full')" class="rounded-xl border px-4 py-3 text-left" [class]="getSettlementActionClass('full')">
+            <p class="text-sm font-semibold">Full</p>
+            <p class="mt-1 text-xs opacity-80">Close the entire remaining balance now.</p>
+          </button>
+          <button type="button" (click)="setSettlementMode('cheque')" class="rounded-xl border px-4 py-3 text-left" [class]="getSettlementActionClass('cheque')">
+            <p class="text-sm font-semibold">Pay with Cheque</p>
+            <p class="mt-1 text-xs opacity-80">Transfer the remaining balance to cheque receivables.</p>
+          </button>
+          <button type="button" (click)="setSettlementMode('split')" class="rounded-xl border px-4 py-3 text-left" [class]="getSettlementActionClass('split')">
+            <p class="text-sm font-semibold">Split Payment</p>
+            <p class="mt-1 text-xs opacity-80">Split the balance between bank transfer and cheque.</p>
+          </button>
+        </div>
+
+        <div>
+          <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Allocate to SO (optional)</label>
+          <select
+            [(ngModel)]="settlementSalesOrderId"
+            (ngModelChange)="onSettlementSalesOrderChange()"
+            name="settlementSalesOrderId"
+            class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm text-gray-800 outline-none transition focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90"
+          >
+            <option [ngValue]="null">Oldest open balances first</option>
+            @for (so of billing?.salesOrders || []; track so.id) {
+              @if (so.balance > 0) {
+                <option [ngValue]="so.id">{{ so.soNumber }} · bal {{ formatCurrency(so.balance) }}</option>
+              }
+            }
+          </select>
+        </div>
+
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <label class="block text-sm">
+            <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Amount</span>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              [(ngModel)]="settlementAmount"
+              name="settlementAmount"
+              [disabled]="settlementMode !== 'partial'"
+              class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-gray-800 outline-none transition focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90 disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+
+          <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
+            <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Remaining Balance</p>
+            <p class="mt-2 text-xl font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(settlementTargetBalance) }}</p>
           </div>
         </div>
+
+        @if (settlementMode === 'split') {
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <label class="block text-sm">
+              <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Bank Transfer Amount</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                [ngModel]="splitBankAmount"
+                (ngModelChange)="updateSplitBankAmount($event)"
+                name="splitBankAmount"
+                class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-gray-800 outline-none transition focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90"
+              />
+            </label>
+            <div class="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800/50">
+              <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Cheque Amount</p>
+              <p class="mt-2 text-xl font-semibold text-gray-800 dark:text-white/90">{{ formatCurrency(splitChequeAmountValue) }}</p>
+            </div>
+            <div class="rounded-xl border border-gray-200 bg-brand-50/60 px-4 py-3 dark:border-brand-500/20 dark:bg-brand-500/10">
+              <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Allocation Check</p>
+              <p class="mt-2 text-sm font-medium text-gray-800 dark:text-white/90">
+                {{ formatCurrency(splitBankAmountValue) }} bank + {{ formatCurrency(splitChequeAmountValue) }} cheque
+              </p>
+            </div>
+          </div>
+        }
+
+        @if (settlementMode === 'cheque' || settlementMode === 'split') {
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <label class="block text-sm">
+              <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Bank Name</span>
+              <input
+                type="text"
+                [(ngModel)]="settlementBankName"
+                name="settlementBankName"
+                class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-gray-800 outline-none transition focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90"
+              />
+            </label>
+            <label class="block text-sm">
+              <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Cheque No.</span>
+              <input
+                type="text"
+                [(ngModel)]="settlementCheckNo"
+                name="settlementCheckNo"
+                class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-gray-800 outline-none transition focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90"
+              />
+            </label>
+            <label class="block text-sm">
+              <span class="mb-2 block font-medium text-gray-700 dark:text-gray-300">Post Dated</span>
+              <input
+                type="date"
+                [(ngModel)]="settlementPostDated"
+                name="settlementPostDated"
+                class="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-gray-800 outline-none transition focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90"
+              />
+            </label>
+          </div>
+        }
+
+        @if (settlementError) {
+          <div class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+            {{ settlementError }}
+          </div>
+        }
+
+        <div class="flex justify-end gap-3">
+          <button
+            type="button"
+            (click)="closeSettlement()"
+            class="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            (click)="saveSettlement()"
+            [disabled]="settlementBusy"
+            class="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {{ settlementBusy ? 'Saving…' : 'Save Settlement' }}
+          </button>
+        </div>
       </div>
-    </app-modal>
+    </div>
+  }
 
-
+  <!-- SOA PDF Preview -->
+  @if (isSoaPreviewOpen && soaPreviewUrl) {
+    <div class="fixed inset-0 z-[100400] bg-gray-900/70" (click)="closeSoaPreview()">
+      <section class="flex h-screen w-screen flex-col bg-white dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <header class="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-800">
+          <div>
+            <h4 class="text-sm font-bold text-gray-800 dark:text-white/90">Project Statement of Account</h4>
+            <p class="text-xs text-gray-500 dark:text-gray-400">{{ soaPreviewFilename }}</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              (click)="downloadSoaPdf()"
+              class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+            >
+              Download PDF
+            </button>
+            <button
+              type="button"
+              (click)="closeSoaPreview()"
+              class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Close
+            </button>
+          </div>
+        </header>
+        <div class="min-h-0 flex-1 bg-gray-100 dark:bg-gray-950">
+          <iframe [src]="soaPreviewUrl" title="Project SOA PDF Preview" class="h-full w-full border-0"></iframe>
+        </div>
+      </section>
+    </div>
+  }
+</div>

@@ -780,8 +780,8 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     }
   }
 
-  closeReturnModal(): void {
-    if (this.isReturnModalLoading || this.returningOrderIds.has(this.pendingReturnOrder?.id ?? -1)) {
+  closeReturnModal(forceClose = false): void {
+    if (!forceClose && (this.isReturnModalLoading || this.returningOrderIds.has(this.pendingReturnOrder?.id ?? -1))) {
       return;
     }
 
@@ -795,13 +795,35 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
 
   onReturnDefectiveChange(value: boolean): void {
     this.returnForm.isDefective = value;
-    if (!value) {
-      this.selectedReturnedSerialNumbers = new Set<string>();
-    }
   }
 
   isReturnedSerialSelected(serialNumber: string): boolean {
     return this.selectedReturnedSerialNumbers.has(this.normalizeSerial(serialNumber));
+  }
+
+  isReturnProductFullySelected(group: SalesReturnSerialOptionGroup): boolean {
+    return group.serials.length > 0 && group.serials.every((serial) => this.isReturnedSerialSelected(serial));
+  }
+
+  getReturnProductSelectedCount(group: SalesReturnSerialOptionGroup): number {
+    return group.serials.filter((serial) => this.isReturnedSerialSelected(serial)).length;
+  }
+
+  toggleReturnProductSelection(group: SalesReturnSerialOptionGroup, checked: boolean): void {
+    const next = new Set(this.selectedReturnedSerialNumbers);
+    for (const serial of group.serials) {
+      const normalizedSerial = this.normalizeSerial(serial);
+      if (!normalizedSerial) {
+        continue;
+      }
+
+      if (checked) {
+        next.add(normalizedSerial);
+      } else {
+        next.delete(normalizedSerial);
+      }
+    }
+    this.selectedReturnedSerialNumbers = next;
   }
 
   toggleReturnedSerialSelection(serialNumber: string, checked: boolean): void {
@@ -829,8 +851,8 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
       return;
     }
 
-    if (this.returnForm.isDefective && this.selectedReturnedSerialNumbers.size === 0) {
-      this.returnModalError = 'Select one or more indoor or outdoor serial numbers for defective return.';
+    if (this.selectedReturnedSerialNumbers.size === 0) {
+      this.returnModalError = 'Select at least one product, capacity, and serial number to return.';
       return;
     }
 
@@ -838,18 +860,22 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
     this.loadErrorMessage = '';
     this.returnModalError = '';
 
+    const totalReturnableSerials = this.returnSerialGroups.reduce(
+      (sum, group) => sum + group.serials.length,
+      0,
+    );
+    const isPartialReturn = this.selectedReturnedSerialNumbers.size < totalReturnableSerials;
+
     try {
       const response = await this.salesOrderService.updateSalesOrder(order.id, {
         productItems: [],
-        status: 'pending',
+        status: isPartialReturn ? 'for-delivery' : 'pending',
         remarks: `Returned Units: ${remarks}`,
         returnedSerialDetails: {
           isDefective: this.returnForm.isDefective,
           defectReason: this.returnForm.isDefective ? remarks : undefined,
           defectDate: this.returnForm.isDefective ? new Date().toISOString() : null,
-          serialNumbers: this.returnForm.isDefective
-            ? [...this.selectedReturnedSerialNumbers]
-            : undefined,
+          serialNumbers: [...this.selectedReturnedSerialNumbers],
         },
       });
 
@@ -860,11 +886,15 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
 
       this.notificationService.success(
         'Success',
-        this.returnForm.isDefective
-          ? 'Returned units were recorded, linked serials were marked defective, and the SO status moved back to Pending.'
-          : 'Returned units has been recorded and status moved back to Pending.',
+        isPartialReturn
+          ? this.returnForm.isDefective
+            ? 'Selected units were returned and marked defective. Remaining products stayed as For Delivery.'
+            : 'Selected units were returned and removed from the SO. Remaining products stayed as For Delivery.'
+          : this.returnForm.isDefective
+            ? 'All selected product items were returned, marked defective, removed from the SO, and status moved back to Pending.'
+            : 'All product items were returned, removed from the SO, and status moved back to Pending.',
       );
-      this.closeReturnModal();
+      this.closeReturnModal(true);
       await this.loadTodaySchedules();
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
@@ -880,35 +910,50 @@ export class ScheduleTodaySalesOrderComponent implements OnInit {
   }
 
   private buildReturnSerialGroups(detail: SalesOrderDetailItem): SalesReturnSerialOptionGroup[] {
-    const grouped = new Map<string, string[]>();
+    return (detail.productItems ?? [])
+      .map((item, index) => {
+        const unitGroups: SalesReturnSerialOptionGroup['unitGroups'] = [];
+        const allSerials: string[] = [];
+        const seen = new Set<string>();
 
-    for (const item of detail.productItems ?? []) {
-      for (const [unitLabel, serials] of Object.entries(item.serialNumbers ?? {})) {
-        const normalizedUnitLabel = String(unitLabel ?? '').trim();
-        if (!normalizedUnitLabel || !Array.isArray(serials)) {
-          continue;
+        for (const [unitLabel, serials] of Object.entries(item.serialNumbers ?? {})) {
+          const normalizedUnitLabel = String(unitLabel ?? '').trim();
+          if (!normalizedUnitLabel || normalizedUnitLabel.toLowerCase() === 'status' || !Array.isArray(serials)) {
+            continue;
+          }
+
+          const unitSerials: string[] = [];
+          for (const serial of serials) {
+            const normalizedSerial = this.normalizeSerial(serial);
+            const normalizedKey = normalizedSerial.toLowerCase();
+            if (!normalizedSerial || seen.has(normalizedKey)) continue;
+            seen.add(normalizedKey);
+            unitSerials.push(normalizedSerial);
+            allSerials.push(normalizedSerial);
+          }
+
+          if (unitSerials.length > 0) {
+            unitGroups.push({ unitLabel: normalizedUnitLabel, serials: unitSerials });
+          }
         }
 
-        const existing = grouped.get(normalizedUnitLabel) ?? [];
-        const seen = new Set(existing.map((s) => this.normalizeSerial(s).toLowerCase()));
+        const productName = this.getProductName(String(item.productId ?? ''));
+        const capacityName = this.getCapacityName(String(item.productId ?? ''), String(item.capacityId ?? ''));
 
-        for (const serial of serials) {
-          const normalizedSerial = this.normalizeSerial(serial);
-          const normalizedKey = normalizedSerial.toLowerCase();
-          if (!normalizedSerial || seen.has(normalizedKey)) continue;
-          seen.add(normalizedKey);
-          existing.push(normalizedSerial);
-        }
-
-        if (existing.length > 0) {
-          grouped.set(normalizedUnitLabel, existing);
-        }
-      }
-    }
-
-    return [...grouped.entries()]
-      .map(([unitLabel, serials]) => ({ unitLabel, serials }))
-      .sort((left, right) => left.unitLabel.localeCompare(right.unitLabel));
+        return {
+          key: `${item.id || index}::${item.productId}::${item.capacityId}`,
+          productItemId: Number(item.id) || index,
+          productId: String(item.productId ?? ''),
+          capacityId: String(item.capacityId ?? ''),
+          productLabel: productName,
+          capacityLabel: capacityName,
+          totalSetQty: Number(item.totalSetQty) || 0,
+          unitGroups,
+          serials: allSerials,
+        };
+      })
+      .filter((group) => group.serials.length > 0)
+      .sort((left, right) => left.productLabel.localeCompare(right.productLabel));
   }
 
   formatAmount(value: number): string {

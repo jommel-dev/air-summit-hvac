@@ -23,7 +23,7 @@ describe('SalesOrderController', () => {
         { provide: MaterialTransactionsService, useValue: {} },
         { provide: MaterialsService, useValue: {} },
         { provide: PurchaseService, useValue: {} },
-        { provide: AuditLogService, useValue: {} },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
         { provide: SoNumberService, useValue: {} },
         { provide: ConfigService, useValue: { get: () => 'test-secret' } },
       ],
