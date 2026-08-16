@@ -218,7 +218,7 @@ VALUES
   ('projects', 'Projects', NULL, '/users/projects', 'folder', 2),
   ('sales_order', 'Sales Order', NULL, '/users/sales-order', 'shopping_cart', 3),
   ('quotation', 'Quotation', NULL, '/users/quotation', 'description', 4),
-  ('customers', 'Stakeholders', NULL, '/users/customers', 'people', 5),
+  ('customers', 'Customer & Dealer', NULL, '/users/customers', 'people', 5),
   ('today_schedule', 'Today Schedule', NULL, '/users/schedule-today-sales-order', 'event', 6),
   ('purchase_order', 'Purchase Order', NULL, '/users/purchase-order', 'local_shipping', 7),
   ('inventory', 'Inventory', NULL, '/users/inventory', 'inventory_2', 8),

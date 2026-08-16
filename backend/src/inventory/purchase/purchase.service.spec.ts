@@ -13,7 +13,7 @@ describe('PurchaseService', () => {
         PurchaseService,
         { provide: DatabaseService, useValue: {} },
         { provide: MaterialStockService, useValue: {} },
-        { provide: AuditLogService, useValue: {} },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
       ],
     }).compile();
 

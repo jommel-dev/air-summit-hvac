@@ -16,7 +16,7 @@ describe('SerialNumberController', () => {
       providers: [
         SerialNumberService,
         { provide: DatabaseService, useValue: {} },
-        { provide: AuditLogService, useValue: {} },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
         { provide: SerialEventLogService, useValue: {} },
         { provide: ScanFileLoggerService, useValue: {} },
         { provide: ConfigService, useValue: { get: () => 'test-secret' } },

@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import { MaterialStockService } from './material-stock.service';
+import { buildAuditContext } from 'src/common/utils/build-audit-context';
 
 // @UseGuards(JwtAuthGuard) // add guard if you have auth
 @Controller('material-stock')
@@ -36,7 +37,10 @@ export class MaterialStockController {
       remarks?: string;
       createdBy?: number;
     },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    return this.service.recordMovement(dto);
+    return this.service.recordMovement(dto, {
+      auditActor: buildAuditContext(request),
+    });
   }
 }

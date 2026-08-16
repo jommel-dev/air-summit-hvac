@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 type PermissionOverrideInput = {
   permissionKey: string;
@@ -19,7 +20,20 @@ type PermissionKeyInput = {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
+
+  private sanitizeUserRequestBody(
+    dto: CreateUserDto | UpdateUserDto | Record<string, unknown>,
+  ): Record<string, unknown> {
+    const body = { ...(dto as Record<string, unknown>) };
+    if ('password' in body) {
+      body.password = body.password ? '[REDACTED]' : body.password;
+    }
+    return body;
+  }
 
   async findPermissionKeys() {
     try {
@@ -53,7 +67,10 @@ export class UsersService {
     }
   }
 
-  async createPermissionKey(input: PermissionKeyInput) {
+  async createPermissionKey(
+    input: PermissionKeyInput,
+    auditActor?: AuditActorContext,
+  ) {
     const key = String(input.key ?? '').trim().toLowerCase();
     const label = String(input.label ?? '').trim();
     const module = String(input.module ?? '').trim().toLowerCase();
@@ -117,6 +134,16 @@ export class UsersService {
         [key, label, module, scope],
       );
 
+      await this.auditLogService.logMutation({
+        action: 'PERMISSION_KEY_CREATE',
+        entityType: 'permission-key',
+        entityId: key,
+        actor: auditActor,
+        description: `Created permission key ${key}`,
+        requestBody: input as unknown as Record<string, unknown>,
+        after: { key, label, module, scope },
+      });
+
       return this.findPermissionKeys();
     } catch (error) {
       return {
@@ -172,7 +199,11 @@ export class UsersService {
     }
   }
 
-  async setRolePermissions(roleId: number, permissionKeys: string[]) {
+  async setRolePermissions(
+    roleId: number,
+    permissionKeys: string[],
+    auditActor?: AuditActorContext,
+  ) {
     if (!Number.isFinite(roleId) || roleId <= 0) {
       return {
         success: false,
@@ -198,6 +229,11 @@ export class UsersService {
           message: 'Role not found',
         };
       }
+
+      const beforeResult = await this.findRolePermissions(roleId);
+      const beforeSnapshot = beforeResult.success
+        ? ({ permissionKeys: (beforeResult.data ?? []).map((row) => row.permissionKey) } as Record<string, unknown>)
+        : null;
 
       const keyRows = normalizedKeys.length
         ? await this.databaseService.query<{ id: number; key: string }>(
@@ -242,7 +278,23 @@ export class UsersService {
         );
       });
 
-      return this.findRolePermissions(roleId);
+      const afterResult = await this.findRolePermissions(roleId);
+      if (afterResult.success) {
+        await this.auditLogService.logMutation({
+          action: 'ROLE_PERMISSIONS_UPDATE',
+          entityType: 'role',
+          entityId: roleId,
+          actor: auditActor,
+          description: `Updated permissions for role #${roleId}`,
+          requestBody: { permissionKeys: normalizedKeys },
+          before: beforeSnapshot,
+          after: {
+            permissionKeys: (afterResult.data ?? []).map((row) => row.permissionKey),
+          },
+        });
+      }
+
+      return afterResult;
     } catch (error) {
       return {
         success: false,
@@ -298,6 +350,7 @@ export class UsersService {
   async setUserPermissionOverrides(
     userId: number,
     overrides: PermissionOverrideInput[],
+    auditActor?: AuditActorContext,
   ) {
     if (!Number.isFinite(userId) || userId <= 0) {
       return {
@@ -341,12 +394,28 @@ export class UsersService {
         };
       }
 
+      const beforeResult = await this.findUserPermissionOverrides(userId);
+      const beforeSnapshot = beforeResult.success
+        ? ({ overrides: beforeResult.data ?? [] } as Record<string, unknown>)
+        : null;
+
       if (overridesToSave.length === 0) {
         await this.databaseService.query(
           `DELETE FROM auth_user_permission_overrides
            WHERE user_id = $1`,
           [userId],
         );
+
+        await this.auditLogService.logMutation({
+          action: 'USER_PERMISSION_OVERRIDES_UPDATE',
+          entityType: 'user-permission-overrides',
+          entityId: userId,
+          actor: auditActor,
+          description: `Cleared permission overrides for user #${userId}`,
+          requestBody: { overrides: [] },
+          before: beforeSnapshot,
+          after: { overrides: [] },
+        });
 
         return {
           success: true,
@@ -412,6 +481,17 @@ export class UsersService {
            ) AS data(permission_id, effect, reason)`,
           [userId, permissionIds, effects, reasons],
         );
+      });
+
+      await this.auditLogService.logMutation({
+        action: 'USER_PERMISSION_OVERRIDES_UPDATE',
+        entityType: 'user-permission-overrides',
+        entityId: userId,
+        actor: auditActor,
+        description: `Updated permission overrides for user #${userId}`,
+        requestBody: { overrides: overridesToSave } as unknown as Record<string, unknown>,
+        before: beforeSnapshot,
+        after: { overrides: overridesToSave } as unknown as Record<string, unknown>,
       });
 
       return {
@@ -531,7 +611,7 @@ export class UsersService {
     );
   }
 
-  async create(createUserDto: CreateUserDto) {
+  async create(createUserDto: CreateUserDto, auditActor?: AuditActorContext) {
     const username = createUserDto.username?.trim();
     const fullname = createUserDto.fullname?.trim();
 
@@ -658,9 +738,20 @@ export class UsersService {
         };
       }
 
+      const createdId = result.rows[0].id;
+      await this.auditLogService.logMutation({
+        action: 'USER_CREATE',
+        entityType: 'user',
+        entityId: createdId,
+        actor: auditActor,
+        description: `Created user ${username}`,
+        requestBody: this.sanitizeUserRequestBody(createUserDto),
+        after: { id: createdId, username, fullname },
+      });
+
       return {
         success: true,
-        id: result.rows[0].id,
+        id: createdId,
       };
     } catch (error) {
       return {
@@ -715,6 +806,15 @@ export class UsersService {
           COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename') AS "roleName",
           COALESCE(to_jsonb(r)->>'roleMenus', to_jsonb(r)->>'rolemenus') AS "roleMenus",
           COALESCE(to_jsonb(r)->>'rolePermission', to_jsonb(r)->>'rolepermission') AS "rolePermission",
+          NULLIF(
+            COALESCE(
+              to_jsonb(u)->>'branchId',
+              to_jsonb(u)->>'branchid',
+              to_jsonb(u)->>'branch_id'
+            ),
+            ''
+          )::int AS "branchId",
+          COALESCE(to_jsonb(b)->>'branchName', to_jsonb(b)->>'branchname') AS "branchName",
           COALESCE(to_jsonb(u)->>'is_deleted', to_jsonb(u)->>'isDeleted') AS "isDeleted",
           COALESCE(to_jsonb(u)->>'deleted_at', to_jsonb(u)->>'deletedAt') AS "deletedAt"
         FROM tblusers u
@@ -723,6 +823,12 @@ export class UsersService {
             to_jsonb(u)->>'roleId',
             to_jsonb(u)->>'roleid',
             to_jsonb(u)->>'role_id'
+          )
+        LEFT JOIN tblbranches b
+          ON b.id::text = COALESCE(
+            to_jsonb(u)->>'branchId',
+            to_jsonb(u)->>'branchid',
+            to_jsonb(u)->>'branch_id'
           )
         ${deletedFilter}
         ORDER BY u.id DESC`,
@@ -776,13 +882,28 @@ export class UsersService {
           )::int AS "roleId",
           COALESCE(to_jsonb(r)->>'roleName', to_jsonb(r)->>'rolename') AS "roleName",
           COALESCE(to_jsonb(r)->>'roleMenus', to_jsonb(r)->>'rolemenus') AS "roleMenus",
-          COALESCE(to_jsonb(r)->>'rolePermission', to_jsonb(r)->>'rolepermission') AS "rolePermission"
+          COALESCE(to_jsonb(r)->>'rolePermission', to_jsonb(r)->>'rolepermission') AS "rolePermission",
+          NULLIF(
+            COALESCE(
+              to_jsonb(u)->>'branchId',
+              to_jsonb(u)->>'branchid',
+              to_jsonb(u)->>'branch_id'
+            ),
+            ''
+          )::int AS "branchId",
+          COALESCE(to_jsonb(b)->>'branchName', to_jsonb(b)->>'branchname') AS "branchName"
         FROM tblusers u
         LEFT JOIN tblrbac r
           ON r.id::text = COALESCE(
             to_jsonb(u)->>'roleId',
             to_jsonb(u)->>'roleid',
             to_jsonb(u)->>'role_id'
+          )
+        LEFT JOIN tblbranches b
+          ON b.id::text = COALESCE(
+            to_jsonb(u)->>'branchId',
+            to_jsonb(u)->>'branchid',
+            to_jsonb(u)->>'branch_id'
           )
         WHERE u.id = $1
           AND COALESCE(
@@ -816,7 +937,11 @@ export class UsersService {
     }
   }
 
-  async update(id: number, updateUserDto: UpdateUserDto) {
+  async update(
+    id: number,
+    updateUserDto: UpdateUserDto,
+    auditActor?: AuditActorContext,
+  ) {
     if (!Number.isFinite(id) || id <= 0) {
       return {
         success: false,
@@ -836,6 +961,11 @@ export class UsersService {
           message: 'User not found',
         };
       }
+
+      const beforeUser = await this.findOne(id);
+      const beforeSnapshot = beforeUser.success
+        ? (beforeUser.data as Record<string, unknown>)
+        : null;
 
       const columns = await this.getTableColumns('tblusers');
       if (columns.length === 0) {
@@ -973,6 +1103,20 @@ export class UsersService {
         };
       }
 
+      const afterUser = await this.findOne(id);
+      await this.auditLogService.logMutation({
+        action: 'USER_UPDATE',
+        entityType: 'user',
+        entityId: id,
+        actor: auditActor,
+        description: `Updated user #${id}`,
+        requestBody: this.sanitizeUserRequestBody(updateUserDto),
+        before: beforeSnapshot,
+        after: afterUser.success
+          ? (afterUser.data as Record<string, unknown>)
+          : { id },
+      });
+
       return {
         success: true,
         id: result.rows[0].id,
@@ -985,7 +1129,7 @@ export class UsersService {
     }
   }
 
-  async remove(id: number) {
+  async remove(id: number, auditActor?: AuditActorContext) {
     if (!Number.isFinite(id) || id <= 0) {
       return {
         success: false,
@@ -994,6 +1138,11 @@ export class UsersService {
     }
 
     try {
+      const beforeUser = await this.findOne(id);
+      const beforeSnapshot = beforeUser.success
+        ? (beforeUser.data as Record<string, unknown>)
+        : null;
+
       const columns = await this.getTableColumns('tblusers');
       const isDeletedColumn = this.pickColumn(columns, ['is_deleted', 'isDeleted']);
       const deletedAtColumn = this.pickColumn(columns, ['deleted_at', 'deletedAt']);
@@ -1023,6 +1172,16 @@ export class UsersService {
           };
         }
 
+        await this.auditLogService.logMutation({
+          action: 'USER_DELETE',
+          entityType: 'user',
+          entityId: softDelete.rows[0].id,
+          actor: auditActor,
+          description: `Deleted user #${softDelete.rows[0].id}`,
+          before: beforeSnapshot,
+          after: { id: softDelete.rows[0].id, deleted: true },
+        });
+
         return {
           success: true,
           id: softDelete.rows[0].id,
@@ -1044,6 +1203,16 @@ export class UsersService {
             message: 'User not found',
           };
         }
+
+        await this.auditLogService.logMutation({
+          action: 'USER_DELETE',
+          entityType: 'user',
+          entityId: softDelete.rows[0].id,
+          actor: auditActor,
+          description: `Deleted user #${softDelete.rows[0].id}`,
+          before: beforeSnapshot,
+          after: { id: softDelete.rows[0].id, deleted: true },
+        });
 
         return {
           success: true,
@@ -1071,6 +1240,16 @@ export class UsersService {
         };
       }
 
+      await this.auditLogService.logMutation({
+        action: 'USER_DELETE',
+        entityType: 'user',
+        entityId: softDelete.rows[0].id,
+        actor: auditActor,
+        description: `Deleted user #${softDelete.rows[0].id}`,
+        before: beforeSnapshot,
+        after: { id: softDelete.rows[0].id, deleted: true },
+      });
+
       return {
         success: true,
         id: softDelete.rows[0].id,
@@ -1083,7 +1262,7 @@ export class UsersService {
     }
   }
 
-  async restore(id: number) {
+  async restore(id: number, auditActor?: AuditActorContext) {
     if (!Number.isFinite(id) || id <= 0) {
       return {
         success: false,
@@ -1129,6 +1308,15 @@ export class UsersService {
           message: 'User not found',
         };
       }
+
+      await this.auditLogService.logMutation({
+        action: 'USER_RESTORE',
+        entityType: 'user',
+        entityId: restored.rows[0].id,
+        actor: auditActor,
+        description: `Restored user #${restored.rows[0].id}`,
+        after: { id: restored.rows[0].id, deleted: false },
+      });
 
       return {
         success: true,

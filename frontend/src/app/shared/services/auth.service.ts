@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import { apiClient } from './api-client';
 import {
   clearAccessToken,
+  getAccessToken,
   getRefreshToken,
   isSessionPersistent,
   setSessionTokens,
@@ -26,12 +27,14 @@ export interface LoginResponse {
   providedIn: 'root',
 })
 export class AuthService {
+  private ensureSessionPromise: Promise<boolean> | null = null;
+
   constructor(
     private readonly rbacService: RbacService,
     private readonly branchService: BranchService,
   ) {}
 
-  async login(username: string, password: string, persist = false): Promise<LoginResponse> {
+  async login(username: string, password: string, persist = true): Promise<LoginResponse> {
     const response = await apiClient.post<LoginResponse>('/login', {
       username,
       password,
@@ -74,5 +77,50 @@ export class AuthService {
     }
 
     return response.data;
+  }
+
+  /**
+   * Returns true when the user has a valid access token, or when a refresh
+   * token can successfully restore the session.
+   */
+  async ensureSession(): Promise<boolean> {
+    if (getAccessToken() && this.rbacService.isAuthenticated()) {
+      return true;
+    }
+
+    if (this.ensureSessionPromise) {
+      return this.ensureSessionPromise;
+    }
+
+    this.ensureSessionPromise = this.restoreSession().finally(() => {
+      this.ensureSessionPromise = null;
+    });
+
+    return this.ensureSessionPromise;
+  }
+
+  private async restoreSession(): Promise<boolean> {
+    if (getAccessToken() && this.rbacService.isAuthenticated()) {
+      return true;
+    }
+
+    if (!getRefreshToken()) {
+      if (getAccessToken()) {
+        this.logout();
+      }
+      return false;
+    }
+
+    try {
+      const result = await this.refreshSession();
+      if (result.success && result.accessToken && this.rbacService.isAuthenticated()) {
+        return true;
+      }
+    } catch {
+      // Fall through to clear below.
+    }
+
+    this.logout();
+    return false;
   }
 }

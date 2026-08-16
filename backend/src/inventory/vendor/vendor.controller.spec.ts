@@ -14,7 +14,7 @@ describe('VendorController', () => {
       providers: [
         VendorService,
         { provide: DatabaseService, useValue: {} },
-        { provide: AuditLogService, useValue: {} },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
         { provide: ConfigService, useValue: { get: () => 'test-secret' } },
       ],
     }).compile();

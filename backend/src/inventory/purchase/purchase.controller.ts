@@ -17,6 +17,7 @@ import { resolveBranchId } from 'src/common/utils/resolve-branch-id';
 import { ListPurchaseQueryDto } from './dto/list-purchase-query.dto';
 import { DeletePurchaseWithAuthDto } from './dto/delete-purchase-with-auth.dto';
 import { AuditActorContext } from 'src/audit-log/audit-log.service';
+import { buildAuditContext } from 'src/common/utils/build-audit-context';
 
 @Controller('purchase')
 @UseGuards(JwtAuthGuard)
@@ -26,18 +27,7 @@ export class PurchaseController {
   private buildAuditContext(
     request: { user?: Record<string, unknown>; ip?: string },
   ): AuditActorContext {
-    const userId = Number(request.user?.sub);
-    const branchId = Number(
-      request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch,
-    );
-
-    return {
-      userId: Number.isFinite(userId) ? userId : undefined,
-      username: String(request.user?.username ?? '').trim() || undefined,
-      roleName: String(request.user?.roleName ?? request.user?.role_name ?? '').trim() || undefined,
-      branchId: Number.isFinite(branchId) ? branchId : undefined,
-      ipAddress: String(request.ip ?? '').trim() || undefined,
-    };
+    return buildAuditContext(request);
   }
 
   private withEffectiveBranchScope(
@@ -187,24 +177,26 @@ export class PurchaseController {
   @Patch(':id/revert-in-progress')
   revertInProgress(
     @Param('id') id: string,
-    @Req() request: { user?: { sub?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     return this.purchaseService.revertInProgress(
       +id,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
   @Patch(':id/revert-deliveries')
   revertDeliveries(
     @Param('id') id: string,
-    @Req() request: { user?: { sub?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     return this.purchaseService.revertToDeliveries(
       +id,
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -286,7 +278,7 @@ export class PurchaseController {
   async addProductItem(
     @Param('id') id: string,
     @Body() body: Record<string, unknown>,
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     return this.purchaseService.addProductItem(
@@ -305,6 +297,7 @@ export class PurchaseController {
             : undefined,
       },
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -312,7 +305,7 @@ export class PurchaseController {
   async updateProductItem(
     @Param('id') id: string,
     @Body() body: Record<string, unknown>,
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const userId = Number(request.user?.sub);
     return this.purchaseService.updateProductItem(
@@ -333,6 +326,7 @@ export class PurchaseController {
             : undefined,
       },
       Number.isFinite(userId) ? userId : undefined,
+      this.buildAuditContext(request),
     );
   }
 
@@ -340,23 +334,33 @@ export class PurchaseController {
   async updateSerialsAssignment(
     @Param('id') id: string,
     @Body() body: Record<string, unknown>,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    return this.purchaseService.updateSerialsAssignment(+id, {
-      oldProductId: body.oldProductId !== undefined ? Number(body.oldProductId) : null,
-      oldCapacityId: body.oldCapacityId !== undefined ? Number(body.oldCapacityId) : null,
-      newProductId: Number(body.newProductId),
-      newCapacityId: Number(body.newCapacityId),
-    });
+    return this.purchaseService.updateSerialsAssignment(
+      +id,
+      {
+        oldProductId: body.oldProductId !== undefined ? Number(body.oldProductId) : null,
+        oldCapacityId: body.oldCapacityId !== undefined ? Number(body.oldCapacityId) : null,
+        newProductId: Number(body.newProductId),
+        newCapacityId: Number(body.newCapacityId),
+      },
+      this.buildAuditContext(request),
+    );
   }
 
   @Post(':id/remove-product-item')
   async removeProductItem(
     @Param('id') id: string,
     @Body() body: Record<string, unknown>,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    return this.purchaseService.removeProductItem(+id, {
-      productId: Number(body.productId),
-      capacityId: Number(body.capacityId),
-    });
+    return this.purchaseService.removeProductItem(
+      +id,
+      {
+        productId: Number(body.productId),
+        capacityId: Number(body.capacityId),
+      },
+      this.buildAuditContext(request),
+    );
   }
 }

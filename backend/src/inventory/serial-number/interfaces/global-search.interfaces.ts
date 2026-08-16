@@ -23,6 +23,14 @@ export interface GlobalSearchResponse {
   pageSize: number;
 }
 
+export interface BulkSearchResponse {
+  success: boolean;
+  items: GlobalSearchResult[];
+  total: number;
+  queriedCount: number;
+  notFound: string[];
+}
+
 export interface BulkTransferResponse {
   success: boolean;
   message: string;

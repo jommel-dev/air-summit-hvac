@@ -9,6 +9,7 @@ import {
 import { SalesOrderService } from '../sales-order/sales-order.service';
 import { PublicOrderFormDto } from '../sales-order/dto/public-order-form.dto';
 import { DatabaseService } from 'src/database/database.service';
+import { catalogActiveSql } from 'src/common/utils/catalog-soft-delete';
 
 @Controller('public/order-form')
 export class PublicOrderFormController {
@@ -43,6 +44,8 @@ export class PublicOrderFormController {
        FROM tblproducts p
        JOIN tblcapacity c ON COALESCE(to_jsonb(c)->>'prodId', to_jsonb(c)->>'prod_id', to_jsonb(c)->>'productId', to_jsonb(c)->>'product_id') = p.id::text
        LEFT JOIN tblbrands b ON b.id::text = COALESCE(to_jsonb(p)->>'brandId', to_jsonb(p)->>'brand_id')
+       WHERE ${catalogActiveSql('p')}
+         AND ${catalogActiveSql('c')}
        ORDER BY "brandName" ASC, "productName" ASC, capacity ASC`,
     );
 

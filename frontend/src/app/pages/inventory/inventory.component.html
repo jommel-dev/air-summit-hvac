@@ -2,6 +2,59 @@
   <app-page-breadcrumb pageTitle="Inventory" />
   <app-serial-install-dialog></app-serial-install-dialog>
 
+  @if (isGuardDialogOpen) {
+    <div class="fixed inset-0 z-100010 bg-gray-950/55 backdrop-blur-sm" (click)="cancelGuardDialog()"></div>
+    <div class="fixed inset-0 z-100011 flex items-center justify-center p-4">
+      <div class="w-full max-w-md overflow-hidden rounded-[28px] border border-gray-200 bg-white shadow-2xl dark:border-gray-800 dark:bg-gray-900" (click)="$event.stopPropagation()">
+        <div class="border-b border-gray-200 bg-linear-to-r from-amber-50 via-white to-sky-50 px-6 py-5 dark:border-gray-800 dark:from-amber-500/10 dark:via-gray-900 dark:to-sky-500/10">
+          <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-700 dark:text-amber-300">Inventory Guard</p>
+          <h3 class="mt-2 text-xl font-semibold text-gray-900 dark:text-white">{{ getGuardDialogTitle() }}</h3>
+        </div>
+
+        <div class="space-y-4 px-6 py-5">
+          <p class="text-sm leading-6 text-gray-600 dark:text-gray-300">{{ getGuardDialogMessage() }}</p>
+
+          @if (guardDialogMode === 'delete-product' || guardDialogMode === 'delete-capacity') {
+            <div class="rounded-2xl border border-rose-200 bg-rose-50/80 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-100">
+              This hides the item from new orders. Pending SO/PO that still use it will need a replacement immediately.
+            </div>
+          }
+
+          @if (guardDialogMode === 'delete-brand') {
+            <div class="rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+              Brands that still have active products cannot be deleted.
+            </div>
+          }
+
+          @if (guardDialogError) {
+            <div class="rounded-2xl border border-error-200 bg-error-50 px-4 py-3 text-sm text-error-700 dark:border-error-500/20 dark:bg-error-500/10 dark:text-error-300">
+              {{ guardDialogError }}
+            </div>
+          }
+        </div>
+
+        <div class="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          <button
+            type="button"
+            (click)="cancelGuardDialog()"
+            [disabled]="isGuardDialogBusy"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            Keep Item
+          </button>
+          <button
+            type="button"
+            (click)="confirmGuardDialog()"
+            [disabled]="isGuardDialogBusy"
+            class="rounded-lg border border-error-300 bg-error-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-error-600 disabled:opacity-50 dark:border-error-500/50 dark:bg-error-500 dark:hover:bg-error-600"
+          >
+            {{ getGuardDialogConfirmText() }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
   <div class="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-white/2">
     <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div>
@@ -81,6 +134,16 @@
         {{ errorMessage }}
       </div>
     } @else {
+      @if (successMessage) {
+        <div class="mt-4 rounded-lg border border-success-300 bg-success-50 px-4 py-3 text-sm text-success-700 dark:border-success-500/30 dark:bg-success-500/10 dark:text-success-400">
+          {{ successMessage }}
+        </div>
+      }
+      @if (warningMessage) {
+        <div class="mt-4 rounded-lg border border-warning-300 bg-warning-50 px-4 py-3 text-sm text-warning-700 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-400">
+          {{ warningMessage }}
+        </div>
+      }
       <div class="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
         <section class="rounded-xl border border-gray-200 p-4 dark:border-gray-800">
           <h4 class="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-200">Product List</h4>
@@ -110,7 +173,7 @@
                 @if (isBrandExpanded(folder.name)) {
                   <div class="ml-4 mt-1 space-y-1 border-l border-gray-200 pl-3 dark:border-gray-700">
                     @for (product of folder.products; track product.id) {
-                      <div>
+                      <div data-product-context="true" (contextmenu)="openProductContextMenu($event, folder.name, product.id)">
                         <button
                           type="button"
                           (click)="toggleProduct(folder.name, product.id); selectProduct(folder.name, product.id)"
@@ -126,7 +189,9 @@
                             @for (capacity of product.capacities; track capacity.id) {
                               <button
                                 type="button"
+                                data-capacity-context="true"
                                 (click)="selectCapacity(folder.name, product.id, capacity.id)"
+                                (contextmenu)="openCapacityContextMenu($event, folder.name, product.id, capacity.id)"
                                 class="block w-full rounded-md px-2 py-1 text-left text-sm transition hover:bg-gray-50 dark:hover:bg-gray-800"
                                 [ngClass]="isCapacitySelected(capacity.id)
                                   ? 'text-brand-700 dark:text-brand-300'
@@ -191,6 +256,42 @@
               </button>
             </div>
           }
+
+          @if (productContextMenuVisible) {
+            <div
+              data-product-context-menu="true"
+              class="fixed z-100010 min-w-45 rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900"
+              [style.left.px]="productContextMenuX"
+              [style.top.px]="productContextMenuY"
+              (click)="$event.stopPropagation()"
+            >
+              <button
+                type="button"
+                class="block w-full rounded-md px-3 py-2 text-left text-sm text-error-600 hover:bg-error-50 dark:text-error-400 dark:hover:bg-error-500/10"
+                (click)="onProductContextAction('delete-product')"
+              >
+                Delete Product
+              </button>
+            </div>
+          }
+
+          @if (capacityContextMenuVisible) {
+            <div
+              data-capacity-context-menu="true"
+              class="fixed z-100010 min-w-45 rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900"
+              [style.left.px]="capacityContextMenuX"
+              [style.top.px]="capacityContextMenuY"
+              (click)="$event.stopPropagation()"
+            >
+              <button
+                type="button"
+                class="block w-full rounded-md px-3 py-2 text-left text-sm text-error-600 hover:bg-error-50 dark:text-error-400 dark:hover:bg-error-500/10"
+                (click)="onCapacityContextAction('delete-capacity')"
+              >
+                Delete Capacity
+              </button>
+            </div>
+          }
         </section>
 
         <section class="rounded-xl border border-gray-200 p-5 dark:border-gray-800">
@@ -252,14 +353,24 @@
                     <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">Unit: {{ selectedProduct.unit || '-' }}</p>
                     <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">Unit Types: {{ (selectedProduct.unitTypes?.length ? selectedProduct.unitTypes?.join(', ') : '-') }}</p>
                   </div>
-                  <button
-                    type="button"
-                    (click)="editSelectedProductDetails()"
-                    [disabled]="isUpdatingProduct"
-                    class="rounded-lg border border-brand-300 px-3 py-2 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
-                  >
-                    {{ isUpdatingProduct ? 'Saving...' : 'Edit Product' }}
-                  </button>
+                  <div class="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      (click)="editSelectedProductDetails()"
+                      [disabled]="isUpdatingProduct || isDeletingProduct"
+                      class="rounded-lg border border-brand-300 px-3 py-2 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
+                    >
+                      {{ isUpdatingProduct ? 'Saving...' : 'Edit Product' }}
+                    </button>
+                    <button
+                      type="button"
+                      (click)="deleteSelectedProduct()"
+                      [disabled]="isUpdatingProduct || isDeletingProduct"
+                      class="rounded-lg border border-error-300 px-3 py-2 text-xs font-medium text-error-600 hover:bg-error-50 disabled:opacity-50 dark:border-error-500/40 dark:text-error-400 dark:hover:bg-error-500/10"
+                    >
+                      {{ isDeletingProduct ? 'Deleting...' : 'Delete Product' }}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -299,14 +410,22 @@
 
           @if (selectedNodeType === 'capacity' && selectedCapacity) {
             <div class="mt-4 space-y-3">
-              <div class="flex items-center justify-end">
+              <div class="flex items-center justify-end gap-2">
                 <button
                   type="button"
                   (click)="editSelectedCapacityDetails()"
-                  [disabled]="isUpdatingCapacity"
+                  [disabled]="isUpdatingCapacity || isDeletingCapacity"
                   class="rounded-lg border border-brand-300 px-3 py-2 text-xs font-medium text-brand-700 hover:bg-brand-50 disabled:opacity-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
                 >
                   {{ isUpdatingCapacity ? 'Saving...' : 'Edit Capacity Details' }}
+                </button>
+                <button
+                  type="button"
+                  (click)="deleteSelectedCapacity()"
+                  [disabled]="isUpdatingCapacity || isDeletingCapacity"
+                  class="rounded-lg border border-error-300 px-3 py-2 text-xs font-medium text-error-600 hover:bg-error-50 disabled:opacity-50 dark:border-error-500/40 dark:text-error-400 dark:hover:bg-error-500/10"
+                >
+                  {{ isDeletingCapacity ? 'Deleting...' : 'Delete Capacity' }}
                 </button>
               </div>
 

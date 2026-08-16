@@ -30,7 +30,7 @@ export class SigninFormComponent {
   ) {}
 
   showPassword = false;
-  isChecked = false;
+  isChecked = true;
 
   username = '';
   password = '';
@@ -50,7 +50,8 @@ export class SigninFormComponent {
     this.isSubmitting = true;
 
     try {
-      const result = await this.authService.login(this.username, this.password, this.isChecked);
+      // Always persist to localStorage so new tabs can share the session.
+      const result = await this.authService.login(this.username, this.password, true);
 
       if (!result.success) {
         this.errorMessage = result.message ?? 'Invalid username or password';

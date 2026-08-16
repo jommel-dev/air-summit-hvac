@@ -242,8 +242,20 @@ export type SalesTab =
   | 'sales-receivable'
   | 'remitted-sales';
 
-export interface SalesReturnSerialOptionGroup {
+export interface SalesReturnSerialUnitGroup {
   unitLabel: string;
+  serials: string[];
+}
+
+export interface SalesReturnSerialOptionGroup {
+  key: string;
+  productItemId: number;
+  productId: string;
+  capacityId: string;
+  productLabel: string;
+  capacityLabel: string;
+  totalSetQty: number;
+  unitGroups: SalesReturnSerialUnitGroup[];
   serials: string[];
 }
 
@@ -433,6 +445,10 @@ export interface SalesOrderDetailProductItem {
   salesId: number;
   status: string;
   serialNumbers: Record<string, string[]>;
+  productName?: string;
+  capacityName?: string;
+  isProductDeleted?: boolean;
+  isCapacityDeleted?: boolean;
 }
 export interface SalesOrderDetailServiceItem {
   id: number;
@@ -496,6 +512,23 @@ export interface ProductOption {
   capacities: ProductCapacityOption[];
 }
 
+export interface PendingCatalogAlertItem {
+  productId: number | null;
+  capacityId: number | null;
+  productName: string;
+  capacityName: string;
+  productDeleted: boolean;
+  capacityDeleted: boolean;
+}
+
+export interface PendingCatalogAlert {
+  orderType: 'sales' | 'purchase';
+  id: number;
+  orderNumber: string;
+  status: string;
+  items: PendingCatalogAlertItem[];
+}
+
 export interface ProjectMasterOption {
   id: number;
   projectCode: string;
@@ -508,6 +541,11 @@ export interface ProjectMasterOption {
   projectManager?: string;
   projectStatus?: string;
   projectNotes?: string;
+  customerId?: string;
+  customerName?: string;
+  pocName?: string;
+  pocPhone?: string;
+  pocEmail?: string;
   relatedSOCount?: number;
   createdBy?: string;
   createdAt?: string;
@@ -521,6 +559,8 @@ export interface ProjectWithRelatedSOs extends ProjectMasterOption {
     customerId: string;
     customerName: string;
     totalAmount: number;
+    paidAmount?: number;
+    balance?: number;
     status: string;
     scheduleDate?: string | null;
     createdAt?: string | null;
@@ -899,7 +939,7 @@ export class SalesOrderService {
     branchId?: number;
   }): Promise<{ items: ProjectMasterOption[]; meta: SalesListMeta }> {
     const response = await apiClient.get<{ success: boolean; items?: ProjectMasterOption[]; meta?: SalesListMeta }>(
-      '/sales-order/projects/search',
+      '/projects',
       { params },
     );
 
@@ -914,7 +954,7 @@ export class SalesOrderService {
       success: boolean;
       message?: string;
       data?: ProjectWithRelatedSOs;
-    }>(`/sales-order/projects/${projectId}/related-orders`);
+    }>(`/projects/${projectId}`);
 
     if (!response.data.success || !response.data.data) {
       return null;
@@ -926,6 +966,14 @@ export class SalesOrderService {
   async getProducts(): Promise<ProductOption[]> {
     const response = await apiClient.get<{ success: boolean; items?: ProductOption[] }>('/products');
     return response.data.items ?? [];
+  }
+
+  async getPendingCatalogAlerts(): Promise<PendingCatalogAlert[]> {
+    const response = await apiClient.get<{
+      success: boolean;
+      salesOrders?: PendingCatalogAlert[];
+    }>('/products/pending-catalog-alerts');
+    return response.data.salesOrders ?? [];
   }
 
   async scanSalesSerial(payload: {
@@ -1041,6 +1089,13 @@ export class SalesOrderService {
     const response = await apiClient.patch<{ success: boolean; message?: string; updatedCount?: number; skipped?: Array<{ id: number; soNumber: string; reason: string }> }>(
       '/sales-order/bulk/remit',
       { orderIds },
+    );
+    return response.data;
+  }
+
+  async completeProjectSalesOrder(id: number): Promise<{ success: boolean; message?: string }> {
+    const response = await apiClient.patch<{ success: boolean; message?: string }>(
+      `/sales-order/${id}/complete-project`,
     );
     return response.data;
   }

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 interface AccountTitleRow {
   id: number;
@@ -180,7 +181,10 @@ export interface AccountingReportPrintSettingsPayload {
 
 @Injectable()
 export class AccountingService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async getAccountTitles(): Promise<AccountTitleRow[]> {
     const result = await this.db.query<AccountTitleRow>(
@@ -196,7 +200,10 @@ export class AccountingService {
     return result.rows;
   }
 
-  async upsertAccountTitle(payload: UpsertAccountTitlePayload): Promise<AccountTitleRow> {
+  async upsertAccountTitle(
+    payload: UpsertAccountTitlePayload,
+    auditActor?: AuditActorContext,
+  ): Promise<AccountTitleRow> {
     const accountNumber = String(payload.accountNumber ?? '').trim();
     const description = String(payload.description ?? '').trim();
 
@@ -218,7 +225,18 @@ export class AccountingService {
       [accountNumber, description],
     );
 
-    return result.rows[0];
+    const row = result.rows[0];
+    await this.auditLogService.logMutation({
+      action: 'ACCOUNTING_ACCOUNT_TITLE_CREATE',
+      entityType: 'account-title',
+      entityId: row?.id,
+      actor: auditActor,
+      description: `Created account title ${accountNumber} - ${description}`,
+      requestBody: payload as unknown as Record<string, unknown>,
+      after: row as unknown as Record<string, unknown>,
+    });
+
+    return row;
   }
 
   async getNextChequeVoucherNumber(): Promise<string> {
@@ -375,7 +393,10 @@ export class AccountingService {
     }));
   }
 
-  async releaseChequeVoucher(payload: CreateChequeVoucherPayload): Promise<ChequeVoucherRow & {
+  async releaseChequeVoucher(
+    payload: CreateChequeVoucherPayload,
+    auditActor?: AuditActorContext,
+  ): Promise<ChequeVoucherRow & {
     deposits: Array<{ bankName: string; chequeNo: string; chequeDate: string | null; amount: number }>;
     invoices: Array<{ invoiceNo: string; invoiceDate: string | null; description: string; amount: number }>;
     accountTitles: Array<{ accountNumber: string; description: string; debit: number; credit: number }>;
@@ -590,12 +611,23 @@ export class AccountingService {
       };
     });
 
+    await this.auditLogService.logMutation({
+      action: 'ACCOUNTING_CHEQUE_VOUCHER_RELEASE',
+      entityType: 'cheque-voucher',
+      entityId: result.id,
+      actor: auditActor,
+      description: `Released cheque voucher ${result.cvNo}`,
+      requestBody: payload as unknown as Record<string, unknown>,
+      after: result as unknown as Record<string, unknown>,
+    });
+
     return result;
   }
 
   async updateChequeVoucher(
     cvNo: string,
     payload: UpdateChequeVoucherPayload,
+    auditActor?: AuditActorContext,
   ): Promise<ChequeVoucherRow & {
     deposits: Array<{ bankName: string; chequeNo: string; chequeDate: string | null; amount: number }>;
     invoices: Array<{ invoiceNo: string; invoiceDate: string | null; description: string; amount: number }>;
@@ -639,6 +671,26 @@ export class AccountingService {
           credit: Number(item.credit) || 0,
         }))
       : [];
+
+    const beforeResult = await this.db.query<ChequeVoucherRow>(
+      `SELECT
+          id,
+          cv_no AS "cvNo",
+          voucher_type AS "voucherType",
+          payee,
+          voucher_date::text AS "voucherDate",
+          tin_number AS "tinNumber",
+          address,
+          zip_code AS "zipCode",
+          particulars,
+          released_at::text AS "releasedAt",
+          prepared_by AS "preparedBy"
+        FROM tblcheque_vouchers
+        WHERE cv_no = $1
+        LIMIT 1`,
+      [cvNo],
+    );
+    const beforeSnapshot = (beforeResult.rows[0] ?? null) as unknown as Record<string, unknown> | null;
 
     const result = await this.db.withTransaction(async (client) => {
       const preparedBy = this.nullIfBlank(payload.preparedBy);
@@ -784,6 +836,17 @@ export class AccountingService {
       };
     });
 
+    await this.auditLogService.logMutation({
+      action: 'ACCOUNTING_CHEQUE_VOUCHER_UPDATE',
+      entityType: 'cheque-voucher',
+      entityId: result.id,
+      actor: auditActor,
+      description: `Updated cheque voucher ${result.cvNo}`,
+      requestBody: payload as unknown as Record<string, unknown>,
+      before: beforeSnapshot,
+      after: result as unknown as Record<string, unknown>,
+    });
+
     return result;
   }
 
@@ -860,7 +923,10 @@ export class AccountingService {
     }));
   }
 
-  async postGeneralJournal(payload: CreateGeneralJournalPayload): Promise<GeneralJournalRow & {
+  async postGeneralJournal(
+    payload: CreateGeneralJournalPayload,
+    auditActor?: AuditActorContext,
+  ): Promise<GeneralJournalRow & {
     lines: Array<{ accountNumber: string; description: string; debit: number; credit: number }>;
   }> {
     const journalDate = this.normalizeDateOrNull(payload.journalDate);
@@ -903,7 +969,7 @@ export class AccountingService {
       throw new BadRequestException('Total debit must equal total credit.');
     }
 
-    return this.db.withTransaction(async (client) => {
+    const result = await this.db.withTransaction(async (client) => {
       await client.query('LOCK TABLE tblgeneral_journal IN EXCLUSIVE MODE');
 
       const { prefix, suffix } = await this.getGeneralJournalNumberFormat();
@@ -983,11 +1049,24 @@ export class AccountingService {
         lines: savedLines,
       };
     });
+
+    await this.auditLogService.logMutation({
+      action: 'ACCOUNTING_JOURNAL_POST',
+      entityType: 'general-journal',
+      entityId: result.id,
+      actor: auditActor,
+      description: `Posted general journal ${result.journalNumber}`,
+      requestBody: payload as unknown as Record<string, unknown>,
+      after: result as unknown as Record<string, unknown>,
+    });
+
+    return result;
   }
 
   async updateGeneralJournal(
     journalNumber: string,
     payload: UpdateGeneralJournalPayload,
+    auditActor?: AuditActorContext,
   ): Promise<GeneralJournalRow & {
     lines: Array<{ accountNumber: string; description: string; debit: number; credit: number }>;
   }> {
@@ -1038,7 +1117,25 @@ export class AccountingService {
       throw new BadRequestException('Total debit must equal total credit.');
     }
 
-    return this.db.withTransaction(async (client) => {
+    const beforeResult = await this.db.query<GeneralJournalRow>(
+      `SELECT
+          id,
+          COALESCE(reference_number, journal_number) AS "journalNumber",
+          journal_date::text AS "journalDate",
+          description,
+          COALESCE(total_debit, 0)::float8 AS "totalDebit",
+          COALESCE(total_credit, 0)::float8 AS "totalCredit",
+          status,
+          posted_at::text AS "postedAt",
+          reference_number AS "referenceNumber"
+        FROM tblgeneral_journal
+        WHERE COALESCE(reference_number, journal_number) = $1
+        LIMIT 1`,
+      [normalizedJournalNumber],
+    );
+    const beforeSnapshot = (beforeResult.rows[0] ?? null) as unknown as Record<string, unknown> | null;
+
+    const result = await this.db.withTransaction(async (client) => {
       const journalResult = await client.query<GeneralJournalRow>(
         `UPDATE tblgeneral_journal
           SET
@@ -1111,6 +1208,19 @@ export class AccountingService {
         lines: savedLines,
       };
     });
+
+    await this.auditLogService.logMutation({
+      action: 'ACCOUNTING_JOURNAL_UPDATE',
+      entityType: 'general-journal',
+      entityId: result.id,
+      actor: auditActor,
+      description: `Updated general journal ${result.journalNumber}`,
+      requestBody: payload as unknown as Record<string, unknown>,
+      before: beforeSnapshot,
+      after: result as unknown as Record<string, unknown>,
+    });
+
+    return result;
   }
 
   async getReportPrintSettings(
@@ -1160,11 +1270,16 @@ export class AccountingService {
     reportKeyInput: string,
     payload: AccountingReportPrintSettingsPayload,
     options: { branchId?: number; userId?: number },
+    auditActor?: AuditActorContext,
   ): Promise<{ reportKey: string; branchId: number | null; settings: Record<string, unknown> }> {
     const reportKey = this.normalizeReportKey(reportKeyInput);
     const settings = this.normalizeReportPrintSettings(payload);
     const branchId = options.branchId ?? 0;
     const userId = options.userId ?? null;
+    const beforeSnapshot = (await this.getReportPrintSettings(
+      reportKey,
+      branchId || undefined,
+    )) as unknown as Record<string, unknown>;
 
     const settingsJson = JSON.stringify(settings);
 
@@ -1188,11 +1303,24 @@ export class AccountingService {
 
     const updatedRow = updated.rows[0];
     if (updatedRow) {
-      return {
+      const after = {
         reportKey: updatedRow.reportKey,
         branchId: updatedRow.branchId === 0 ? null : updatedRow.branchId,
         settings: this.normalizeReportPrintSettings(updatedRow.settings),
       };
+
+      await this.auditLogService.logMutation({
+        action: 'ACCOUNTING_REPORT_PRINT_SETTINGS_UPSERT',
+        entityType: 'report-print-settings',
+        entityId: reportKey,
+        actor: auditActor,
+        description: `Upserted report print settings for ${reportKey}`,
+        requestBody: payload as unknown as Record<string, unknown>,
+        before: beforeSnapshot,
+        after: after as unknown as Record<string, unknown>,
+      });
+
+      return after;
     }
 
     const inserted = await this.db.query<AccountingReportPrintSettingsRow>(
@@ -1218,11 +1346,24 @@ export class AccountingService {
       throw new BadRequestException('Unable to save report print settings.');
     }
 
-    return {
+    const after = {
       reportKey: insertedRow.reportKey,
       branchId: insertedRow.branchId === 0 ? null : insertedRow.branchId,
       settings: this.normalizeReportPrintSettings(insertedRow.settings),
     };
+
+    await this.auditLogService.logMutation({
+      action: 'ACCOUNTING_REPORT_PRINT_SETTINGS_UPSERT',
+      entityType: 'report-print-settings',
+      entityId: reportKey,
+      actor: auditActor,
+      description: `Upserted report print settings for ${reportKey}`,
+      requestBody: payload as unknown as Record<string, unknown>,
+      before: beforeSnapshot,
+      after: after as unknown as Record<string, unknown>,
+    });
+
+    return after;
   }
 
   private async getChequeVoucherNumberFormat(): Promise<{ prefix: string; suffix: string }> {

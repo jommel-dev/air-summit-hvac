@@ -3,6 +3,7 @@ import { CapacityController } from './capacity.controller';
 import { CapacityService } from './capacity.service';
 import { DatabaseService } from 'src/database/database.service';
 import { ConfigService } from '@nestjs/config';
+import { AuditLogService } from 'src/audit-log/audit-log.service';
 
 describe('CapacityController', () => {
   let controller: CapacityController;
@@ -14,6 +15,7 @@ describe('CapacityController', () => {
         CapacityService,
         { provide: DatabaseService, useValue: {} },
         { provide: ConfigService, useValue: { get: () => 'test-secret' } },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
       ],
     }).compile();
 

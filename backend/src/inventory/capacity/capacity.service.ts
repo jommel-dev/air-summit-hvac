@@ -3,10 +3,18 @@ import { CreateCapacityDto } from './dto/create-capacity.dto';
 import { UpdateCapacityDto } from './dto/update-capacity.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import {
+  catalogActiveSql,
+  findPendingCatalogAlerts,
+} from 'src/common/utils/catalog-soft-delete';
 
 @Injectable()
 export class CapacityService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   private async getTableColumns(
     executor: { query: PoolClient['query'] },
@@ -36,7 +44,10 @@ export class CapacityService {
     );
   }
 
-  async create(createCapacityDto: CreateCapacityDto) {
+  async create(
+    createCapacityDto: CreateCapacityDto,
+    auditActor?: AuditActorContext,
+  ) {
     const productId = Number(createCapacityDto.productId);
     const capacityValue = String(createCapacityDto.capacity ?? '').trim();
     const indoorModel = String(createCapacityDto.indoorModel ?? '').trim();
@@ -104,6 +115,7 @@ export class CapacityService {
        FROM tblcapacity c
        WHERE COALESCE(to_jsonb(c)->>$1, '') = $2::text
          AND LOWER(TRIM(COALESCE(to_jsonb(c)->>$3, ''))) = LOWER(TRIM($4))
+         AND ${catalogActiveSql('c')}
        LIMIT 1`,
       [productIdColumn, String(productId), capacityColumn, capacityValue],
     );
@@ -134,11 +146,30 @@ export class CapacityService {
       recordValues,
     );
 
+    const capacityId = insertResult.rows[0]?.id ?? null;
+    await this.auditLogService.logMutation({
+      action: 'CAPACITY_CREATE',
+      entityType: 'capacity',
+      entityId: capacityId,
+      actor: auditActor,
+      description: `Created capacity ${capacityValue} for product #${productId}`,
+      requestBody: createCapacityDto as unknown as Record<string, unknown>,
+      after: {
+        id: capacityId,
+        productId,
+        capacity: capacityValue,
+        indoorModel,
+        outdoorModel,
+        srp,
+        netPrice,
+      },
+    });
+
     return {
       success: true,
       message: 'Capacity added successfully',
       item: {
-        id: insertResult.rows[0]?.id ?? null,
+        id: capacityId,
       },
     };
   }
@@ -151,7 +182,11 @@ export class CapacityService {
     return `This action returns a #${id} capacity`;
   }
 
-  async update(id: number, updateCapacityDto: UpdateCapacityDto) {
+  async update(
+    id: number,
+    updateCapacityDto: UpdateCapacityDto,
+    auditActor?: AuditActorContext,
+  ) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid capacity id' };
     }
@@ -161,7 +196,7 @@ export class CapacityService {
     }
 
     try {
-      return await this.databaseService.withTransaction(async (client) => {
+      const result = await this.databaseService.withTransaction(async (client) => {
         const columns = await this.getTableColumns(client, 'tblcapacity');
         if (columns.length === 0) {
           return {
@@ -274,6 +309,7 @@ export class CapacityService {
              WHERE c."${productIdColumn}"::text = $1::text
                AND LOWER(TRIM(c."${capacityColumn}"::text)) = LOWER(TRIM($2::text))
                AND c."${idColumn}" <> $3
+               AND ${catalogActiveSql('c')}
              LIMIT 1`,
             [duplicateProductId, duplicateCapacityValue, id],
           );
@@ -296,6 +332,20 @@ export class CapacityService {
 
         return { success: true, message: 'Capacity updated successfully' };
       });
+
+      if (result?.success) {
+        await this.auditLogService.logMutation({
+          action: 'CAPACITY_UPDATE',
+          entityType: 'capacity',
+          entityId: id,
+          actor: auditActor,
+          description: `Updated capacity #${id}`,
+          requestBody: updateCapacityDto as unknown as Record<string, unknown>,
+          after: { id, message: result.message },
+        });
+      }
+
+      return result;
     } catch (error) {
       return {
         success: false,
@@ -304,7 +354,89 @@ export class CapacityService {
     }
   }
 
-  remove(id: number) {
-    return `This action removes a #${id} capacity`;
+  async remove(id: number, userId?: number, auditActor?: AuditActorContext) {
+    if (!Number.isFinite(id) || id <= 0) {
+      return { success: false, message: 'Invalid capacity id' };
+    }
+
+    try {
+      const columns = await this.getTableColumns(this.databaseService, 'tblcapacity');
+      const idColumn = this.pickColumn(columns, ['id']);
+      const deletedAtColumn = this.pickColumn(columns, ['deleted_at', 'deletedAt']);
+      const deletedByColumn = this.pickColumn(columns, ['deleted_by', 'deletedBy']);
+      const capacityColumn = this.pickColumn(columns, ['capacity', 'capacityValue', 'capacity_value', 'name']);
+
+      if (!idColumn) {
+        return { success: false, message: 'tblcapacity id column is not configured' };
+      }
+      if (!deletedAtColumn) {
+        return { success: false, message: 'tblcapacity.deleted_at is not configured' };
+      }
+
+      const existingResult = await this.databaseService.query<{
+        id: number;
+        capacity_value: string | null;
+      }>(
+        `SELECT
+           c."${idColumn}" AS id,
+           COALESCE(to_jsonb(c)->>'${capacityColumn ?? 'capacity'}', '') AS capacity_value
+         FROM tblcapacity c
+         WHERE c."${idColumn}" = $1
+           AND ${catalogActiveSql('c')}
+         LIMIT 1`,
+        [id],
+      );
+
+      if ((existingResult.rowCount ?? 0) === 0) {
+        return { success: false, message: `Capacity ${id} not found` };
+      }
+
+      const capacityName = existingResult.rows[0].capacity_value || `Capacity ${id}`;
+      const actorUserId =
+        Number.isFinite(Number(userId)) && Number(userId) > 0
+          ? Number(userId)
+          : Number(auditActor?.userId);
+
+      const values: unknown[] = [new Date().toISOString()];
+      const sets = [`"${deletedAtColumn}" = $1`];
+      if (deletedByColumn && Number.isFinite(actorUserId) && actorUserId > 0) {
+        values.push(actorUserId);
+        sets.push(`"${deletedByColumn}" = $${values.length}`);
+      }
+      values.push(id);
+
+      await this.databaseService.query(
+        `UPDATE tblcapacity c
+         SET ${sets.join(', ')}
+         WHERE c."${idColumn}" = $${values.length}`,
+        values,
+      );
+
+      const affectedPendingOrders = await findPendingCatalogAlerts(
+        this.databaseService,
+        { capacityId: id },
+      );
+
+      await this.auditLogService.logMutation({
+        action: 'CAPACITY_DELETE',
+        entityType: 'capacity',
+        entityId: id,
+        actor: auditActor ?? { userId: actorUserId },
+        description: `Soft deleted capacity ${capacityName}`,
+        before: { id, capacityName },
+      });
+
+      return {
+        success: true,
+        message: 'Capacity deleted successfully',
+        affectedPendingOrders,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message:
+          error instanceof Error ? error.message : 'Failed to delete capacity',
+      };
+    }
   }
 }

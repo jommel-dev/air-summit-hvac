@@ -19,25 +19,13 @@ export class AuditLogController {
       entityType?: string;
       entityId?: string;
     },
-    @Req() request: { user?: Record<string, unknown> },
   ) {
-    const branchId = Number(request.user?.branchId ?? request.user?.branch_id);
-    return this.auditLogService.findAll(
-      query,
-      Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
-    );
+    return this.auditLogService.findAll(query);
   }
 
   @Get(':id')
-  findOne(
-    @Param('id') id: string,
-    @Req() request: { user?: Record<string, unknown> },
-  ) {
-    const branchId = Number(request.user?.branchId ?? request.user?.branch_id);
-    return this.auditLogService.findOne(
-      Number(id),
-      Number.isFinite(branchId) && branchId > 0 ? branchId : undefined,
-    );
+  findOne(@Param('id') id: string) {
+    return this.auditLogService.findOne(Number(id));
   }
 
   @Post()
@@ -49,8 +37,13 @@ export class AuditLogController {
     const normalizedUserId = Number.isFinite(userId) ? userId : null;
     const username = String(request.user?.username ?? request.user?.name ?? '').trim() || null;
     const roleName = String(request.user?.roleName ?? request.user?.role ?? '').trim() || null;
-    const branchId = Number(request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch);
-    const normalizedBranchId = Number.isFinite(branchId) ? branchId : null;
+    const branchId = Number(
+      request.user?.branchId ??
+        request.user?.branch_id ??
+        request.user?.branch ??
+        request.user?.tokenBranchId,
+    );
+    const normalizedBranchId = Number.isFinite(branchId) && branchId > 0 ? branchId : null;
     const ipAddress = String(request.ip ?? '').trim().split(',')[0]?.trim() || null;
 
     void this.auditLogService.log({

@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { CapacityService } from './capacity.service';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditLogService } from 'src/audit-log/audit-log.service';
 
 describe('CapacityService', () => {
   let service: CapacityService;
@@ -10,6 +11,7 @@ describe('CapacityService', () => {
       providers: [
         CapacityService,
         { provide: DatabaseService, useValue: {} },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
       ],
     }).compile();
 

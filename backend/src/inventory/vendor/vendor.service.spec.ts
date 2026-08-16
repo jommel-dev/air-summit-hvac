@@ -11,7 +11,7 @@ describe('VendorService', () => {
       providers: [
         VendorService,
         { provide: DatabaseService, useValue: {} },
-        { provide: AuditLogService, useValue: {} },
+        { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
       ],
     }).compile();
 

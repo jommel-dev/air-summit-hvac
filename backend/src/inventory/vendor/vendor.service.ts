@@ -404,13 +404,15 @@ export class VendorService {
     }
   }
 
-  async remove(id: string) {
+  async remove(id: string, auditActor?: AuditActorContext) {
     const vendorId = String(id ?? '').trim();
     if (!vendorId) {
       return { success: false, message: 'Invalid vendor id' };
     }
 
     try {
+      const beforeSnapshot = await this.getVendorAuditSnapshot(vendorId);
+
       const deleteResult = await this.databaseService.query(
         `DELETE FROM tblvendors WHERE id::text = $1`,
         [vendorId],
@@ -419,6 +421,15 @@ export class VendorService {
       if ((deleteResult.rowCount ?? 0) === 0) {
         return { success: false, message: `Vendor ${vendorId} not found` };
       }
+
+      await this.auditLogService.logMutation({
+        action: 'STAKEHOLDER_DELETE',
+        entityType: 'stakeholder',
+        entityId: vendorId,
+        actor: auditActor,
+        description: `Deleted stakeholder ${String((beforeSnapshot?.name as string | undefined) ?? vendorId).trim() || vendorId}`,
+        before: beforeSnapshot,
+      });
 
       return { success: true };
     } catch (error) {

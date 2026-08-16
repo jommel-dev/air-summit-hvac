@@ -22,6 +22,23 @@
         {{ createSuccess }}
       </div>
     }
+
+    @if (pendingDeletedPurchaseAlerts.length > 0) {
+      <div class="mt-4 rounded-lg border border-warning-300 bg-warning-50 px-4 py-3 text-sm text-warning-800 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-300">
+        <p class="font-medium">A product on a pending purchase order was deleted. Change it immediately.</p>
+        <div class="mt-2 flex flex-wrap gap-2">
+          @for (alert of pendingDeletedPurchaseAlerts; track alert.id) {
+            <button
+              type="button"
+              (click)="openPendingDeletedPurchaseOrder(alert)"
+              class="rounded-full border border-warning-400 bg-white px-2.5 py-1 text-xs font-medium text-warning-800 hover:bg-warning-100 dark:border-warning-500/40 dark:bg-transparent dark:text-warning-300 dark:hover:bg-warning-500/10"
+            >
+              {{ alert.orderNumber }}
+            </button>
+          }
+        </div>
+      </div>
+    }
   </div>
 
   @if (isFormDrawerOpen) {
@@ -362,16 +379,25 @@
                 (click)="setActiveProductTab(index)"
                 class="rounded-lg border px-3 py-1.5 text-xs font-medium"
                 [ngClass]="activeProductTabIndex === index
-                  ? 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300'
-                  : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'"
+                  ? (isProductItemDeleted(item) ? 'border-warning-500 bg-warning-50 text-warning-800 dark:border-warning-400 dark:bg-warning-500/10 dark:text-warning-300' : 'border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-400 dark:bg-brand-500/10 dark:text-brand-300')
+                  : (isProductItemDeleted(item) ? 'border-warning-300 text-warning-700 hover:bg-warning-50 dark:border-warning-500/40 dark:text-warning-300' : 'border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800')"
               >
                 {{ getProductItemTabLabel(item, index) }}
+                @if (isProductItemDeleted(item)) {
+                  <span class="ml-1">!</span>
+                }
               </button>
             }
           </div>
 
           @if (getActiveProductItem(); as activeItem) {
-            <div class="rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+            <div class="rounded-lg border p-3"
+              [ngClass]="isProductItemDeleted(activeItem) ? 'border-warning-300 dark:border-warning-500/40' : 'border-gray-200 dark:border-gray-800'">
+              @if (getProductItemDeletedWarning(activeItem); as deletedWarning) {
+                <div class="mb-3 rounded-lg border border-warning-300 bg-warning-50 px-3 py-2 text-xs text-warning-800 dark:border-warning-500/30 dark:bg-warning-500/10 dark:text-warning-300">
+                  {{ deletedWarning }}
+                </div>
+              }
               <div class="mb-3 flex items-center justify-between">
                 <p class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Item {{ activeProductTabIndex + 1 }}</p>
                 @if (!isTransferPOViewOnly) {
@@ -412,7 +438,7 @@
 
                 <div>
                   <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Capacity</label>
-                  <select [(ngModel)]="activeItem.capacityId" [name]="'capacityId_' + activeProductTabIndex" [disabled]="isMasterDataDrawerMode() || isTransferPOViewOnly" (ngModelChange)="onCapacityChanged(activeProductTabIndex)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
+                  <select [ngModel]="activeItem.capacityId" [name]="'capacityId_' + activeProductTabIndex" [disabled]="isMasterDataDrawerMode() || isTransferPOViewOnly" (ngModelChange)="onCapacityChanged(activeProductTabIndex, $event)" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required>
                     <option value="">Select Capacity</option>
                     @for (capacity of getCapacitiesByProduct(activeItem.productId); track capacity.id) {
                       <option [value]="capacity.id">{{ capacity.name }}</option>
@@ -422,7 +448,7 @@
 
                 <div>
                   <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Unit Price</label>
-                  <input type="number" [(ngModel)]="activeItem.unitPrice" (ngModelChange)="recalculateTotalAmount()" [name]="'unitPrice_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
+                  <input type="number" [ngModel]="activeItem.unitPrice" (ngModelChange)="onUnitPriceChanged(activeProductTabIndex, $event)" [name]="'unitPrice_' + activeProductTabIndex" [readonly]="isTransferPOViewOnly" class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900" required />
                 </div>
                 <div>
                   <label class="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Total Set Qty</label>
@@ -1024,7 +1050,14 @@
           <tbody>
             @for (item of purchaseOrders; track item.id) {
               <tr class="border-b border-gray-100 dark:border-gray-800/70">
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.poNumber }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span>{{ item.poNumber }}</span>
+                    @if (purchaseOrderHasDeletedCatalogItem(item)) {
+                      <span class="rounded-full bg-warning-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning-800 dark:bg-warning-500/15 dark:text-warning-300">Deleted item</span>
+                    }
+                  </div>
+                </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.vendorName }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                   <div class="flex flex-wrap gap-1.5">

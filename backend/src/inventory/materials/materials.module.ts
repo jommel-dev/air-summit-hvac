@@ -17,13 +17,14 @@ import { Module } from '@nestjs/common';
 import { MaterialsService } from './materials.service';
 import { MaterialsController } from './materials.controller';
 import { DatabaseModule } from '../../database/database.module';
+import { AuditLogModule } from 'src/audit-log/audit-log.module';
 
 @Module({
   /**
    * imports: Other modules that this module depends on
    * DatabaseModule provides database connection
    */
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, AuditLogModule],
   
   /**
    * controllers: HTTP request handlers

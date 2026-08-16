@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { DatabaseService } from 'src/database/database.service';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 import type { BackupType } from './dto/create-backup.dto';
 
 export interface BackupLogRecord {
@@ -27,6 +28,7 @@ export class BackupService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly configService: ConfigService,
+    private readonly auditLogService: AuditLogService,
   ) {
     this.backupDir = join(process.cwd(), 'backups');
     if (!existsSync(this.backupDir)) {
@@ -289,7 +291,11 @@ export class BackupService {
 
   // ─── Public API ─────────────────────────────────────────────────────────────
 
-  async createBackup(backupType: BackupType, userId?: number): Promise<BackupLogRecord> {
+  async createBackup(
+    backupType: BackupType,
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ): Promise<BackupLogRecord> {
     const fileName = this.generateFileName(backupType);
     const filePath = join(this.backupDir, fileName);
 
@@ -321,7 +327,24 @@ export class BackupService {
 
       this.logger.log(`Backup completed: ${fileName} (${fileSizeBytes} bytes)`);
 
-      return this.getBackupLog(logId);
+      const record = await this.getBackupLog(logId);
+      await this.auditLogService.logMutation({
+        action: 'BACKUP_CREATE',
+        entityType: 'backup',
+        entityId: record.id,
+        actor: auditActor,
+        description: `Created ${backupType} backup ${fileName}`,
+        requestBody: { backupType },
+        after: {
+          id: record.id,
+          backupType: record.backupType,
+          fileName: record.fileName,
+          fileSizeBytes: record.fileSizeBytes,
+          status: record.status,
+        },
+      });
+
+      return record;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
@@ -456,7 +479,10 @@ export class BackupService {
     return { filePath, exists };
   }
 
-  async deleteBackup(id: number): Promise<{ success: boolean; message: string }> {
+  async deleteBackup(
+    id: number,
+    auditActor?: AuditActorContext,
+  ): Promise<{ success: boolean; message: string }> {
     const log = await this.getBackupLog(id);
     if (!log) {
       return { success: false, message: 'Backup record not found' };
@@ -473,6 +499,23 @@ export class BackupService {
     }
 
     await this.databaseService.query(`DELETE FROM tbl_backup_logs WHERE id = $1`, [id]);
+
+    await this.auditLogService.logMutation({
+      action: 'BACKUP_DELETE',
+      entityType: 'backup',
+      entityId: id,
+      actor: auditActor,
+      description: `Deleted backup ${log.fileName}`,
+      requestBody: { id },
+      before: {
+        id: log.id,
+        backupType: log.backupType,
+        fileName: log.fileName,
+        fileSizeBytes: log.fileSizeBytes,
+        status: log.status,
+      },
+      after: null,
+    });
 
     return { success: true, message: 'Backup deleted successfully' };
   }

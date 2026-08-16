@@ -127,6 +127,7 @@ function createMockDatabaseService() {
 function createMockAuditLogService() {
   return {
     log: jest.fn().mockResolvedValue(undefined),
+    logMutation: jest.fn().mockResolvedValue(undefined),
   };
 }
 

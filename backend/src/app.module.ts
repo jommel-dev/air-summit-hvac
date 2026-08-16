@@ -15,6 +15,7 @@ import { SerialNumberModule } from './inventory/serial-number/serial-number.modu
 import { SalesOrderModule } from './sales/sales-order/sales-order.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { QuotationModule } from './sales/quotation/quotation.module';
+import { ProjectsModule } from './sales/projects/projects.module';
 import { MaterialsModule } from './inventory/materials/materials.module';
 import { MaterialTransactionsModule } from './inventory/material-transactions/material-transactions.module';
 import { SettingsModule } from './settings/settings.module';
@@ -44,6 +45,7 @@ import { PublicFeedbackModule } from './sales/public-feedback/public-feedback.mo
     SalesOrderModule,
     DashboardModule,
     QuotationModule,
+    ProjectsModule,
     SettingsModule,
     AccountingModule,
     AuditLogModule,

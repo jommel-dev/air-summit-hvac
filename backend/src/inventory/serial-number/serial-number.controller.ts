@@ -25,10 +25,12 @@ import { CheckSerialsDto } from './dto/check-serials.dto';
 import { ScanFileLoggerService } from './scan-file-logger.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { AuditActorContext } from 'src/audit-log/audit-log.service';
+import { buildAuditContext } from 'src/common/utils/build-audit-context';
 import { resolveBranchId } from 'src/common/utils/resolve-branch-id';
-import { GlobalSearchResponse, BulkTransferResponse, BulkAssignOrderResponse } from './interfaces/global-search.interfaces';
+import { GlobalSearchResponse, BulkSearchResponse, BulkTransferResponse, BulkAssignOrderResponse } from './interfaces/global-search.interfaces';
 import { BulkTransferDto } from './dto/bulk-transfer.dto';
 import { BulkAssignOrderDto } from './dto/bulk-assign-order.dto';
+import { BulkSearchDto } from './dto/bulk-search.dto';
 
 @Controller('serial-number')
 @UseGuards(JwtAuthGuard)
@@ -42,34 +44,23 @@ export class SerialNumberController {
   private resolveAuditActor(
     request: { user?: Record<string, unknown>; ip?: string },
   ): AuditActorContext {
-    const userId = Number(request.user?.sub ?? request.user?.id ?? request.user?.userId);
-    const normalizedUserId = Number.isFinite(userId) ? userId : null;
-    const username = String(request.user?.username ?? request.user?.name ?? '').trim() || null;
-    const roleName = String(request.user?.roleName ?? request.user?.role ?? '').trim() || null;
-    const branchId = Number(request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch);
-    const normalizedBranchId = Number.isFinite(branchId) ? branchId : null;
-    const ipAddress = String(request.ip ?? '').trim().split(',')[0]?.trim() || null;
-
-    return {
-      userId: normalizedUserId,
-      username,
-      roleName,
-      branchId: normalizedBranchId,
-      ipAddress,
-    };
+    return buildAuditContext(request);
   }
 
   @Post('insert-bulk')
   @UseGuards(JwtAuthGuard)
   insertBulk(
     @Body() body: { serials: Array<{ serialNumber: string; unitType?: string; status?: string; productId?: number; capacityId?: number }> },
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const role = String(request.user?.roleName ?? '').trim().toLowerCase();
     if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
       return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
     }
-    return this.serialNumberService.insertBulk(body.serials);
+    return this.serialNumberService.insertBulk(
+      body.serials,
+      this.resolveAuditActor(request),
+    );
   }
 
   @Post('csv-preview')
@@ -87,7 +78,7 @@ export class SerialNumberController {
   @Post('bulk-update-status')
   bulkUpdateStatus(
     @Body() body: { serialNumbers: string[]; status: string },
-    @Req() request: { user?: { sub?: unknown; roleName?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const role = String(request.user?.roleName ?? '').trim().toLowerCase();
     if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
@@ -95,25 +86,35 @@ export class SerialNumberController {
     }
     const userId = Number(request.user?.sub);
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
-    return this.serialNumberService.bulkUpdateStatus(body.serialNumbers, body.status, normalizedUserId);
+    return this.serialNumberService.bulkUpdateStatus(
+      body.serialNumbers,
+      body.status,
+      normalizedUserId,
+      this.resolveAuditActor(request),
+    );
   }
 
   @Post('bulk-reassign-capacity')
   bulkReassignCapacity(
     @Body() body: { serialNumbers: string[]; productId: number; capacityId: number },
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const role = String(request.user?.roleName ?? '').trim().toLowerCase();
     if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
       return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
     }
-    return this.serialNumberService.bulkReassignCapacity(body.serialNumbers, body.productId, body.capacityId);
+    return this.serialNumberService.bulkReassignCapacity(
+      body.serialNumbers,
+      body.productId,
+      body.capacityId,
+      this.resolveAuditActor(request),
+    );
   }
 
   @Post('bulk-install-with-validation')
   bulkInstallWithValidation(
     @Body() body: { serialNumbers: string[] },
-    @Req() request: { user?: { sub?: unknown; roleName?: unknown } },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const role = String(request.user?.roleName ?? '').trim().toLowerCase();
     if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
@@ -121,7 +122,11 @@ export class SerialNumberController {
     }
     const userId = Number(request.user?.sub);
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
-    return this.serialNumberService.validateAndBulkInstall(body.serialNumbers, normalizedUserId);
+    return this.serialNumberService.validateAndBulkInstall(
+      body.serialNumbers,
+      normalizedUserId,
+      this.resolveAuditActor(request),
+    );
   }
 
   @Post('scan-sales-order')
@@ -181,8 +186,14 @@ export class SerialNumberController {
   }
 
   @Post('remove-purchase-order')
-  removePurchaseOrderSerial(@Body() dto: RemovePurchaseOrderSerialDto) {
-    return this.serialNumberService.removePurchaseOrderSerial(dto);
+  removePurchaseOrderSerial(
+    @Body() dto: RemovePurchaseOrderSerialDto,
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
+  ) {
+    return this.serialNumberService.removePurchaseOrderSerial(
+      dto,
+      this.resolveAuditActor(request),
+    );
   }
 
   @Post('remove-sales-order')
@@ -190,21 +201,10 @@ export class SerialNumberController {
     @Body() dto: RemoveSalesOrderSerialDto,
     @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    const userId = Number(request.user?.id ?? request.user?.userId ?? request.user?.sub) || undefined;
-    const username = String(request.user?.username ?? request.user?.name ?? '').trim() || undefined;
-    const roleName = String(request.user?.roleName ?? request.user?.role ?? '').trim() || undefined;
-    const branchId = Number(request.user?.branchId ?? request.user?.branch_id ?? request.user?.branch) || undefined;
-    const ipAddress = String(request.ip ?? '').trim() || undefined;
-
-    const actor: AuditActorContext = {
-      userId: Number.isFinite(userId) ? userId : null,
-      username,
-      roleName,
-      branchId: Number.isFinite(branchId) ? branchId : null,
-      ipAddress: ipAddress ? ipAddress.split(',')[0].trim() : null,
-    };
-
-    return this.serialNumberService.removeSalesOrderSerial(dto, actor);
+    return this.serialNumberService.removeSalesOrderSerial(
+      dto,
+      this.resolveAuditActor(request),
+    );
   }
 
   @Post('normalize-unit-types')
@@ -299,6 +299,13 @@ export class SerialNumberController {
     });
   }
 
+  @Post('bulk-search')
+  async bulkSearch(@Body() body: BulkSearchDto): Promise<BulkSearchResponse> {
+    return this.serialNumberService.bulkSearch({
+      serialNumbers: body.serialNumbers ?? [],
+    });
+  }
+
   @Post('bulk-transfer')
   async bulkTransfer(
     @Body() body: BulkTransferDto,
@@ -313,6 +320,7 @@ export class SerialNumberController {
       performedBy: actor.userId ?? null,
       performedByUsername: actor.username ?? null,
       ipAddress: actor.ipAddress ?? null,
+      auditActor: actor,
     });
   }
 
@@ -330,6 +338,7 @@ export class SerialNumberController {
       performedBy: actor.userId ?? null,
       performedByUsername: actor.username ?? null,
       ipAddress: actor.ipAddress ?? null,
+      auditActor: actor,
     });
   }
 
@@ -369,13 +378,17 @@ export class SerialNumberController {
   deleteInStockByScope(
     @Query('productId') productId: string,
     @Query('capacityId') capacityId: string,
-    @Req() request: { user?: Record<string, unknown> },
+    @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const role = String(request.user?.roleName ?? '').trim().toLowerCase();
     if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
       return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
     }
-    return this.serialNumberService.deleteInStockByScope(productId, capacityId);
+    return this.serialNumberService.deleteInStockByScope(
+      productId,
+      capacityId,
+      this.resolveAuditActor(request),
+    );
   }
 
   @Delete(':id')

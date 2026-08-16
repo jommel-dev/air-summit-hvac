@@ -3,6 +3,7 @@ import { DatabaseService } from 'src/database/database.service';
 import { MaterialsService } from '../materials/materials.service';
 import { MaterialStockService } from '../material-stock/material-stock.service';
 import { CreateMaterialTransactionDto } from './dto/create-material-transaction.dto';
+import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 
 @Injectable()
 export class MaterialTransactionsService {
@@ -10,11 +11,12 @@ export class MaterialTransactionsService {
     private readonly db: DatabaseService,
     private readonly materialsService: MaterialsService,
     private readonly materialStockService: MaterialStockService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   // Create a single material transaction item (atomic: insert + stock update)
-  async create(dto: CreateMaterialTransactionDto) {
-    return this.db.withTransaction(async (client) => {
+  async create(dto: CreateMaterialTransactionDto, auditActor?: AuditActorContext) {
+    const result = await this.db.withTransaction(async (client) => {
       const res = await client.query(
         `INSERT INTO tbltransaction_material_items 
          (trans_type, material_id, quantity, unit_price, sell_price, discount_price, purchase_id, sales_id)
@@ -70,6 +72,20 @@ export class MaterialTransactionsService {
 
       return result;
     });
+
+    if (result) {
+      await this.auditLogService.logMutation({
+        action: 'MATERIAL_TRANSACTION_CREATE',
+        entityType: 'material-transaction',
+        entityId: result.id,
+        actor: auditActor,
+        description: `Created material transaction #${result.id}`,
+        requestBody: dto as unknown as Record<string, unknown>,
+        after: result as Record<string, unknown>,
+      });
+    }
+
+    return result;
   }
 
   // Create multiple material transaction items in a single transaction (atomic)
@@ -163,12 +179,23 @@ export class MaterialTransactionsService {
   }
 
   // Delete material transaction item
-  async remove(id: number) {
+  async remove(id: number, auditActor?: AuditActorContext) {
     const res = await this.db.query(
       `DELETE FROM tbltransaction_material_items WHERE id = $1 RETURNING id`,
       [id],
     );
-    return res.rows[0] || null;
+    const deleted = res.rows[0] || null;
+    if (deleted) {
+      await this.auditLogService.logMutation({
+        action: 'MATERIAL_TRANSACTION_DELETE',
+        entityType: 'material-transaction',
+        entityId: id,
+        actor: auditActor,
+        description: `Deleted material transaction #${id}`,
+        after: deleted as Record<string, unknown>,
+      });
+    }
+    return deleted;
   }
 
   // Get transaction by ID

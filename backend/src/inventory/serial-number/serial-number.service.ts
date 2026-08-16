@@ -21,6 +21,7 @@ import { CheckSerialsDto } from './dto/check-serials.dto';
 import {
   GlobalSearchResult,
   GlobalSearchResponse,
+  BulkSearchResponse,
   BulkTransferResponse,
   BulkAssignOrderResponse,
 } from './interfaces/global-search.interfaces';
@@ -1671,7 +1672,10 @@ export class SerialNumberService {
     };
   }
 
-  async insertBulk(serials: Array<{ serialNumber: string; unitType?: string; status?: string; productId?: number; capacityId?: number }>) {
+  async insertBulk(
+    serials: Array<{ serialNumber: string; unitType?: string; status?: string; productId?: number; capacityId?: number }>,
+    auditActor?: AuditActorContext,
+  ) {
     if (!serials || serials.length === 0) {
       return { success: false, message: 'No serials provided' };
     }
@@ -1809,6 +1813,16 @@ export class SerialNumberService {
       await this.runInsert('tblserial_numbers', record);
       inserted++;
     }
+
+    await this.auditLogService.logMutation({
+      action: 'SERIAL_BULK_INSERT',
+      entityType: 'serial-number',
+      entityId: null,
+      actor: auditActor,
+      description: `Bulk inserted ${inserted} serial(s)`,
+      requestBody: { count: serials.length },
+      after: { inserted, skipped },
+    });
 
     return {
       success: true,
@@ -2021,7 +2035,12 @@ export class SerialNumberService {
       notInCsv,
     };
   }
-  async bulkUpdateStatus(serialNumbers: string[], status: string, userId?: number) {
+  async bulkUpdateStatus(
+    serialNumbers: string[],
+    status: string,
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ) {
     const allowedStatuses = ['installed', 'in-stock', 'reserved', 'for-delivery'];
     const normalizedStatus = String(status ?? '').trim().toLowerCase();
     if (!allowedStatuses.includes(normalizedStatus)) {
@@ -2097,6 +2116,16 @@ export class SerialNumberService {
       }
     }
 
+    await this.auditLogService.logMutation({
+      action: 'SERIAL_BULK_UPDATE_STATUS',
+      entityType: 'serial-number',
+      entityId: null,
+      actor: auditActor ?? { userId },
+      description: `Bulk updated ${result.rowCount ?? 0} serial(s) to '${normalizedStatus}'`,
+      requestBody: { status: normalizedStatus, count: normalized.length },
+      after: { updated: result.rowCount ?? 0, status: normalizedStatus },
+    });
+
     return {
       success: true,
       message: `Updated ${result.rowCount ?? 0} serial number(s) to '${normalizedStatus}'`,
@@ -2104,7 +2133,12 @@ export class SerialNumberService {
     };
   }
 
-  async bulkReassignCapacity(serialNumbers: string[], productId: number, capacityId: number) {
+  async bulkReassignCapacity(
+    serialNumbers: string[],
+    productId: number,
+    capacityId: number,
+    auditActor?: AuditActorContext,
+  ) {
     if (!productId || !capacityId) {
       return { success: false, message: 'productId and capacityId are required' };
     }
@@ -2137,6 +2171,16 @@ export class SerialNumberService {
     );
 
     const updated = result.rowCount ?? 0;
+    await this.auditLogService.logMutation({
+      action: 'SERIAL_BULK_REASSIGN',
+      entityType: 'serial-number',
+      entityId: null,
+      actor: auditActor,
+      description: `Bulk reassigned ${updated} serial(s) to product #${productId} / capacity #${capacityId}`,
+      requestBody: { productId, capacityId, count: normalized.length },
+      after: { updated, productId, capacityId },
+    });
+
     return { success: true, message: `Reassigned ${updated} serial(s) to the selected capacity`, updated };
   }
 
@@ -2236,7 +2280,11 @@ export class SerialNumberService {
     };
   }
 
-  async validateAndBulkInstall(serialNumbers: string[], userId?: number) {
+  async validateAndBulkInstall(
+    serialNumbers: string[],
+    userId?: number,
+    auditActor?: AuditActorContext,
+  ) {
     const normalizedInputs = (serialNumbers ?? [])
       .map((s) => this.normalizeSerialNumber(s))
       .filter((s) => s.length > 0);
@@ -2337,6 +2385,20 @@ export class SerialNumberService {
         }
       }
     }
+
+    await this.auditLogService.logMutation({
+      action: 'SERIAL_INSTALL',
+      entityType: 'serial-number',
+      entityId: null,
+      actor: auditActor ?? { userId },
+      description: `Bulk installed ${updateResult.rowCount ?? 0} serial(s)`,
+      requestBody: { count: normalizedInputs.length },
+      after: {
+        updated: updateResult.rowCount ?? 0,
+        existingCount: existing.length,
+        nonExistingCount: nonExisting.length,
+      },
+    });
 
     return {
       success: true,
@@ -3707,7 +3769,10 @@ export class SerialNumberService {
     };
   }
 
-  async removePurchaseOrderSerial(dto: RemovePurchaseOrderSerialDto) {
+  async removePurchaseOrderSerial(
+    dto: RemovePurchaseOrderSerialDto,
+    auditActor?: AuditActorContext,
+  ) {
     const serialNumber = this.normalizeSerialNumber(dto.serialNumber);
     const purchaseId = Number(dto.purchaseId);
     const unitType = this.normalizeUnitType(dto.unitType);
@@ -3824,9 +3889,24 @@ export class SerialNumberService {
       newStatus: null,
       previousPurchaseId: purchaseId,
       newPurchaseId: null,
-      performedBy: null,
-      performedByUsername: null,
-      ipAddress: null,
+      performedBy: auditActor?.userId ?? null,
+      performedByUsername: auditActor?.username ?? null,
+      ipAddress: auditActor?.ipAddress ?? null,
+    });
+
+    await this.auditLogService.logMutation({
+      action: 'SERIAL_REMOVE_PO',
+      entityType: 'serial-number',
+      entityId: existing.id,
+      actor: auditActor,
+      description: `Removed serial '${serialNumber}' from purchase order #${purchaseId}`,
+      requestBody: dto as unknown as Record<string, unknown>,
+      before: {
+        id: existing.id,
+        serialNumber,
+        purchaseId,
+        unitType: existingUnitType,
+      },
     });
 
     return {
@@ -4055,7 +4135,11 @@ export class SerialNumberService {
     };
   }
 
-  async deleteInStockByScope(productIdInput: string, capacityIdInput: string) {
+  async deleteInStockByScope(
+    productIdInput: string,
+    capacityIdInput: string,
+    auditActor?: AuditActorContext,
+  ) {
     const productId = Number(productIdInput);
     const capacityId = Number(capacityIdInput);
 
@@ -4089,6 +4173,17 @@ export class SerialNumberService {
     );
 
     const deleted = result.rowCount ?? 0;
+    await this.auditLogService.logMutation({
+      action: 'SERIAL_DELETE_IN_STOCK',
+      entityType: 'serial-number',
+      entityId: null,
+      actor: auditActor,
+      description: `Deleted ${deleted} in-stock serial(s) for product #${productId} / capacity #${capacityId}`,
+      requestBody: { productId, capacityId },
+      after: { deleted, productId, capacityId },
+      metadata: { unusedInStockStatuses: inStockStatuses },
+    });
+
     return {
       success: true,
       message: `Deleted ${deleted} in-stock serial number(s)`,
@@ -4153,6 +4248,84 @@ export class SerialNumberService {
     };
   }
 
+  async bulkSearch(params: {
+    serialNumbers: string[];
+  }): Promise<BulkSearchResponse> {
+    const uniqueSerials: string[] = [];
+    const seen = new Set<string>();
+
+    for (const raw of params.serialNumbers ?? []) {
+      const serial = this.normalizeSerialNumber(raw);
+      if (!serial) {
+        continue;
+      }
+      const key = serial.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      uniqueSerials.push(serial);
+    }
+
+    if (uniqueSerials.length === 0) {
+      throw new HttpException(
+        { success: false, message: 'At least one serial number is required' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    if (uniqueSerials.length > 5000) {
+      throw new HttpException(
+        { success: false, message: 'Maximum 5000 serial numbers per bulk search' },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const lookupKeys = uniqueSerials.map((serial) => serial.toLowerCase());
+
+    const itemsResult = await this.databaseService.query<GlobalSearchResult>(
+      `SELECT
+         sn.id,
+         sn."serialNumber",
+         sn.status,
+         sn."unitType",
+         b."brandName",
+         p."productName",
+         c.capacity,
+         br."branchName",
+         po.po_number AS "poNumber",
+         so.so_number AS "soNumber",
+         cust.name AS "customerName",
+         COALESCE(sn."isDefective", false) AS "isDefective",
+         COALESCE(sn."isReturned", false) AS "isReturned",
+         sn.created_at AS "createdAt"
+       FROM tblserial_numbers sn
+       LEFT JOIN tblproducts p ON p.id = sn."productId"
+       LEFT JOIN tblbrands b ON b.id = p."brandId"
+       LEFT JOIN tblcapacity c ON c.id = sn."capacityId"
+       LEFT JOIN tblbranches br ON br.id = sn."branchId"
+       LEFT JOIN tblpurchase_orders po ON po.id = sn."purchaseId"
+       LEFT JOIN tblsales_order so ON so.id = sn."salesId"
+       LEFT JOIN tblcustomer cust ON cust.id = sn."customerId"
+       WHERE LOWER(TRIM(sn."serialNumber")) = ANY($1::text[])
+       ORDER BY sn.created_at DESC`,
+      [lookupKeys],
+    );
+
+    const foundKeys = new Set(
+      itemsResult.rows.map((row) => String(row.serialNumber ?? '').trim().toLowerCase()),
+    );
+    const notFound = uniqueSerials.filter((serial) => !foundKeys.has(serial.toLowerCase()));
+
+    return {
+      success: true,
+      items: itemsResult.rows,
+      total: itemsResult.rows.length,
+      queriedCount: uniqueSerials.length,
+      notFound,
+    };
+  }
+
   async bulkTransfer(params: {
     serialIds: number[];
     targetProductId: number;
@@ -4161,6 +4334,7 @@ export class SerialNumberService {
     performedBy: number | null;
     performedByUsername: string | null;
     ipAddress: string | null;
+    auditActor?: AuditActorContext;
   }): Promise<BulkTransferResponse> {
     const {
       serialIds,
@@ -4170,6 +4344,7 @@ export class SerialNumberService {
       performedBy,
       performedByUsername,
       ipAddress,
+      auditActor,
     } = params;
 
     // Validate serialIds is non-empty
@@ -4255,6 +4430,29 @@ export class SerialNumberService {
         );
       }
 
+      await this.auditLogService.logMutation({
+        action: 'SERIAL_BULK_TRANSFER',
+        entityType: 'serial-number',
+        entityId: null,
+        actor: auditActor ?? {
+          userId: performedBy,
+          username: performedByUsername,
+          ipAddress,
+        },
+        description: `Bulk transferred ${currentSerials.length} serial(s) to product #${targetProductId} / capacity #${targetCapacityId}`,
+        requestBody: {
+          serialIds,
+          targetProductId,
+          targetCapacityId,
+          reason: transferReason,
+        },
+        after: {
+          transferredCount: currentSerials.length,
+          targetProductId,
+          targetCapacityId,
+        },
+      });
+
       return {
         success: true,
         message: `Successfully transferred ${currentSerials.length} serial number(s) to the target product and capacity.`,
@@ -4271,6 +4469,7 @@ export class SerialNumberService {
     performedBy: number | null;
     performedByUsername: string | null;
     ipAddress: string | null;
+    auditActor?: AuditActorContext;
   }): Promise<BulkAssignOrderResponse> {
     const {
       serialIds,
@@ -4280,6 +4479,7 @@ export class SerialNumberService {
       performedBy,
       performedByUsername,
       ipAddress,
+      auditActor,
     } = params;
 
     // Validate serialIds is non-empty
@@ -4390,6 +4590,29 @@ export class SerialNumberService {
           client,
         );
       }
+
+      await this.auditLogService.logMutation({
+        action: 'SERIAL_BULK_ASSIGN_ORDER',
+        entityType: 'serial-number',
+        entityId: null,
+        actor: auditActor ?? {
+          userId: performedBy,
+          username: performedByUsername,
+          ipAddress,
+        },
+        description: `Bulk assigned ${currentSerials.length} serial(s) to order(s)`,
+        requestBody: {
+          serialIds,
+          purchaseId: purchaseId ?? null,
+          salesId: salesId ?? null,
+          reason: assignReason,
+        },
+        after: {
+          assignedCount: currentSerials.length,
+          purchaseId: purchaseId ?? null,
+          salesId: salesId ?? null,
+        },
+      });
 
       return {
         success: true,

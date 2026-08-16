@@ -986,12 +986,18 @@ export class QuotationService {
     };
   }
 
-  async convertToSalesOrder(id: number, userId?: number, branchId?: number) {
+  async convertToSalesOrder(
+    id: number,
+    userId?: number,
+    branchId?: number,
+    auditActor?: AuditActorContext,
+  ) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid quotation id' };
     }
 
     try {
+      const beforeSnapshot = await this.getQuotationAuditSnapshot(id);
       const result = await this.databaseService.withTransaction(async (client) => {
         await this.softDeleteExpiredDraftQuotations(client);
 
@@ -1174,6 +1180,23 @@ export class QuotationService {
         };
       });
 
+      const afterSnapshot = await this.getQuotationAuditSnapshot(id);
+      await this.auditLogService.logMutation({
+        action: 'QUOTATION_CONVERT_TO_SALES_ORDER',
+        entityType: 'quotation',
+        entityId: id,
+        actor: auditActor ?? { userId, branchId },
+        description: result.alreadyConverted
+          ? `Quotation #${id} already converted to sales order #${result.salesOrderId}`
+          : `Converted quotation #${id} to sales order #${result.salesOrderId}`,
+        before: beforeSnapshot,
+        after: afterSnapshot ?? { ...result },
+        metadata: {
+          salesOrderId: result.salesOrderId,
+          alreadyConverted: result.alreadyConverted,
+        },
+      });
+
       return {
         success: true,
         message: result.alreadyConverted
@@ -1189,7 +1212,13 @@ export class QuotationService {
     }
   }
 
-  async permanentDelete(id: number, password: string, userId?: number, roleName?: string) {
+  async permanentDelete(
+    id: number,
+    password: string,
+    userId?: number,
+    roleName?: string,
+    auditActor?: AuditActorContext,
+  ) {
     if (!Number.isFinite(id) || id <= 0) {
       return { success: false, message: 'Invalid quotation id' };
     }
@@ -1242,6 +1271,8 @@ export class QuotationService {
       return { success: false, message: 'Invalid admin password' };
     }
 
+    const beforeSnapshot = await this.getQuotationAuditSnapshot(id);
+
     const deleteResult = await this.databaseService.query<{ id: number }>(
       `DELETE FROM tblquotation
        WHERE id = $1
@@ -1253,6 +1284,18 @@ export class QuotationService {
     if (deleteResult.rowCount === 0) {
       return { success: false, message: 'Expired quotation not found or already deleted' };
     }
+
+    await this.auditLogService.logMutation({
+      action: 'QUOTATION_PERMANENT_DELETE',
+      entityType: 'quotation',
+      entityId: id,
+      actor: auditActor ?? { userId: effectiveUserId },
+      description: `Permanently deleted quotation ${String((beforeSnapshot?.quoteNo as string | undefined) ?? '').trim() || `#${id}`}`,
+      before: beforeSnapshot,
+      metadata: {
+        quoteNo: beforeSnapshot?.quoteNo,
+      },
+    });
 
     return {
       success: true,

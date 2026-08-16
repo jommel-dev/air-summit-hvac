@@ -116,7 +116,7 @@ export class CustomersComponent implements OnInit {
   get tabLabel(): string {
     if (this.activeTab === 'sub_dealer') return 'Sub-Dealers';
     if (this.activeTab === 'dealer') return 'Dealers';
-    return 'Stakeholders';
+    return 'Customers';
   }
 
   async loadCustomers(): Promise<void> {
