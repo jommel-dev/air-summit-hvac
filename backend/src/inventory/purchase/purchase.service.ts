@@ -1547,6 +1547,25 @@ export class PurchaseService {
     ].includes(normalized);
   }
 
+  private isPostApprovalPurchaseStatus(status: string | null | undefined): boolean {
+    const normalized = String(status ?? '').trim().toLowerCase();
+    return ['approved', 'completed', 'received', 'transfer_received'].includes(normalized);
+  }
+
+  private shouldPreserveExistingSerialStatus(status: string | null | undefined): boolean {
+    const normalized = String(status ?? '').trim().toLowerCase();
+    return [
+      'in-stock',
+      'reserved',
+      'sold',
+      'installed',
+      'released',
+      'delivered',
+      'out',
+      'outbound',
+    ].includes(normalized);
+  }
+
   private async transitionPurchaseStatus(
     id: number,
     nextStatus: string,
@@ -3158,6 +3177,7 @@ export class PurchaseService {
             'createdBy',
             'createdby',
           ]);
+          const lockSerialStatuses = this.isPostApprovalPurchaseStatus(existingPurchase.status);
 
           for (const item of productItems) {
             const transType = String(item.transType ?? 'purchase').trim().toLowerCase();
@@ -3176,9 +3196,9 @@ export class PurchaseService {
                 ? (item.serialNumbers as Record<string, unknown>)
                 : {};
 
-            const serialStatus = String(serialPayload.status ?? 'scanned')
+            const serialStatusFromPayload = String(serialPayload.status ?? '')
               .trim()
-              .toLowerCase() || 'scanned';
+              .toLowerCase();
 
             for (const [unitTypeKey, values] of Object.entries(serialPayload)) {
               if (unitTypeKey.toLowerCase() === 'status') {
@@ -3233,9 +3253,6 @@ export class PurchaseService {
                 if (serialUnitTypeColumn) {
                   serialRecord[serialUnitTypeColumn] = unitTypeKey;
                 }
-                if (serialStatusColumn) {
-                  serialRecord[serialStatusColumn] = serialStatus;
-                }
                 if (serialCreatedByColumn && userId) {
                   serialRecord[serialCreatedByColumn] = userId;
                 }
@@ -3251,8 +3268,28 @@ export class PurchaseService {
                     );
                   }
 
-                  if (String(existingSerial.status ?? '').trim().toLowerCase() === 'installed') {
+                  const existingSerialStatus = String(existingSerial.status ?? '')
+                    .trim()
+                    .toLowerCase();
+                  if (this.shouldPreserveExistingSerialStatus(existingSerialStatus)) {
                     continue;
+                  }
+
+                  if (lockSerialStatuses) {
+                    if (serialStatusColumn) {
+                      await client.query(
+                        `UPDATE tblserial_numbers
+                         SET "${serialStatusColumn}" = $1
+                         WHERE id = $2`,
+                        ['in-stock', existingSerial.id],
+                      );
+                    }
+                    continue;
+                  }
+
+                  if (serialStatusColumn) {
+                    serialRecord[serialStatusColumn] =
+                      serialStatusFromPayload || 'scanned';
                   }
 
                   const updateColumns = Object.keys(serialRecord);
@@ -3268,6 +3305,11 @@ export class PurchaseService {
                     [...updateValues, existingSerial.id],
                   );
                 } else {
+                  if (serialStatusColumn) {
+                    serialRecord[serialStatusColumn] = lockSerialStatuses
+                      ? 'in-stock'
+                      : serialStatusFromPayload || 'scanned';
+                  }
                   await this.runInsert(client, 'tblserial_numbers', serialRecord);
                 }
               }
