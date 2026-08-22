@@ -4055,13 +4055,13 @@ export class SalesOrderComponent {
       await this.loadAdditionalExcessItems(orderId);
       this.recalculateTotalAmount();
       this.isInitializingDrawer = false;
-      // Apply CC Charge (%) to payment Amount after totals are ready.
-      this.paymentAmountEditedByUser = false;
+      // Keep saved Payment Details amounts as the actual amount; do not
+      // overwrite them from product/service totals on edit load.
+      this.paymentAmountEditedByUser = true;
       this.form.paymentDetails = (this.form.paymentDetails ?? []).map((payment: SalesPaymentFormItem) => ({
         ...payment,
-        isAmountManual: false,
+        isAmountManual: true,
       }));
-      this.syncPaymentAmounts();
       await this.loadSalesHistory(orderId);
       this.captureDrawerBaselineSnapshot();
     } catch (error: unknown) {
@@ -6019,7 +6019,7 @@ export class SalesOrderComponent {
             termsDueDate: this.toDateInputValue(payment.termsDueDate),
             autoTermsDueDate: true,
             status: payment.status || this.getAutoPaymentStatus(this.toPaymentMethod(payment.method)),
-            isAmountManual: false,
+            isAmountManual: true,
             referenceNo: payment.referenceNo ?? '',
             paymentDate: this.toDateInputValue(payment.paymentDate),
             issuedBy: payment.issuedBy ?? '',
@@ -6916,51 +6916,20 @@ export class SalesOrderComponent {
 
   getOrderListAmount(order: SalesOrderRow): number {
     const totalAmount = Number(order.totalAmount ?? 0);
-    // Backend may already return a CC-adjusted paidAmount; prefer raw-style handling via ccCharge.
     const paidAmount = Number(order.paidAmount ?? 0);
-    const percent = this.parseCcChargePercent(order.ccCharge);
 
+    // Payment Details amount is the actual amount shown on the Sales Order list.
+    if ((order.paymentCount ?? 0) > 0) {
+      return paidAmount;
+    }
+
+    const percent = this.parseCcChargePercent(order.ccCharge);
     if (!this.isCreditCardMethod(order.paymentMethod) || percent <= 0) {
-      if ((order.paymentCount ?? 0) > 0) {
-        // Partial returns leave the old payment row; list Amount should follow remaining products.
-        if (totalAmount > 0 && paidAmount > totalAmount + 0.009) {
-          return totalAmount;
-        }
-        return paidAmount > 0 ? paidAmount : totalAmount;
-      }
       return totalAmount;
     }
 
     const factor = 1 + percent / 100;
-    const totalWithCc = Math.round(totalAmount * factor * 100) / 100;
-
-    // Already exactly SO total + CC.
-    if (paidAmount > 0 && Math.abs(paidAmount - totalWithCc) <= 1) {
-      return paidAmount;
-    }
-
-    if (paidAmount > totalAmount + 0.009) {
-      const stripped = paidAmount / factor;
-      const strippedInt = Math.round(stripped);
-      const looksLikePostCc =
-        Math.abs(stripped - strippedInt) <= 0.01 &&
-        Math.abs(strippedInt * factor - paidAmount) <= 0.02 &&
-        strippedInt > totalAmount + 1;
-
-      // Stale payment from before a partial return — use remaining SO total + CC.
-      if (looksLikePostCc && totalWithCc > 0) {
-        return totalWithCc;
-      }
-
-      // Payment still stores pre-CC base (product + service + excess).
-      if (totalAmount > 0 && paidAmount > totalAmount + 0.009) {
-        return totalWithCc > 0 ? totalWithCc : totalAmount;
-      }
-
-      return Math.round(paidAmount * factor * 100) / 100;
-    }
-
-    return totalWithCc > 0 ? totalWithCc : paidAmount;
+    return Math.round(totalAmount * factor * 100) / 100;
   }
 
   getViewProductTotal(): number {
