@@ -210,6 +210,7 @@ export class InventoryComponent implements OnInit {
   } | null = null;
   csvConfirmMessage = '';
   csvConfirmError = '';
+  installAuthPassword = '';
 
   // Per-tab target status selections
   csvToInstallTargetStatus = 'installed';
@@ -2851,6 +2852,10 @@ export class InventoryComponent implements OnInit {
     return this.rbacService.isAdminOrSuperAdmin();
   }
 
+  get canMarkAsInstalled(): boolean {
+    return this.rbacService.canMarkSerialsInstalled();
+  }
+
   get notFoundInsertableSerials(): Array<{ serialNumber: string; csvStatus: string; csvUnitType: string }> {
     return (this.csvPreviewResult?.notFound ?? []).filter(
       (entry) => String(entry.csvStatus ?? '').trim().toLowerCase() !== 'installed',
@@ -2873,6 +2878,7 @@ export class InventoryComponent implements OnInit {
     this.csvAlreadyInstalledTargetStatus = 'in-stock';
     this.csvNotFoundTargetStatus = 'in-stock';
     this.csvNotFoundInsert = false;
+    this.installAuthPassword = '';
   }
 
   closeCsvModal(): void {
@@ -2880,6 +2886,7 @@ export class InventoryComponent implements OnInit {
     this.csvPreviewResult = null;
     this.csvConfirmMessage = '';
     this.csvConfirmError = '';
+    this.installAuthPassword = '';
   }
 
   triggerCsvFileInput(): void {
@@ -2952,11 +2959,20 @@ export class InventoryComponent implements OnInit {
     if (!this.csvPreviewResult || this.isCsvConfirming) return;
     const serials = this.csvPreviewResult.toInstall.map((s) => s.serialNumber);
     if (serials.length === 0) { this.csvConfirmError = 'No serials to update.'; return; }
+    const needsPassword = this.csvToInstallTargetStatus === 'installed';
+    const password = needsPassword
+      ? this.requireInstallPassword((message) => { this.csvConfirmError = message; }) ?? undefined
+      : undefined;
+    if (needsPassword && !password) return;
     this.isCsvConfirming = true;
     this.csvConfirmMessage = '';
     this.csvConfirmError = '';
     try {
-      const result = await this.salesOrderService.bulkUpdateSerialStatus(serials, this.csvToInstallTargetStatus);
+      const result = await this.salesOrderService.bulkUpdateSerialStatus(
+        serials,
+        this.csvToInstallTargetStatus,
+        password,
+      );
       if (!result.success) { this.csvConfirmError = result.message ?? 'Failed to update serials'; return; }
       this.csvConfirmMessage = result.message ?? `Updated ${result.updated} serial(s) to ${this.csvToInstallTargetStatus}`;
       this.csvPreviewResult = {
@@ -3033,11 +3049,13 @@ export class InventoryComponent implements OnInit {
     if (!this.csvPreviewResult || this.isCsvUpdatingNotInCsv) return;
     const serials = this.csvPreviewResult.notInCsv.map((s) => s.serialNumber);
     if (serials.length === 0) { this.csvConfirmError = 'No serials to update.'; return; }
+    const password = this.requireInstallPassword((message) => { this.csvConfirmError = message; });
+    if (!password) return;
     this.isCsvUpdatingNotInCsv = true;
     this.csvConfirmMessage = '';
     this.csvConfirmError = '';
     try {
-      const result = await this.salesOrderService.bulkUpdateSerialStatus(serials, 'installed');
+      const result = await this.salesOrderService.bulkUpdateSerialStatus(serials, 'installed', password);
       if (!result.success) { this.csvConfirmError = result.message ?? 'Failed to update serials'; return; }
       this.csvConfirmMessage = result.message ?? `Updated ${result.updated} serial(s) to installed`;
       this.csvPreviewResult = {
@@ -3150,6 +3168,16 @@ export class InventoryComponent implements OnInit {
     this.selectedSerials.clear();
     this.bulkUpdateMessage = '';
     this.bulkUpdateError = '';
+    this.installAuthPassword = '';
+  }
+
+  private requireInstallPassword(setError: (message: string) => void): string | undefined {
+    const password = this.installAuthPassword.trim();
+    if (!password) {
+      setError('Password is required to mark serials as installed.');
+      return undefined;
+    }
+    return password;
   }
 
   async deleteAllInStockSerials(): Promise<void> {
@@ -3201,12 +3229,14 @@ export class InventoryComponent implements OnInit {
 
   async bulkMarkAsInstalled(): Promise<void> {
     if (this.selectedSerials.size === 0 || this.isBulkUpdating) return;
+    const password = this.requireInstallPassword((message) => { this.bulkUpdateError = message; });
+    if (!password) return;
     this.isBulkUpdating = true;
     this.bulkUpdateMessage = '';
     this.bulkUpdateError = '';
     try {
       const result = await this.salesOrderService.bulkUpdateSerialStatus(
-        Array.from(this.selectedSerials), 'installed'
+        Array.from(this.selectedSerials), 'installed', password
       );
       if (!result.success) {
         this.bulkUpdateError = result.message ?? 'Failed to update serials';
@@ -3214,6 +3244,7 @@ export class InventoryComponent implements OnInit {
       }
       this.bulkUpdateMessage = result.message ?? `Updated ${result.updated} serial(s) to installed`;
       this.selectedSerials.clear();
+      this.installAuthPassword = '';
       // Reload the current capacity stock summary
       if (this.selectedProductId && this.selectedCapacityId) {
         await this.loadCapacityStockSummary(this.selectedProductId, this.selectedCapacityId);

@@ -34,6 +34,8 @@ export class SerialInstallDialogComponent {
   // Preview/Results state
   parsedSerials = signal<string[]>([]);
   validationResult = signal<ValidationResponse | null>(null);
+  installPassword = signal<string>('');
+  installPasswordError = signal<string>('');
 
   // Computed values
   serialCount = computed(() => this.parsedSerials().length);
@@ -73,6 +75,8 @@ export class SerialInstallDialogComponent {
     this.parseError.set('');
     this.parsedSerials.set([]);
     this.validationResult.set(null);
+    this.installPassword.set('');
+    this.installPasswordError.set('');
     this.isLoading.set(false);
   }
 
@@ -170,24 +174,34 @@ export class SerialInstallDialogComponent {
       return;
     }
 
+    const password = this.installPassword().trim();
+    if (!password) {
+      this.installPasswordError.set('Password is required to mark serials as installed.');
+      return;
+    }
+
+    this.installPasswordError.set('');
     this.isLoading.set(true);
 
     try {
       const response = await apiClient.post<ValidationResponse>(
         '/serial-number/bulk-install-with-validation',
-        { serialNumbers: serials },
+        { serialNumbers: serials, password },
       );
 
       this.validationResult.set(response.data);
       this.currentStep.set('results');
+      this.installPassword.set('');
 
       if (response.data.success) {
         this.notificationService.success('Success', response.data.message);
       } else {
         this.notificationService.error('Error', response.data.message);
       }
-    } catch (error) {
-      const errorMessage = String(error);
+    } catch (error: any) {
+      const errorMessage =
+        error?.response?.data?.message ?? String(error);
+      this.installPasswordError.set(errorMessage);
       this.notificationService.error('Error', `Validation failed: ${errorMessage}`);
     } finally {
       this.isLoading.set(false);

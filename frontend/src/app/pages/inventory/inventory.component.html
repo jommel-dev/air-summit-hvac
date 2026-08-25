@@ -63,16 +63,18 @@
       </div>
 
       <div class="flex gap-2">
-        <button
-          type="button"
-          (click)="openBulkInstallDialog()"
-          class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" class="mr-2 h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16M8 7v10m8-10v10" />
-          </svg>
-          Bulk Install Serials
-        </button>
+        @if (canMarkAsInstalled) {
+          <button
+            type="button"
+            (click)="openBulkInstallDialog()"
+            class="inline-flex items-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="mr-2 h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16M8 7v10m8-10v10" />
+            </svg>
+            Bulk Install Serials
+          </button>
+        }
         <button
           type="button"
           (click)="goToSerialSearch()"
@@ -570,7 +572,14 @@
                     @if (canBulkInstall && selectedSerials.size > 0) {
                       <div class="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 dark:border-brand-700 dark:bg-brand-900/20">
                         <span class="text-xs font-medium text-brand-700 dark:text-brand-300">{{ selectedSerials.size }} selected</span>
-                        <button type="button" (click)="bulkMarkAsInstalled()" [disabled]="isBulkUpdating"
+                        <input
+                          type="password"
+                          [(ngModel)]="installAuthPassword"
+                          autocomplete="current-password"
+                          placeholder="Enter your password"
+                          class="h-8 min-w-[180px] rounded-lg border border-gray-300 bg-white px-2 text-xs text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                        />
+                        <button type="button" (click)="bulkMarkAsInstalled()" [disabled]="isBulkUpdating || !installAuthPassword.trim()"
                           class="rounded-lg border border-success-300 bg-success-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-success-600 disabled:opacity-60">
                           {{ isBulkUpdating ? 'Updating...' : 'Mark as Installed' }}
                         </button>
@@ -1365,7 +1374,16 @@
                 <option value="in-stock">in-stock</option>
                 <option value="reserved">reserved</option>
               </select>
-              <button type="button" (click)="confirmCsvInstall()" [disabled]="isCsvConfirming || csvPreviewResult!.toInstall.length === 0"
+              @if (csvToInstallTargetStatus === 'installed') {
+                <input
+                  type="password"
+                  [(ngModel)]="installAuthPassword"
+                  autocomplete="current-password"
+                  placeholder="Enter your password"
+                  class="h-8 min-w-[180px] rounded border border-gray-300 bg-white px-2 text-xs text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                />
+              }
+              <button type="button" (click)="confirmCsvInstall()" [disabled]="isCsvConfirming || csvPreviewResult!.toInstall.length === 0 || (csvToInstallTargetStatus === 'installed' && !installAuthPassword.trim())"
                 class="rounded-lg border border-success-300 bg-success-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-success-600 disabled:opacity-60">
                 {{ isCsvConfirming ? 'Updating...' : 'Apply to ' + csvPreviewResult!.toInstall.length + ' Serials' }}
               </button>
@@ -1519,8 +1537,15 @@
           @if (csvModalTab === 'not-in-csv') {
             <div class="mb-3 flex flex-wrap items-center gap-3">
               <p class="text-xs font-medium text-gray-500 dark:text-gray-400">These serials are in the DB (in_stock) but NOT in your uploaded CSV. Mark as:</p>
+              <input
+                type="password"
+                [(ngModel)]="installAuthPassword"
+                autocomplete="current-password"
+                placeholder="Enter your password"
+                class="h-8 min-w-[180px] rounded border border-gray-300 bg-white px-2 text-xs text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+              />
               <button type="button" (click)="markNotInCsvAsInstalled()"
-                [disabled]="isCsvUpdatingNotInCsv || csvPreviewResult.notInCsv.length === 0"
+                [disabled]="isCsvUpdatingNotInCsv || csvPreviewResult.notInCsv.length === 0 || !installAuthPassword.trim()"
                 class="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-orange-700 disabled:opacity-50">
                 {{ isCsvUpdatingNotInCsv ? 'Updating...' : 'Mark All as Installed' }}
               </button>

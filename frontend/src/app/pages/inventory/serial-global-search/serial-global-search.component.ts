@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 import { apiClient } from '../../../shared/services/api-client';
 import { NotificationService } from '../../../shared/services/notification.service';
+import { RbacService } from '../../../shared/services/rbac.service';
 import { PageBreadcrumbComponent } from '../../../shared/components/common/page-breadcrumb/page-breadcrumb.component';
 
 export interface GlobalSearchResult {
@@ -145,6 +146,13 @@ export class SerialGlobalSearchComponent implements OnInit {
   assignReason = signal<string>('');
   isSearchingOrders = signal<boolean>(false);
 
+  // Mark as Installed dialog state
+  isInstallDialogOpen = signal<boolean>(false);
+  isInstalling = signal<boolean>(false);
+  installScope = signal<'selected' | 'found'>('selected');
+  installPassword = signal<string>('');
+  installPasswordError = signal<string>('');
+
   // Validation state
   searchValidationError = signal<string>('');
 
@@ -196,14 +204,51 @@ export class SerialGlobalSearchComponent implements OnInit {
     this.results().filter((row) => (row.status ?? '').toLowerCase() === 'in-stock').length,
   );
 
+  installedCount = computed(() =>
+    this.results().filter((row) => (row.status ?? '').toLowerCase() === 'installed').length,
+  );
+
+  installableFoundSerials = computed(() =>
+    this.results().filter((row) => (row.status ?? '').toLowerCase() !== 'installed'),
+  );
+
+  installableSelectedSerials = computed(() =>
+    this.results().filter(
+      (row) =>
+        this.selectedIds().has(row.id) && (row.status ?? '').toLowerCase() !== 'installed',
+    ),
+  );
+
+  installPreviewSerials = computed(() =>
+    this.installScope() === 'found'
+      ? this.installableFoundSerials()
+      : this.installableSelectedSerials(),
+  );
+
+  alreadyInstalledInPreviewCount = computed(() => {
+    if (this.installScope() === 'found') {
+      return this.installedCount();
+    }
+
+    return this.results().filter(
+      (row) =>
+        this.selectedIds().has(row.id) && (row.status ?? '').toLowerCase() === 'installed',
+    ).length;
+  });
+
   constructor(
     notificationService: NotificationService,
     route: ActivatedRoute,
     destroyRef: DestroyRef,
+    private readonly rbacService: RbacService,
   ) {
     this.notificationService = notificationService;
     this.route = route;
     this.destroyRef = destroyRef;
+  }
+
+  get canMarkAsInstalled(): boolean {
+    return this.rbacService.canMarkSerialsInstalled();
   }
 
   ngOnInit(): void {
@@ -475,6 +520,89 @@ export class SerialGlobalSearchComponent implements OnInit {
 
   closeAssignOrderDialog(): void {
     this.isAssignOrderDialogOpen.set(false);
+  }
+
+  openInstallDialog(scope: 'selected' | 'found'): void {
+    if (!this.canMarkAsInstalled) return;
+
+    const preview =
+      scope === 'found' ? this.installableFoundSerials() : this.installableSelectedSerials();
+    if (preview.length === 0) {
+      this.notificationService.error(
+        'Nothing to install',
+        scope === 'found'
+          ? 'All found serials are already marked as installed.'
+          : 'Select serials that are not already installed.',
+      );
+      return;
+    }
+
+    this.installScope.set(scope);
+    this.installPassword.set('');
+    this.installPasswordError.set('');
+    this.isInstallDialogOpen.set(true);
+  }
+
+  closeInstallDialog(): void {
+    if (this.isInstalling()) return;
+    this.isInstallDialogOpen.set(false);
+    this.installPassword.set('');
+    this.installPasswordError.set('');
+  }
+
+  async onConfirmInstall(): Promise<void> {
+    if (!this.canMarkAsInstalled || this.isInstalling()) return;
+
+    const serials = this.installPreviewSerials();
+    if (serials.length === 0) return;
+
+    const password = this.installPassword().trim();
+    if (!password) {
+      this.installPasswordError.set('Password is required to mark serials as installed.');
+      return;
+    }
+
+    this.installPasswordError.set('');
+    this.isInstalling.set(true);
+
+    try {
+      const response = await apiClient.post<{
+        success: boolean;
+        message?: string;
+        updated?: number;
+      }>('/serial-number/bulk-update-status', {
+        serialNumbers: serials.map((row) => row.serialNumber),
+        status: 'installed',
+        password,
+      });
+
+      if (response.data.success) {
+        const updatedIds = new Set(serials.map((row) => row.id));
+        this.results.set(
+          this.results().map((row) =>
+            updatedIds.has(row.id) ? { ...row, status: 'installed' } : row,
+          ),
+        );
+        this.selectedIds.set(new Set());
+        this.isInstallDialogOpen.set(false);
+        this.installPassword.set('');
+        this.notificationService.success(
+          'Marked as Installed',
+          response.data.message ??
+            `Updated ${response.data.updated ?? serials.length} serial number(s) to installed.`,
+        );
+      } else {
+        this.installPasswordError.set(
+          response.data.message ?? 'Failed to mark serial numbers as installed.',
+        );
+      }
+    } catch (err: any) {
+      this.installPasswordError.set(
+        err?.response?.data?.message ?? 'Failed to mark serial numbers as installed.',
+      );
+    } finally {
+      this.isInstalling.set(false);
+    }
   }
 
   onAssignOrderTypeChange(type: 'po' | 'so'): void {
