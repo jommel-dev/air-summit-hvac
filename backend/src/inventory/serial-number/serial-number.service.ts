@@ -18,6 +18,7 @@ import { RemovePurchaseOrderSerialDto } from './dto/remove-purchase-order-serial
 import { RemoveSalesOrderSerialDto } from './dto/remove-sales-order-serial.dto';
 import { AdjustPurchaseUnitTypesDto } from './dto/adjust-purchase-unit-types.dto';
 import { CheckSerialsDto } from './dto/check-serials.dto';
+import { verifyCurrentUserPassword } from 'src/common/utils/verify-user-password';
 import {
   GlobalSearchResult,
   GlobalSearchResponse,
@@ -2040,11 +2041,19 @@ export class SerialNumberService {
     status: string,
     userId?: number,
     auditActor?: AuditActorContext,
+    password?: string,
   ) {
     const allowedStatuses = ['installed', 'in-stock', 'reserved', 'for-delivery'];
     const normalizedStatus = String(status ?? '').trim().toLowerCase();
     if (!allowedStatuses.includes(normalizedStatus)) {
       return { success: false, message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}` };
+    }
+
+    if (normalizedStatus === 'installed') {
+      const auth = await verifyCurrentUserPassword(this.databaseService, userId, password);
+      if (!auth.ok) {
+        return { success: false, message: auth.message };
+      }
     }
 
     const normalized = (serialNumbers ?? [])
@@ -2284,7 +2293,19 @@ export class SerialNumberService {
     serialNumbers: string[],
     userId?: number,
     auditActor?: AuditActorContext,
+    password?: string,
   ) {
+    const auth = await verifyCurrentUserPassword(this.databaseService, userId, password);
+    if (!auth.ok) {
+      return {
+        success: false,
+        message: auth.message,
+        existing: [],
+        nonExisting: [],
+        updated: 0,
+      };
+    }
+
     const normalizedInputs = (serialNumbers ?? [])
       .map((s) => this.normalizeSerialNumber(s))
       .filter((s) => s.length > 0);

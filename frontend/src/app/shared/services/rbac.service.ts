@@ -391,4 +391,22 @@ export class RbacService {
     const role = String(this.getPayload()?.roleName ?? '').trim().toLowerCase();
     return role === 'superadmin' || role === 'super admin' || role === 'admin';
   }
+
+  isWarehouseman(): boolean {
+    const role = String(this.getPayload()?.roleName ?? '').trim().toLowerCase();
+    const compact = role.replace(/[\s_-]+/g, '');
+    if (
+      compact === 'warehouse' ||
+      compact === 'warehouseman' ||
+      compact === 'warehousestaff'
+    ) {
+      return true;
+    }
+
+    return /\bwarehouse\s*man\b/.test(role) || compact.endsWith('warehouseman');
+  }
+
+  canMarkSerialsInstalled(): boolean {
+    return this.isAdminOrSuperAdmin() || this.isWarehouseman();
+  }
 }

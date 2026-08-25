@@ -1025,10 +1025,14 @@ export class SalesOrderService {
     return response.data;
   }
 
-  async bulkUpdateSerialStatus(serialNumbers: string[], status: string): Promise<{ success: boolean; message?: string; updated?: number }> {
+  async bulkUpdateSerialStatus(
+    serialNumbers: string[],
+    status: string,
+    password?: string,
+  ): Promise<{ success: boolean; message?: string; updated?: number }> {
     const response = await apiClient.post<{ success: boolean; message?: string; updated?: number }>(
       '/serial-number/bulk-update-status',
-      { serialNumbers, status },
+      { serialNumbers, status, password },
     );
     return response.data;
   }

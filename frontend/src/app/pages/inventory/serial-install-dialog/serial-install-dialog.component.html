@@ -105,9 +105,26 @@
         </div>
 
         <!-- Format Info -->
-        <p class="text-xs text-gray-600 dark:text-gray-400 mb-6">
+        <p class="text-xs text-gray-600 dark:text-gray-400 mb-4">
           CSV format: serialNumber,unitType,status (if applicable). First column is used as serial number.
         </p>
+
+        <div class="mb-6 space-y-2">
+          <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            Confirm your password
+          </label>
+          <input
+            type="password"
+            [ngModel]="installPassword()"
+            (ngModelChange)="installPassword.set($event); installPasswordError.set('')"
+            autocomplete="current-password"
+            placeholder="Enter your password"
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-blue-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+          />
+          <p *ngIf="installPasswordError()" class="text-sm text-red-600 dark:text-red-400">
+            {{ installPasswordError() }}
+          </p>
+        </div>
       </div>
 
       <!-- RESULTS STEP -->
@@ -196,7 +213,7 @@
         </button>
         <button
           (click)="onConfirmValidation()"
-          [disabled]="isLoading()"
+          [disabled]="isLoading() || !installPassword().trim()"
           class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {{ isLoading() ? 'Processing...' : 'Confirm & Install' }}

@@ -27,6 +27,11 @@ import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { AuditActorContext } from 'src/audit-log/audit-log.service';
 import { buildAuditContext } from 'src/common/utils/build-audit-context';
 import { resolveBranchId } from 'src/common/utils/resolve-branch-id';
+import {
+  canMarkSerialsInstalled,
+  isAdminOrSuperAdminRole,
+  isWarehousemanRole,
+} from 'src/common/utils/role-checks';
 import { GlobalSearchResponse, BulkSearchResponse, BulkTransferResponse, BulkAssignOrderResponse } from './interfaces/global-search.interfaces';
 import { BulkTransferDto } from './dto/bulk-transfer.dto';
 import { BulkAssignOrderDto } from './dto/bulk-assign-order.dto';
@@ -77,13 +82,29 @@ export class SerialNumberController {
 
   @Post('bulk-update-status')
   bulkUpdateStatus(
-    @Body() body: { serialNumbers: string[]; status: string },
+    @Body() body: { serialNumbers: string[]; status: string; password?: string },
     @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    const role = String(request.user?.roleName ?? '').trim().toLowerCase();
-    if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
-      return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
+    const roleName = request.user?.roleName;
+    const normalizedStatus = String(body.status ?? '').trim().toLowerCase();
+    const isAdmin = isAdminOrSuperAdminRole(roleName);
+    const canInstall =
+      canMarkSerialsInstalled(roleName) && normalizedStatus === 'installed';
+
+    if (!isAdmin && !canInstall) {
+      if (isWarehousemanRole(roleName)) {
+        return {
+          success: false,
+          message: 'Warehouseman can only mark serial numbers as installed.',
+        };
+      }
+
+      return {
+        success: false,
+        message: 'Access denied. Admin, Super Admin, or Warehouseman role required.',
+      };
     }
+
     const userId = Number(request.user?.sub);
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
     return this.serialNumberService.bulkUpdateStatus(
@@ -91,6 +112,7 @@ export class SerialNumberController {
       body.status,
       normalizedUserId,
       this.resolveAuditActor(request),
+      body.password,
     );
   }
 
@@ -113,12 +135,14 @@ export class SerialNumberController {
 
   @Post('bulk-install-with-validation')
   bulkInstallWithValidation(
-    @Body() body: { serialNumbers: string[] },
+    @Body() body: { serialNumbers: string[]; password?: string },
     @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
-    const role = String(request.user?.roleName ?? '').trim().toLowerCase();
-    if (role !== 'superadmin' && role !== 'super admin' && role !== 'admin') {
-      return { success: false, message: 'Access denied. Admin or Super Admin role required.' };
+    if (!canMarkSerialsInstalled(request.user?.roleName)) {
+      return {
+        success: false,
+        message: 'Access denied. Admin, Super Admin, or Warehouseman role required.',
+      };
     }
     const userId = Number(request.user?.sub);
     const normalizedUserId = Number.isFinite(userId) ? userId : undefined;
@@ -126,6 +150,7 @@ export class SerialNumberController {
       body.serialNumbers,
       normalizedUserId,
       this.resolveAuditActor(request),
+      body.password,
     );
   }
 
