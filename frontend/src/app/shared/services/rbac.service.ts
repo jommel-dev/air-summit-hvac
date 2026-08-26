@@ -409,4 +409,8 @@ export class RbacService {
   canMarkSerialsInstalled(): boolean {
     return this.isAdminOrSuperAdmin() || this.isWarehouseman();
   }
+
+  canRevertSerialsToStock(): boolean {
+    return this.canMarkSerialsInstalled();
+  }
 }

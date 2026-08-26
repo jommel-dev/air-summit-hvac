@@ -210,6 +210,15 @@
           Mark as Installed
         </button>
       }
+      @if (canRevertToStock && revertibleSelectedSerials().length > 0) {
+        <button
+          type="button"
+          (click)="openRevertDialog('selected')"
+          class="rounded-lg bg-amber-600 px-4 py-1.5 text-sm text-white hover:bg-amber-700"
+        >
+          Revert to Stock
+        </button>
+      }
       <button
         type="button"
         (click)="openTransferDialog()"
@@ -238,6 +247,21 @@
         class="rounded-lg bg-blue-600 px-4 py-1.5 text-sm text-white hover:bg-blue-700"
       >
         Mark All Found as Installed
+      </button>
+    </div>
+  }
+
+  @if (canRevertToStock && searchMode() === 'bulk' && selectedCount() === 0 && revertibleFoundSerials().length > 0 && !isLoading()) {
+    <div class="mt-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+      <span class="text-sm font-medium text-amber-800 dark:text-amber-300">
+        {{ revertibleFoundSerials().length }} found serial{{ revertibleFoundSerials().length === 1 ? '' : 's' }} can be reverted to stock
+      </span>
+      <button
+        type="button"
+        (click)="openRevertDialog('found')"
+        class="rounded-lg bg-amber-600 px-4 py-1.5 text-sm text-white hover:bg-amber-700"
+      >
+        Revert to Stock
       </button>
     </div>
   }
@@ -783,6 +807,83 @@
             class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {{ isInstalling() ? 'Updating...' : 'Confirm Install' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  @if (isRevertDialogOpen()) {
+    <div class="fixed inset-0 z-40 bg-black/50" (click)="closeRevertDialog()"></div>
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-xl dark:bg-gray-800" (click)="$event.stopPropagation()">
+        <h2 class="mb-4 text-lg font-semibold text-gray-900 dark:text-white">
+          Revert to Stock
+        </h2>
+        <p class="mb-4 text-sm text-gray-600 dark:text-gray-400">
+          This returns installed serials to in-stock. Remarks are saved in serial history so we can review why they were reverted.
+        </p>
+
+        <div class="rounded-lg bg-amber-50 p-3 text-sm dark:bg-amber-900/20">
+          <p class="mb-1 font-medium text-amber-800 dark:text-amber-300">Revert summary</p>
+          <p class="text-amber-700 dark:text-amber-400">
+            {{ revertPreviewSerials().length }} installed serial{{ revertPreviewSerials().length === 1 ? '' : 's' }}
+            will be reverted to stock
+            @if (revertScope() === 'found') {
+              from the found list.
+            } @else {
+              from your selection.
+            }
+          </p>
+        </div>
+
+        <div class="mt-4 space-y-2">
+          <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            Remarks
+          </label>
+          <textarea
+            [ngModel]="revertRemarks()"
+            (ngModelChange)="revertRemarks.set($event); revertError.set('')"
+            rows="3"
+            placeholder="Why are these serials being reverted to stock?"
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-amber-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+          ></textarea>
+        </div>
+
+        <div class="mt-4 space-y-2">
+          <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            Confirm your password
+          </label>
+          <input
+            type="password"
+            [ngModel]="revertPassword()"
+            (ngModelChange)="revertPassword.set($event); revertError.set('')"
+            (keyup.enter)="onConfirmRevert()"
+            autocomplete="current-password"
+            placeholder="Enter your password"
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none placeholder:text-gray-400 focus:border-amber-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+          />
+          @if (revertError()) {
+            <p class="text-sm text-red-600 dark:text-red-400">{{ revertError() }}</p>
+          }
+        </div>
+
+        <div class="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            (click)="closeRevertDialog()"
+            [disabled]="isReverting()"
+            class="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            (click)="onConfirmRevert()"
+            [disabled]="revertPreviewSerials().length === 0 || isReverting() || !revertRemarks().trim() || !revertPassword().trim()"
+            class="rounded-lg bg-amber-600 px-4 py-2 text-sm text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {{ isReverting() ? 'Reverting...' : 'Revert to Stock' }}
           </button>
         </div>
       </div>

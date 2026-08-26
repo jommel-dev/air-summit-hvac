@@ -8,7 +8,7 @@ export async function verifyCurrentUserPassword(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const normalizedPassword = String(password ?? '').trim();
   if (!normalizedPassword) {
-    return { ok: false, message: 'Password is required to mark serials as installed.' };
+    return { ok: false, message: 'Password is required.' };
   }
 
   const effectiveUserId = Number(userId);

@@ -153,6 +153,14 @@ export class SerialGlobalSearchComponent implements OnInit {
   installPassword = signal<string>('');
   installPasswordError = signal<string>('');
 
+  // Revert to Stock dialog state
+  isRevertDialogOpen = signal<boolean>(false);
+  isReverting = signal<boolean>(false);
+  revertScope = signal<'selected' | 'found'>('selected');
+  revertRemarks = signal<string>('');
+  revertPassword = signal<string>('');
+  revertError = signal<string>('');
+
   // Validation state
   searchValidationError = signal<string>('');
 
@@ -236,6 +244,23 @@ export class SerialGlobalSearchComponent implements OnInit {
     ).length;
   });
 
+  revertibleFoundSerials = computed(() =>
+    this.results().filter((row) => (row.status ?? '').toLowerCase() === 'installed'),
+  );
+
+  revertibleSelectedSerials = computed(() =>
+    this.results().filter(
+      (row) =>
+        this.selectedIds().has(row.id) && (row.status ?? '').toLowerCase() === 'installed',
+    ),
+  );
+
+  revertPreviewSerials = computed(() =>
+    this.revertScope() === 'found'
+      ? this.revertibleFoundSerials()
+      : this.revertibleSelectedSerials(),
+  );
+
   constructor(
     notificationService: NotificationService,
     route: ActivatedRoute,
@@ -249,6 +274,10 @@ export class SerialGlobalSearchComponent implements OnInit {
 
   get canMarkAsInstalled(): boolean {
     return this.rbacService.canMarkSerialsInstalled();
+  }
+
+  get canRevertToStock(): boolean {
+    return this.rbacService.canRevertSerialsToStock();
   }
 
   ngOnInit(): void {
@@ -602,6 +631,100 @@ export class SerialGlobalSearchComponent implements OnInit {
       );
     } finally {
       this.isInstalling.set(false);
+    }
+  }
+
+  openRevertDialog(scope: 'selected' | 'found'): void {
+    if (!this.canRevertToStock) return;
+
+    const preview =
+      scope === 'found' ? this.revertibleFoundSerials() : this.revertibleSelectedSerials();
+    if (preview.length === 0) {
+      this.notificationService.error(
+        'Nothing to revert',
+        scope === 'found'
+          ? 'None of the found serials are currently installed.'
+          : 'Select installed serials to revert to stock.',
+      );
+      return;
+    }
+
+    this.revertScope.set(scope);
+    this.revertRemarks.set('');
+    this.revertPassword.set('');
+    this.revertError.set('');
+    this.isRevertDialogOpen.set(true);
+  }
+
+  closeRevertDialog(): void {
+    if (this.isReverting()) return;
+    this.isRevertDialogOpen.set(false);
+    this.revertRemarks.set('');
+    this.revertPassword.set('');
+    this.revertError.set('');
+  }
+
+  async onConfirmRevert(): Promise<void> {
+    if (!this.canRevertToStock || this.isReverting()) return;
+
+    const serials = this.revertPreviewSerials();
+    if (serials.length === 0) return;
+
+    const remarks = this.revertRemarks().trim();
+    if (!remarks) {
+      this.revertError.set('Remarks are required so we can review why this was reverted.');
+      return;
+    }
+
+    const password = this.revertPassword().trim();
+    if (!password) {
+      this.revertError.set('Password is required to revert serials to stock.');
+      return;
+    }
+
+    this.revertError.set('');
+    this.isReverting.set(true);
+
+    try {
+      const response = await apiClient.post<{
+        success: boolean;
+        message?: string;
+        updated?: number;
+      }>('/serial-number/bulk-update-status', {
+        serialNumbers: serials.map((row) => row.serialNumber),
+        status: 'in-stock',
+        password,
+        remarks,
+        revertToStock: true,
+      });
+
+      if (response.data.success) {
+        const updatedIds = new Set(serials.map((row) => row.id));
+        this.results.set(
+          this.results().map((row) =>
+            updatedIds.has(row.id) ? { ...row, status: 'in-stock' } : row,
+          ),
+        );
+        this.selectedIds.set(new Set());
+        this.isRevertDialogOpen.set(false);
+        this.revertRemarks.set('');
+        this.revertPassword.set('');
+        this.notificationService.success(
+          'Reverted to Stock',
+          response.data.message ??
+            `Reverted ${response.data.updated ?? serials.length} serial number(s) to stock.`,
+        );
+      } else {
+        this.revertError.set(
+          response.data.message ?? 'Failed to revert serial numbers to stock.',
+        );
+      }
+    } catch (err: any) {
+      this.revertError.set(
+        err?.response?.data?.message ?? 'Failed to revert serial numbers to stock.',
+      );
+    } finally {
+      this.isReverting.set(false);
     }
   }
 
