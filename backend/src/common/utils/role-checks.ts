@@ -24,3 +24,7 @@ export function isWarehousemanRole(roleName: unknown): boolean {
 export function canMarkSerialsInstalled(roleName: unknown): boolean {
   return isAdminOrSuperAdminRole(roleName) || isWarehousemanRole(roleName);
 }
+
+export function canRevertSerialsToStock(roleName: unknown): boolean {
+  return canMarkSerialsInstalled(roleName);
+}

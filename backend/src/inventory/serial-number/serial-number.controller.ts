@@ -29,6 +29,7 @@ import { buildAuditContext } from 'src/common/utils/build-audit-context';
 import { resolveBranchId } from 'src/common/utils/resolve-branch-id';
 import {
   canMarkSerialsInstalled,
+  canRevertSerialsToStock,
   isAdminOrSuperAdminRole,
   isWarehousemanRole,
 } from 'src/common/utils/role-checks';
@@ -82,20 +83,29 @@ export class SerialNumberController {
 
   @Post('bulk-update-status')
   bulkUpdateStatus(
-    @Body() body: { serialNumbers: string[]; status: string; password?: string },
+    @Body() body: {
+      serialNumbers: string[];
+      status: string;
+      password?: string;
+      remarks?: string;
+      reason?: string;
+      revertToStock?: boolean;
+    },
     @Req() request: { user?: Record<string, unknown>; ip?: string },
   ) {
     const roleName = request.user?.roleName;
     const normalizedStatus = String(body.status ?? '').trim().toLowerCase();
+    const isRevertToStock = Boolean(body.revertToStock) && normalizedStatus === 'in-stock';
     const isAdmin = isAdminOrSuperAdminRole(roleName);
     const canInstall =
       canMarkSerialsInstalled(roleName) && normalizedStatus === 'installed';
+    const canRevert = canRevertSerialsToStock(roleName) && isRevertToStock;
 
-    if (!isAdmin && !canInstall) {
+    if (!isAdmin && !canInstall && !canRevert) {
       if (isWarehousemanRole(roleName)) {
         return {
           success: false,
-          message: 'Warehouseman can only mark serial numbers as installed.',
+          message: 'Warehouseman can only mark serial numbers as installed or revert them to stock.',
         };
       }
 
@@ -113,6 +123,8 @@ export class SerialNumberController {
       normalizedUserId,
       this.resolveAuditActor(request),
       body.password,
+      body.remarks ?? body.reason,
+      isRevertToStock,
     );
   }
 

@@ -1029,10 +1029,12 @@ export class SalesOrderService {
     serialNumbers: string[],
     status: string,
     password?: string,
+    remarks?: string,
+    revertToStock = false,
   ): Promise<{ success: boolean; message?: string; updated?: number }> {
     const response = await apiClient.post<{ success: boolean; message?: string; updated?: number }>(
       '/serial-number/bulk-update-status',
-      { serialNumbers, status, password },
+      { serialNumbers, status, password, remarks, revertToStock },
     );
     return response.data;
   }

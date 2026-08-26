@@ -211,6 +211,7 @@ export class InventoryComponent implements OnInit {
   csvConfirmMessage = '';
   csvConfirmError = '';
   installAuthPassword = '';
+  revertRemarks = '';
 
   // Per-tab target status selections
   csvToInstallTargetStatus = 'installed';
@@ -2879,6 +2880,7 @@ export class InventoryComponent implements OnInit {
     this.csvNotFoundTargetStatus = 'in-stock';
     this.csvNotFoundInsert = false;
     this.installAuthPassword = '';
+    this.revertRemarks = '';
   }
 
   closeCsvModal(): void {
@@ -2887,6 +2889,7 @@ export class InventoryComponent implements OnInit {
     this.csvConfirmMessage = '';
     this.csvConfirmError = '';
     this.installAuthPassword = '';
+    this.revertRemarks = '';
   }
 
   triggerCsvFileInput(): void {
@@ -2990,11 +2993,20 @@ export class InventoryComponent implements OnInit {
     if (!this.csvPreviewResult || this.isCsvRevertingInstalled) return;
     const serials = this.csvPreviewResult.alreadyInstalled.map((s) => s.serialNumber);
     if (serials.length === 0) { this.csvConfirmError = 'No installed serials to revert.'; return; }
+    const isRevertToStock = this.csvAlreadyInstalledTargetStatus === 'in-stock';
+    const auth = isRevertToStock ? this.requireRevertToStockAuth() : undefined;
+    if (isRevertToStock && !auth) return;
     this.isCsvRevertingInstalled = true;
     this.csvConfirmMessage = '';
     this.csvConfirmError = '';
     try {
-      const result = await this.salesOrderService.bulkUpdateSerialStatus(serials, this.csvAlreadyInstalledTargetStatus);
+      const result = await this.salesOrderService.bulkUpdateSerialStatus(
+        serials,
+        this.csvAlreadyInstalledTargetStatus,
+        auth?.password,
+        auth?.remarks,
+        isRevertToStock,
+      );
       if (!result.success) { this.csvConfirmError = result.message ?? 'Failed to revert serials'; return; }
       this.csvConfirmMessage = result.message ?? `Reverted ${result.updated} serial(s) to ${this.csvAlreadyInstalledTargetStatus}`;
       this.csvPreviewResult = { ...this.csvPreviewResult, summary: { ...this.csvPreviewResult.summary, alreadyInstalled: 0 }, alreadyInstalled: [] };
@@ -3072,11 +3084,20 @@ export class InventoryComponent implements OnInit {
     if (!this.csvPreviewResult || this.isCsvRevertingInstalledInDb) return;
     const serials = this.csvPreviewResult.installedInDb.map((s) => s.serialNumber);
     if (serials.length === 0) { this.csvConfirmError = 'No serials to revert.'; return; }
+    const isRevertToStock = this.csvInstalledInDbTargetStatus === 'in-stock';
+    const auth = isRevertToStock ? this.requireRevertToStockAuth() : undefined;
+    if (isRevertToStock && !auth) return;
     this.isCsvRevertingInstalledInDb = true;
     this.csvConfirmMessage = '';
     this.csvConfirmError = '';
     try {
-      const result = await this.salesOrderService.bulkUpdateSerialStatus(serials, this.csvInstalledInDbTargetStatus);
+      const result = await this.salesOrderService.bulkUpdateSerialStatus(
+        serials,
+        this.csvInstalledInDbTargetStatus,
+        auth?.password,
+        auth?.remarks,
+        isRevertToStock,
+      );
       if (!result.success) { this.csvConfirmError = result.message ?? 'Failed to update serials'; return; }
       this.csvConfirmMessage = result.message ?? `Reverted ${result.updated} serial(s) to ${this.csvInstalledInDbTargetStatus}`;
       this.csvPreviewResult = {
@@ -3169,6 +3190,17 @@ export class InventoryComponent implements OnInit {
     this.bulkUpdateMessage = '';
     this.bulkUpdateError = '';
     this.installAuthPassword = '';
+  }
+
+  private requireRevertToStockAuth(): { password: string; remarks: string } | undefined {
+    const remarks = this.revertRemarks.trim();
+    if (!remarks) {
+      this.csvConfirmError = 'Remarks are required so we can review why this was reverted.';
+      return undefined;
+    }
+    const password = this.requireInstallPassword((message) => { this.csvConfirmError = message; });
+    if (!password) return undefined;
+    return { password, remarks };
   }
 
   private requireInstallPassword(setError: (message: string) => void): string | undefined {

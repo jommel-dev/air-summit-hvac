@@ -2042,6 +2042,8 @@ export class SerialNumberService {
     userId?: number,
     auditActor?: AuditActorContext,
     password?: string,
+    remarks?: string,
+    isRevertToStock = false,
   ) {
     const allowedStatuses = ['installed', 'in-stock', 'reserved', 'for-delivery'];
     const normalizedStatus = String(status ?? '').trim().toLowerCase();
@@ -2049,11 +2051,18 @@ export class SerialNumberService {
       return { success: false, message: `Invalid status. Allowed: ${allowedStatuses.join(', ')}` };
     }
 
-    if (normalizedStatus === 'installed') {
+    const revertingToStock = isRevertToStock && normalizedStatus === 'in-stock';
+    const requiresPassword = normalizedStatus === 'installed' || revertingToStock;
+    if (requiresPassword) {
       const auth = await verifyCurrentUserPassword(this.databaseService, userId, password);
       if (!auth.ok) {
         return { success: false, message: auth.message };
       }
+    }
+
+    const normalizedRemarks = String(remarks ?? '').trim();
+    if (revertingToStock && !normalizedRemarks) {
+      return { success: false, message: 'Remarks are required to revert serials to stock.' };
     }
 
     const normalized = (serialNumbers ?? [])
@@ -2084,6 +2093,18 @@ export class SerialNumberService {
       [normalized],
     );
 
+    const affectedRows = revertingToStock
+      ? beforeResult.rows.filter((row) => String(row.status ?? '').trim().toLowerCase() === 'installed')
+      : beforeResult.rows;
+
+    if (revertingToStock && affectedRows.length === 0) {
+      return { success: false, message: 'No installed serial numbers to revert to stock.' };
+    }
+
+    const serialsToUpdate = revertingToStock
+      ? affectedRows.map((row) => this.normalizeSerialNumber(row.serialNumber)).filter((s) => s.length > 0)
+      : normalized;
+
     const setClauses = [`"${serialStatusColumn}" = $1`];
     const params: unknown[] = [normalizedStatus];
 
@@ -2092,19 +2113,24 @@ export class SerialNumberService {
       setClauses.push(`"${serialCreatedByColumn}" = $${params.length}`);
     }
 
-    params.push(normalized);
+    params.push(serialsToUpdate);
+    const revertOnlyInstalled = revertingToStock
+      ? ` AND LOWER(COALESCE("${serialStatusColumn}", '')) = 'installed'`
+      : '';
     const result = await this.databaseService.query(
       `UPDATE tblserial_numbers
        SET ${setClauses.join(', ')}
        WHERE LOWER(regexp_replace(BTRIM(COALESCE("serialNumber", '')), '\\s+', ' ', 'g')) = ANY(
          SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($${params.length}::text[]) s
-       )`,
+       )${revertOnlyInstalled}`,
       params,
     );
 
     // Log events for each affected serial
-    if (beforeResult.rows.length > 0) {
-      for (const row of beforeResult.rows) {
+    if (affectedRows.length > 0) {
+      const eventReason = revertingToStock ? normalizedRemarks : normalizedRemarks || null;
+
+      for (const row of affectedRows) {
         let eventType: 'STATUS_CHANGED' | 'MARKED_DEFECTIVE' | 'RETURNED' = 'STATUS_CHANGED';
         if (normalizedStatus === 'defective') {
           eventType = 'MARKED_DEFECTIVE';
@@ -2119,25 +2145,34 @@ export class SerialNumberService {
           previousStatus: row.status,
           newStatus: normalizedStatus,
           performedBy: userId ?? null,
-          performedByUsername: null,
-          ipAddress: null,
+          performedByUsername: auditActor?.username ?? null,
+          ipAddress: auditActor?.ipAddress ?? null,
+          reason: eventReason,
         });
       }
     }
 
     await this.auditLogService.logMutation({
-      action: 'SERIAL_BULK_UPDATE_STATUS',
+      action: revertingToStock ? 'SERIAL_REVERT_TO_STOCK' : 'SERIAL_BULK_UPDATE_STATUS',
       entityType: 'serial-number',
       entityId: null,
       actor: auditActor ?? { userId },
-      description: `Bulk updated ${result.rowCount ?? 0} serial(s) to '${normalizedStatus}'`,
-      requestBody: { status: normalizedStatus, count: normalized.length },
+      description: revertingToStock
+        ? `Reverted ${result.rowCount ?? 0} serial(s) to in-stock. Remarks: ${normalizedRemarks}`
+        : `Bulk updated ${result.rowCount ?? 0} serial(s) to '${normalizedStatus}'`,
+      requestBody: {
+        status: normalizedStatus,
+        count: serialsToUpdate.length,
+        remarks: revertingToStock ? normalizedRemarks : undefined,
+      },
       after: { updated: result.rowCount ?? 0, status: normalizedStatus },
     });
 
     return {
       success: true,
-      message: `Updated ${result.rowCount ?? 0} serial number(s) to '${normalizedStatus}'`,
+      message: revertingToStock
+        ? `Reverted ${result.rowCount ?? 0} serial number(s) to stock`
+        : `Updated ${result.rowCount ?? 0} serial number(s) to '${normalizedStatus}'`,
       updated: result.rowCount ?? 0,
     };
   }

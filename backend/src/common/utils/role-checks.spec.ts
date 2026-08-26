@@ -1,5 +1,6 @@
 import {
   canMarkSerialsInstalled,
+  canRevertSerialsToStock,
   isAdminOrSuperAdminRole,
   isWarehousemanRole,
   normalizeRoleName,
@@ -31,5 +32,11 @@ describe('role-checks', () => {
     expect(canMarkSerialsInstalled('admin')).toBe(true);
     expect(canMarkSerialsInstalled('warehouseman')).toBe(true);
     expect(canMarkSerialsInstalled('sales')).toBe(false);
+  });
+
+  it('allows admin and warehouseman to revert serials to stock', () => {
+    expect(canRevertSerialsToStock('admin')).toBe(true);
+    expect(canRevertSerialsToStock('warehouseman')).toBe(true);
+    expect(canRevertSerialsToStock('sales')).toBe(false);
   });
 });
