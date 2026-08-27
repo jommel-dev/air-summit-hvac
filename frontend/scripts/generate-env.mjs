@@ -45,6 +45,7 @@ loadEnvFile(resolve(repoRoot, '.env.docker'));
 const apiBaseUrl = (
   process.env.NG_APP_API_BASE_URL?.trim() ||
   process.env.API_PUBLIC_URL?.trim() ||
+  process.env.API_URL?.trim() ||
   'http://localhost:3000'
 ).replace(/\/+$/, '');
 

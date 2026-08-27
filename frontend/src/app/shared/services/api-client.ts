@@ -1,5 +1,5 @@
 import axios, { AxiosHeaders, InternalAxiosRequestConfig } from 'axios';
-import { API_BASE_URL } from '../../core/config/api-base';
+import { ENV } from '../../core/config/env.generated';
 import {
   clearAccessToken,
   getAccessToken,
@@ -12,6 +12,7 @@ import {
 
 type RetryConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
+const API_BASE_URL = String(ENV.NG_APP_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
 const ACTIVE_BRANCH_STORAGE_KEY = 'activeBranchId';
 
 export const apiClient = axios.create({
