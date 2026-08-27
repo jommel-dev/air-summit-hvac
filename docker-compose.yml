@@ -27,7 +27,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NG_APP_API_BASE_URL: ${NG_APP_API_BASE_URL:?Set NG_APP_API_BASE_URL in .env.docker and run: docker compose --env-file .env.docker up -d --build}
+        NG_APP_API_BASE_URL: "${NG_APP_API_BASE_URL:?Set NG_APP_API_BASE_URL in .env.docker}"
         PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
         BUILD_ID: ${BUILD_ID:-}
     restart: unless-stopped
