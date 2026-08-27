@@ -28,6 +28,8 @@ ENV NG_APP_API_BASE_URL=$NG_APP_API_BASE_URL \
 RUN set -eux; \
   API_URL="${NG_APP_API_BASE_URL:-}"; \
   SITE_URL="${PUBLIC_SITE_URL:-}"; \
+  echo "build-arg NG_APP_API_BASE_URL=${API_URL}"; \
+  echo "build-arg PUBLIC_SITE_URL=${SITE_URL}"; \
   if [ -z "$API_URL" ] || printf '%s' "$API_URL" | grep -qiE 'localhost|127\.0\.0\.1|api\.example\.com'; then \
     echo "ERROR: NG_APP_API_BASE_URL must be the public API URL (e.g. https://api-demo-hvac.pcmazing.com)"; \
     exit 1; \
