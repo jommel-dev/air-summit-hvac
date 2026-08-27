@@ -6,6 +6,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { toUserFacingError } from 'src/common/utils/format-db-error';
 
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
@@ -66,14 +67,6 @@ export class ApiExceptionFilter implements ExceptionFilter {
       return exception.message || 'Request failed';
     }
 
-    if (exception instanceof Error && exception.message.trim()) {
-      return exception.message;
-    }
-
-    if (typeof exception === 'string' && exception.trim()) {
-      return exception;
-    }
-
-    return 'Internal server error';
+    return toUserFacingError(exception, 'Internal server error');
   }
 }

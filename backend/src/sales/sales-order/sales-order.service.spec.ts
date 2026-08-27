@@ -208,4 +208,25 @@ describe('SalesOrderService', () => {
       expect(result.skipped?.[0]?.reason).toMatch(/Complete \(SOA/i);
     });
   });
+
+  describe('create — numeric overflow messages', () => {
+    it('names the overflowing service qty instead of a database overflow error', async () => {
+      const result = await service.create({
+        salesType: 'service',
+        serviceItems: [
+          {
+            serviceName: 'CLEANING',
+            serviceCost: 1500,
+            serviceDurationHours: 1500,
+          } as any,
+        ],
+      } as any);
+
+      expect(result.success).toBe(false);
+      expect(result.message).toMatch(/Service qty for "CLEANING"/i);
+      expect(result.message).toMatch(/999\.99/);
+      expect(result.message).not.toMatch(/numeric field overflow/i);
+      expect(database.query).not.toHaveBeenCalled();
+    });
+  });
 });
