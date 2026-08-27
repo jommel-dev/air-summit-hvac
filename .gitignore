@@ -1,0 +1,2 @@
+# Server / staging secrets (docker compose --env-file)
+.env.docker

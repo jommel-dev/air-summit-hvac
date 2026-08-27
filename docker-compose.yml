@@ -1,0 +1,75 @@
+# HVAC Warehouse and Sales — Docker Compose for Cloudflare Tunnel
+#
+# DigitalOcean continues to build backend/Dockerfile.
+# Vercel production frontend is unchanged.
+# This compose file uses:
+#   backend/Dockerfile.server
+#   frontend/Dockerfile
+#
+# Tunnel routes (configure to match your hostnames):
+#   app / www  → http://hvac-frontend:80
+#   api        → http://hvac-backend:3000
+#
+# Deploy on the server (as root):
+#   cd ~/apps/hvac-warehouse-and-sales
+#   cp .env.docker.example .env.docker   # edit DB + secrets + public URLs
+#   docker compose --env-file .env.docker up -d --build
+#
+# Network: must match the network your tunnel / Postgres containers are on.
+#   docker inspect postgres-stack-webkodex-tunnel-1 -f '{{json .NetworkSettings.Networks}}'
+
+name: hvac-warehouse
+
+services:
+  hvac-frontend:
+    container_name: hvac-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NG_APP_API_BASE_URL: ${NG_APP_API_BASE_URL:-https://api.example.com}
+        BUILD_ID: ${BUILD_ID:-}
+    restart: unless-stopped
+    networks:
+      - edge
+    # Uncomment for local debug: ports: ["8080:80"]
+
+  hvac-backend:
+    container_name: hvac-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.server
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:4200}
+    volumes:
+      - hvac_backups:/app/backups
+      - hvac_logs:/app/logs
+    networks:
+      - edge
+    # Uncomment for local debug: ports: ["3000:3000"]
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+networks:
+  edge:
+    external: true
+    name: ${DOCKER_NETWORK:-app-tier}
+
+volumes:
+  hvac_backups:
+  hvac_logs:

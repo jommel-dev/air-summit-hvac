@@ -2,11 +2,7 @@ import { Component, input, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import axios from 'axios';
-
-const appEnv = (import.meta as any).env;
-const configuredApiBaseUrl = String(appEnv?.['NG_APP_API_BASE_URL'] ?? '').trim();
-const isLocalHost = typeof window !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
-const API_BASE = configuredApiBaseUrl || (isLocalHost ? 'http://localhost:3000' : 'https://air-summit-backend-ewbho.ondigitalocean.app');
+import { API_BASE_URL as API_BASE } from '../../core/config/api-base';
 
 export interface SerialEvent {
   id: number;
