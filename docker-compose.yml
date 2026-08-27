@@ -27,9 +27,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NG_APP_API_BASE_URL: "${NG_APP_API_BASE_URL:?Set NG_APP_API_BASE_URL in .env.docker}"
-        PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
-        BUILD_ID: ${BUILD_ID:-}
+        NG_APP_API_BASE_URL: ${NG_APP_API_BASE_URL:-https://api-demo-hvac.pcmazing.com}
     restart: unless-stopped
     networks:
       - edge

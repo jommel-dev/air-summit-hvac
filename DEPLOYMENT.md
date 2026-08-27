@@ -54,7 +54,7 @@ docker compose --env-file .env.docker up -d --build
 
 Login in the browser stays on the frontend (`https://demo-hvac.pcmazing.com`). The login **request** must go to `https://api-demo-hvac.pcmazing.com/login`. If DevTools shows `https://demo-hvac.pcmazing.com/login`, `NG_APP_API_BASE_URL` is wrong (empty or set to the frontend URL).
 
-After changing `NG_APP_API_BASE_URL`, rebuild the frontend image (`dotenv` bakes the URL at build time):
+After changing `NG_APP_API_BASE_URL`, rebuild the frontend image:
 
 ```bash
 docker compose --env-file .env.docker build --no-cache hvac-frontend
