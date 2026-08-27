@@ -31,9 +31,9 @@ nano .env.docker
 
 Set real values for:
 
-- `PUBLIC_SITE_URL` (frontend hostname)
-- `NG_APP_API_BASE_URL` / `API_PUBLIC_URL` (backend hostname — baked into Angular)
-- `CORS_ORIGINS` (must include the frontend origin)
+- `PUBLIC_SITE_URL` (frontend hostname users open, e.g. `https://demo-hvac.pcmazing.com`)
+- `NG_APP_API_BASE_URL` / `API_PUBLIC_URL` (API hostname, e.g. `https://api-demo-hvac.pcmazing.com`)
+- `CORS_ORIGINS` (must include the frontend origin, not the API origin)
 - `DATABASE_URL` (or `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD`)
 - `JWT_SECRET`
 - `DOCKER_NETWORK` (this server uses `app-tier`)
@@ -52,7 +52,9 @@ Never commit `.env.docker`.
 docker compose --env-file .env.docker up -d --build
 ```
 
-After changing `NG_APP_API_BASE_URL`, rebuild the frontend image (it is compile-time):
+Login in the browser stays on the frontend (`https://demo-hvac.pcmazing.com`). The login **request** must go to `https://api-demo-hvac.pcmazing.com/login`. If DevTools shows `https://demo-hvac.pcmazing.com/login`, `NG_APP_API_BASE_URL` is wrong (empty or set to the frontend URL).
+
+After changing `NG_APP_API_BASE_URL`, rebuild the frontend image (`dotenv` bakes the URL at build time):
 
 ```bash
 docker compose --env-file .env.docker build --no-cache hvac-frontend

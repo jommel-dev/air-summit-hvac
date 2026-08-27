@@ -17,6 +17,7 @@ COPY . .
 
 # Written to frontend/.env and process.env, then generate-env.mjs bakes it into env.generated.ts
 ARG NG_APP_API_BASE_URL=https://api.example.com
+ARG PUBLIC_SITE_URL=
 ARG BUILD_ID=
 
 ENV NG_APP_API_BASE_URL=$NG_APP_API_BASE_URL \
@@ -26,8 +27,13 @@ ENV NG_APP_API_BASE_URL=$NG_APP_API_BASE_URL \
 
 RUN set -eux; \
   API_URL="${NG_APP_API_BASE_URL:-}"; \
-  if [ -z "$API_URL" ] || printf '%s' "$API_URL" | grep -qiE 'localhost|127\.0\.0\.1'; then \
-    echo "ERROR: NG_APP_API_BASE_URL must be a public API URL for Docker builds"; \
+  SITE_URL="${PUBLIC_SITE_URL:-}"; \
+  if [ -z "$API_URL" ] || printf '%s' "$API_URL" | grep -qiE 'localhost|127\.0\.0\.1|api\.example\.com'; then \
+    echo "ERROR: NG_APP_API_BASE_URL must be the public API URL (e.g. https://api-demo-hvac.pcmazing.com)"; \
+    exit 1; \
+  fi; \
+  if [ -n "$SITE_URL" ] && [ "$API_URL" = "$SITE_URL" ]; then \
+    echo "ERROR: NG_APP_API_BASE_URL cannot be the frontend URL. Use the API host."; \
     exit 1; \
   fi; \
   printf 'NG_APP_API_BASE_URL=%s\n' "$API_URL" > .env; \

@@ -28,6 +28,7 @@ services:
       dockerfile: Dockerfile
       args:
         NG_APP_API_BASE_URL: ${NG_APP_API_BASE_URL:-https://api.example.com}
+        PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
         BUILD_ID: ${BUILD_ID:-}
     restart: unless-stopped
     networks:
