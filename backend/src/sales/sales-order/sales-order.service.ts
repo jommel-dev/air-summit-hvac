@@ -20,6 +20,13 @@ import {
   catalogActiveSql,
   catalogDeletedSql,
 } from 'src/common/utils/catalog-soft-delete';
+import {
+  assertSalesOrderNumericLimits,
+  getMiscellaneousItemOverflowMessage,
+  getNumericOverflowMessage,
+  MONEY_PRECISION,
+} from 'src/common/utils/numeric-limits';
+import { toUserFacingError } from 'src/common/utils/format-db-error';
 
 type SalesMode =
   | 'deliveries'
@@ -627,6 +634,15 @@ export class SalesOrderService {
 
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  private assertMoneyAmountFits(value: number, fieldLabel: string): void {
+    const message = getNumericOverflowMessage(value, fieldLabel, MONEY_PRECISION);
+    if (message) {
+      throw new Error(
+        `Cannot save this sales order because a number is too large:\n• ${message}\n\nCorrect these values and try again.`,
+      );
+    }
   }
 
   private normalizeText(value: unknown): string {
@@ -3612,6 +3628,13 @@ export class SalesOrderService {
 
     let result: any;
     try {
+      assertSalesOrderNumericLimits({
+        totalAmount: payload.totalAmount,
+        paymentDetails: payload.paymentDetails,
+        productItems,
+        serviceItems,
+        expenseDetails: payload.expenseDetails,
+      });
       result = await this.databaseService.withTransaction(async (client) => {
         // For transfer SOs, do not require or upsert customer
         let customerId: string | null = null;
@@ -3661,6 +3684,7 @@ export class SalesOrderService {
           serviceItems,
           payloadTotalAmount: payload.totalAmount,
         });
+        this.assertMoneyAmountFits(totalAmount, 'Order total');
 
         const salesColumns = await this.getTableColumns(client, 'tblsales_order');
         const soNumberColumn = this.pickColumn(salesColumns, ['so_number', 'soNumber']);
@@ -4410,7 +4434,7 @@ export class SalesOrderService {
     } catch (error) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Failed to create sales order',
+        message: toUserFacingError(error, 'Failed to create sales order'),
       };
     }
   }
@@ -6522,6 +6546,13 @@ export class SalesOrderService {
     const beforeSnapshot = await this.getSalesOrderAuditSnapshot(id);
 
     try {
+      assertSalesOrderNumericLimits({
+        totalAmount: payload.totalAmount,
+        paymentDetails: payload.paymentDetails,
+        productItems: payload.productItems,
+        serviceItems: payload.serviceItems,
+        expenseDetails: payload.expenseDetails,
+      });
       const result = await this.databaseService.withTransaction(async (client) => {
         const existingSalesResult = await client.query<{
           id: number;
@@ -6655,6 +6686,7 @@ export class SalesOrderService {
           payloadTotalAmount: payload.totalAmount,
           existingTotalAmount: existingSales.total_amount,
         });
+        this.assertMoneyAmountFits(totalAmount, 'Order total');
         let status = String(payload.status ?? existingSales.status ?? 'pending').trim() || 'pending';
 
         const salesColumns = await this.getTableColumns(client, 'tblsales_order');
@@ -7581,7 +7613,7 @@ export class SalesOrderService {
     } catch (error) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Failed to update sales order',
+        message: toUserFacingError(error, 'Failed to update sales order'),
       };
     }
   }
@@ -8153,6 +8185,15 @@ export class SalesOrderService {
     const quantity = Number(body.quantity) || 1;
     const unitPrice = Number(body.unitPrice) || 0;
     const totalPrice = quantity * unitPrice;
+    const overflowMessage = getMiscellaneousItemOverflowMessage({
+      itemName,
+      quantity,
+      unitPrice,
+      totalPrice,
+    });
+    if (overflowMessage) {
+      return { success: false, message: overflowMessage };
+    }
 
     try {
       const result = await this.databaseService.query<{ id: number }>(
@@ -8252,7 +8293,10 @@ export class SalesOrderService {
 
       return { success: true, message: 'Item added successfully', id: miscItemId };
     } catch (error) {
-      return { success: false, message: `Failed to add item: ${error instanceof Error ? error.message : String(error)}` };
+      return {
+        success: false,
+        message: toUserFacingError(error, 'Failed to add item'),
+      };
     }
   }
 

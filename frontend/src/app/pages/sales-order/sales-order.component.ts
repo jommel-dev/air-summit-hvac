@@ -2045,6 +2045,118 @@ export class SalesOrderComponent {
     return null;
   }
 
+  private validateNumericFieldLimits(): string | null {
+    const moneyMaxLabel = '9,999,999,999.99';
+    const qtyMaxLabel = '999.99';
+    const errors: string[] = [];
+
+    const exceedsMoney = (value: number): boolean => {
+      if (!Number.isFinite(value) || Math.abs(value) >= 1e15) {
+        return true;
+      }
+      return Number(Math.abs(value).toFixed(2)) >= 10_000_000_000;
+    };
+    const exceedsQty = (value: number): boolean => {
+      if (!Number.isFinite(value) || Math.abs(value) >= 1e15) {
+        return true;
+      }
+      return Number(Math.abs(value).toFixed(2)) >= 1000;
+    };
+    const formatValue = (value: number): string =>
+      Number.isFinite(value) ? value.toLocaleString('en-US', { maximumFractionDigits: 4 }) : String(value);
+
+    const pushMoney = (raw: unknown, label: string): void => {
+      if (raw === null || raw === undefined || raw === '') {
+        return;
+      }
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        errors.push(`${label} is not a valid number.`);
+        return;
+      }
+      if (exceedsMoney(parsed)) {
+        errors.push(`${label} is ${formatValue(parsed)}. Maximum allowed is ${moneyMaxLabel}.`);
+      }
+    };
+    const pushQty = (raw: unknown, label: string): void => {
+      if (raw === null || raw === undefined || raw === '') {
+        return;
+      }
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed)) {
+        errors.push(`${label} is not a valid number.`);
+        return;
+      }
+      if (exceedsQty(parsed)) {
+        errors.push(`${label} is ${formatValue(parsed)}. Maximum allowed is ${qtyMaxLabel}.`);
+      }
+    };
+
+    (this.form.productItems ?? []).forEach((item: any, index: number) => {
+      const prefix = `Product line ${index + 1}`;
+      const unitPrice = Number(item?.unitPrice) || 0;
+      const sellPrice = Number(item?.sellPrice) || 0;
+      const discountPrice = Number(item?.discountPrice) || 0;
+      const qty = Number(item?.totalSetQty) || 0;
+      const priceToUse = discountPrice > 0 ? discountPrice : sellPrice > 0 ? sellPrice : unitPrice;
+      pushMoney(item?.unitPrice, `${prefix} unit price`);
+      pushMoney(item?.sellPrice, `${prefix} sell price`);
+      pushMoney(item?.discountPrice, `${prefix} discount price`);
+      pushMoney(priceToUse * qty, `${prefix} line total`);
+    });
+
+    (this.form.serviceItems ?? [])
+      .filter(
+        (item: any) =>
+          String(item?.serviceName ?? '').trim().length > 0 ||
+          Number(item?.unitPrice) > 0 ||
+          Number(item?.qty) > 0,
+      )
+      .forEach((item: any, index: number) => {
+        const name = String(item?.serviceName ?? '').trim();
+        const label = name ? `"${name}"` : `line ${index + 1}`;
+        const qty = Number(item?.qty) || 0;
+        const cost = Number(item?.unitPrice) || 0;
+        pushQty(item?.qty, `Service qty for ${label}`);
+        pushMoney(item?.unitPrice, `Service cost for ${label}`);
+        pushMoney(qty * cost, `Service total for ${label}`);
+      });
+
+    if (this.form.salesType !== 'project') {
+      (this.form.paymentDetails ?? []).forEach((payment: any, index: number) => {
+        const method = String(payment?.method ?? '').trim();
+        const prefix = method ? `Payment ${index + 1} (${method})` : `Payment ${index + 1}`;
+        pushMoney(payment?.amount, `${prefix} amount`);
+        pushMoney(payment?.downPayment, `${prefix} down payment`);
+      });
+    }
+
+    (this.form.expenseDetails ?? []).forEach((expense: any, index: number) => {
+      const expenseType = String(expense?.expenseType ?? '').trim();
+      const prefix = expenseType ? `Expense ${index + 1} (${expenseType})` : `Expense ${index + 1}`;
+      pushMoney(expense?.amount, `${prefix} amount`);
+    });
+
+    this.getPersistableAdditionalExcessItems().forEach((item, index) => {
+      const name = String(item.itemName ?? '').trim() || `line ${index + 1}`;
+      const qty = Number(item.quantity) || 0;
+      const unitPrice = Number(item.unitPrice) || 0;
+      pushMoney(item.quantity, `Additional excess qty for "${name}"`);
+      pushMoney(item.unitPrice, `Additional excess unit price for "${name}"`);
+      pushMoney(qty * unitPrice, `Additional excess total for "${name}"`);
+    });
+
+    pushMoney(this.form.totalAmount, 'Order total');
+
+    if (errors.length === 0) {
+      return null;
+    }
+
+    return `Cannot save this sales order because a number is too large:\n${errors
+      .map((error) => `• ${error}`)
+      .join('\n')}\n\nCorrect these values and try again.`;
+  }
+
   pendingReceiveOrder: SalesOrderRow | null = null;
   isCancelModalOpen = false;
   pendingCancelOrder: SalesOrderRow | null = null;
@@ -4409,7 +4521,11 @@ export class SalesOrderComponent {
     const nextPayment = this.createEmptyPaymentItem();
     nextPayment.amount = 0;
     nextPayment.isAmountManual = true;
-    this.form.paymentDetails = [...this.form.paymentDetails, nextPayment];
+    this.paymentAmountEditedByUser = true;
+    this.form.paymentDetails = [...this.form.paymentDetails, nextPayment].map((payment) => ({
+      ...payment,
+      isAmountManual: true,
+    }));
     this.syncPaymentAmounts();
   }
 
@@ -4418,8 +4534,8 @@ export class SalesOrderComponent {
     this.form.paymentDetails = this.form.paymentDetails.filter((_: unknown, itemIndex: number) => itemIndex !== index);
 
     if (this.form.paymentDetails.length === 1) {
-      this.form.paymentDetails[0].isAmountManual = false;
-      this.paymentAmountEditedByUser = false;
+      this.form.paymentDetails[0].isAmountManual = true;
+      this.paymentAmountEditedByUser = true;
     }
 
     this.syncPaymentAmounts();
@@ -4645,11 +4761,6 @@ export class SalesOrderComponent {
 
     this.paymentAmountEditedByUser = true;
     payment.isAmountManual = true;
-
-    // Split payment: Payment 1 auto-adjusts to (order total - sum of other cards).
-    if (index > 0 && this.form.paymentDetails.length > 1) {
-      this.redistributePrimaryPaymentAmount();
-    }
   }
 
   onTermsChanged(index: number): void {
@@ -4712,20 +4823,24 @@ export class SalesOrderComponent {
       payment.ccCharge = value;
     }
 
-    // Split payments: keep entered secondary amounts; only refresh Payment 1 remainder.
     if (this.form.paymentDetails.length > 1) {
-      if (index > 0) {
-        payment.isAmountManual = true;
-        this.paymentAmountEditedByUser = true;
-      }
-      this.redistributePrimaryPaymentAmount();
+      payment.isAmountManual = true;
+      this.paymentAmountEditedByUser = true;
       return;
     }
 
-    // Single payment: recalculate Amount from SO total + CC %.
+    const baseTotal = Number(this.form.totalAmount) || 0;
+    // Product cost 0 or 1 is allowed; keep the entered payment amount.
+    if (payment.isAmountManual || this.paymentAmountEditedByUser || baseTotal <= 1) {
+      payment.isAmountManual = true;
+      this.paymentAmountEditedByUser = true;
+      return;
+    }
+
+    // Single payment with a real SO total: Amount = SO total + CC %.
     payment.isAmountManual = false;
     this.paymentAmountEditedByUser = false;
-    payment.amount = this.applyCcChargeToAmount(Number(this.form.totalAmount) || 0, payment);
+    payment.amount = this.applyCcChargeToAmount(baseTotal, payment);
     this.syncPaymentAmounts();
   }
 
@@ -5270,6 +5385,14 @@ export class SalesOrderComponent {
     }
 
     this.recalculateTotalAmount();
+    const numericError = this.validateNumericFieldLimits();
+    if (numericError) {
+      this.openErrorModal(
+        this.drawerMode === 'create' ? 'Submit Error' : 'Save Error',
+        numericError,
+      );
+      return;
+    }
     const payload = this.buildPayload();
 
     if (this.isMigrationDrawerMode) {
@@ -5467,6 +5590,11 @@ export class SalesOrderComponent {
             ? validationError.replace('submitting', 'remitting')
             : validationError,
       };
+    }
+
+    const numericError = this.validateNumericFieldLimits();
+    if (numericError) {
+      return { success: false, message: numericError };
     }
 
     const salesType = this.form.salesType;
@@ -6280,40 +6408,6 @@ export class SalesOrderComponent {
     return this.calculateAmountWithCcCharge(baseAmount, payment.method, payment.ccCharge);
   }
 
-  /**
-   * Payment 1 = order total minus amounts on Payment 2..N.
-   * Used for split payments so entering 7000 on card 2 reduces card 1 by 7000.
-   */
-  private redistributePrimaryPaymentAmount(): void {
-    const payments = this.form.paymentDetails as SalesPaymentFormItem[];
-    if (!payments.length || payments.length === 1) {
-      return;
-    }
-
-    const targetTotal = Math.max(0, Number(this.form.totalAmount) || 0);
-    let othersSum = 0;
-    for (let index = 1; index < payments.length; index += 1) {
-      othersSum += Math.max(0, Number(payments[index]?.amount) || 0);
-    }
-
-    const remainder = Math.max(0, Math.round((targetTotal - othersSum) * 100) / 100);
-    const primary = payments[0];
-    if (!primary) {
-      return;
-    }
-
-    // Keep Payment 1 as the plain remainder of the SO total (no CC mark-up here),
-    // so Cash/GCash/Bank splits stay: card1 = total - card2 - card3...
-    primary.amount = remainder;
-    primary.isAmountManual = true;
-
-    const explicitStatus = String(primary.status ?? '').trim().toLowerCase();
-    const normalizedStatus = ['paid', 'unpaid', 'overdue'].includes(explicitStatus)
-      ? explicitStatus
-      : '';
-    primary.status = normalizedStatus || this.getDisplayPaymentStatus(primary);
-  }
-
   private syncPaymentAmounts(): void {
     const computedAmount = Number(this.form.totalAmount) || 0;
     const isSplitPayment = this.form.paymentDetails.length > 1;
@@ -6324,6 +6418,7 @@ export class SalesOrderComponent {
           const nextPayment: SalesPaymentFormItem = {
             ...payment,
             amount: Number(payment.amount) || 0,
+            isAmountManual: true,
           };
 
           const explicitStatus = String(payment.status ?? '').trim().toLowerCase();
@@ -6337,13 +6432,14 @@ export class SalesOrderComponent {
           };
         },
       );
-      // Payment 1 always follows: order total - (Payment 2 + Payment 3 + ...).
-      this.redistributePrimaryPaymentAmount();
       return;
     }
 
     this.form.paymentDetails = this.form.paymentDetails.map((payment: SalesPaymentFormItem) => {
-      const shouldUseComputedAmount = !this.paymentAmountEditedByUser && !payment.isAmountManual;
+      const shouldUseComputedAmount =
+        !this.paymentAmountEditedByUser &&
+        !payment.isAmountManual &&
+        computedAmount > 1;
       const nextAmount = shouldUseComputedAmount
         ? this.applyCcChargeToAmount(computedAmount, payment)
         : Number(payment.amount) || 0;
@@ -6964,32 +7060,39 @@ export class SalesOrderComponent {
 
   getViewCcChargeAmount(): number {
     const payments: SalesOrderDetailPayment[] = this.viewDrawerDetail?.paymentDetails ?? [];
-    const ccPayment = payments.find(
+    const ccPayments = payments.filter(
       (payment) =>
         this.isCreditCardMethod(payment.method) && this.parseCcChargePercent(payment.ccCharge) > 0,
     );
-    if (!ccPayment) {
+    if (ccPayments.length === 0) {
       return 0;
     }
 
-    const base = this.getViewBaseTotalAmount();
-    const withCc = this.calculateAmountWithCcCharge(base, ccPayment.method, ccPayment.ccCharge);
-    return Math.max(0, withCc - base);
+    const isSplit = payments.length > 1;
+    return ccPayments.reduce((sum, payment) => {
+      const storedAmount = Number(payment.amount) || 0;
+      const base = isSplit ? storedAmount : this.getViewBaseTotalAmount();
+      const chargeBase = base > 0 ? base : storedAmount;
+      const withCc = this.calculateAmountWithCcCharge(chargeBase, payment.method, payment.ccCharge);
+      return sum + Math.max(0, withCc - chargeBase);
+    }, 0);
   }
 
   getViewPaymentAmount(payment: SalesOrderDetailPayment): number {
     const storedAmount = Number(payment.amount) || 0;
     const baseAmount = this.getViewBaseTotalAmount();
+    const payments = this.viewDrawerDetail?.paymentDetails ?? [];
+    const isSplit = payments.length > 1;
 
     if (this.isCreditCardMethod(payment.method) && this.parseCcChargePercent(payment.ccCharge) > 0) {
-      return this.calculateAmountWithCcCharge(
-        baseAmount > 0 ? baseAmount : storedAmount,
-        payment.method,
-        payment.ccCharge,
-      );
+      const chargeBase = isSplit ? storedAmount : baseAmount > 0 ? baseAmount : storedAmount;
+      return this.calculateAmountWithCcCharge(chargeBase, payment.method, payment.ccCharge);
     }
 
-    const payments = this.viewDrawerDetail?.paymentDetails ?? [];
+    if (isSplit) {
+      return storedAmount;
+    }
+
     if (payments.length === 1 && baseAmount > 0 && storedAmount > baseAmount + 0.009) {
       return baseAmount;
     }
