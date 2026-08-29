@@ -7,6 +7,7 @@ import { MaterialsService } from 'src/inventory/materials/materials.service';
 import { PurchaseService } from 'src/inventory/purchase/purchase.service';
 import { AuditLogService } from 'src/audit-log/audit-log.service';
 import { SoNumberService } from './so-number.service';
+import { SerialEventLogService } from 'src/inventory/serial-number/serial-event-log.service';
 
 describe('SalesOrderService', () => {
   let service: SalesOrderService;
@@ -33,6 +34,7 @@ describe('SalesOrderService', () => {
         { provide: PurchaseService, useValue: {} },
         { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
         { provide: SoNumberService, useValue: { generateNext: jest.fn().mockResolvedValue('SO-000001') } },
+        { provide: SerialEventLogService, useValue: { logEvent: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -174,6 +176,7 @@ describe('SalesOrderService', () => {
 
     it('completes a project sales order', async () => {
       jest.spyOn(service as any, 'getSalesOrderAuditSnapshot').mockResolvedValue({ id: 1 });
+      jest.spyOn(service as any, 'updateLinkedSalesSerialStatuses').mockResolvedValue(0);
       database.query
         .mockResolvedValueOnce({
           rowCount: 1,
@@ -187,6 +190,13 @@ describe('SalesOrderService', () => {
       expect(database.query).toHaveBeenCalledWith(
         expect.stringContaining("status = 'complete'"),
         [1],
+      );
+      expect((service as any).updateLinkedSalesSerialStatuses).toHaveBeenCalledWith(
+        expect.anything(),
+        1,
+        'installed',
+        undefined,
+        expect.objectContaining({ userId: 9 }),
       );
     });
 
@@ -227,6 +237,51 @@ describe('SalesOrderService', () => {
       expect(result.message).toMatch(/999\.99/);
       expect(result.message).not.toMatch(/numeric field overflow/i);
       expect(database.query).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateLinkedSalesSerialStatuses', () => {
+    it('promotes in-stock serials linked to the sales order', async () => {
+      const logEvent = jest.fn().mockResolvedValue(undefined);
+      (service as any).serialEventLogService = { logEvent };
+
+      database.query
+        .mockResolvedValueOnce({
+          rows: [
+            { column_name: 'salesId' },
+            { column_name: 'status' },
+            { column_name: 'serialNumber' },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rowCount: 1,
+          rows: [{ id: 9, serial_number: 'SN-1', status: 'in-stock' }],
+        })
+        .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+
+      const count = await (service as any).updateLinkedSalesSerialStatuses(
+        { query: database.query },
+        42,
+        'for-delivery',
+        ['reserved', 'pending', 'scanned', 'in-stock'],
+        { userId: 7 },
+      );
+
+      expect(count).toBe(1);
+      expect(database.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE tblserial_numbers'),
+        ['for-delivery', [9]],
+      );
+      expect(logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serialId: 9,
+          serialNumber: 'SN-1',
+          eventType: 'STATUS_CHANGED',
+          previousStatus: 'in-stock',
+          newStatus: 'for-delivery',
+        }),
+        expect.anything(),
+      );
     });
   });
 });

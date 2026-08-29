@@ -3,6 +3,7 @@ import { PurchaseService } from './purchase.service';
 import { DatabaseService } from 'src/database/database.service';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 import { AuditLogService } from 'src/audit-log/audit-log.service';
+import { SerialEventLogService } from 'src/inventory/serial-number/serial-event-log.service';
 
 describe('PurchaseService', () => {
   let service: PurchaseService;
@@ -14,6 +15,7 @@ describe('PurchaseService', () => {
         { provide: DatabaseService, useValue: {} },
         { provide: MaterialStockService, useValue: {} },
         { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
+        { provide: SerialEventLogService, useValue: { logEvent: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -43,6 +45,8 @@ describe('PurchaseService', () => {
     expect((service as any).shouldPreserveExistingSerialStatus('in-stock')).toBe(true);
     expect((service as any).shouldPreserveExistingSerialStatus('installed')).toBe(true);
     expect((service as any).shouldPreserveExistingSerialStatus('sold')).toBe(true);
+    expect((service as any).shouldPreserveExistingSerialStatus('reserved')).toBe(true);
+    expect((service as any).shouldPreserveExistingSerialStatus('for-delivery')).toBe(true);
     expect((service as any).shouldPreserveExistingSerialStatus('scanned')).toBe(false);
   });
 

@@ -9,10 +9,19 @@ import { MaterialTransactionsModule } from 'src/inventory/material-transactions/
 import { MaterialsModule } from 'src/inventory/materials/materials.module';
 import { PurchaseModule } from 'src/inventory/purchase/purchase.module';
 import { AuditLogModule } from 'src/audit-log/audit-log.module';
+import { SerialNumberModule } from 'src/inventory/serial-number/serial-number.module';
 import { SoNumberService } from './so-number.service';
 
 @Module({
-  imports: [DatabaseModule, MaterialStockModule, MaterialTransactionsModule, MaterialsModule, PurchaseModule, AuditLogModule],
+  imports: [
+    DatabaseModule,
+    MaterialStockModule,
+    MaterialTransactionsModule,
+    MaterialsModule,
+    PurchaseModule,
+    AuditLogModule,
+    SerialNumberModule,
+  ],
   controllers: [SalesOrderController],
   providers: [SalesOrderService, SoNumberService, JwtAuthGuard],
   exports: [SalesOrderService, SoNumberService],

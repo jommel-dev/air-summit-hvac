@@ -9,6 +9,7 @@ import { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'crypto';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import { SerialEventLogService } from 'src/inventory/serial-number/serial-event-log.service';
 import {
   assertActiveProductCapacity,
   catalogDeletedSql,
@@ -118,6 +119,7 @@ export class PurchaseService {
     private readonly databaseService: DatabaseService,
     private readonly materialStockService: MaterialStockService,
     private readonly auditLogService: AuditLogService,
+    private readonly serialEventLogService: SerialEventLogService,
   ) {}
 
   private async getPurchaseAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
@@ -1557,12 +1559,14 @@ export class PurchaseService {
     return [
       'in-stock',
       'reserved',
+      'for-delivery',
       'sold',
       'installed',
       'released',
       'delivered',
       'out',
       'outbound',
+      'defective',
     ].includes(normalized);
   }
 
@@ -1574,6 +1578,7 @@ export class PurchaseService {
       approvalOnly?: boolean;
       updateSerialsToInStock?: boolean;
       successMessage?: string;
+      auditActor?: AuditActorContext;
     },
   ) {
     if (!Number.isFinite(id) || id <= 0) {
@@ -1665,30 +1670,82 @@ export class PurchaseService {
             'purchaseOrderId',
             'purchase_order_id',
           ]);
+          const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
+          const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
 
-          const serialUpdateResult = serialPurchaseIdColumn
-            ? await client.query(
-                `UPDATE tblserial_numbers
-                 SET "${serialStatusColumn}" = $1
-                 WHERE "${serialPurchaseIdColumn}"::text = $2
-                   AND LOWER(COALESCE("${serialStatusColumn}"::text, '')) <> 'installed'`,
-                ['in-stock', String(id)],
-              )
-            : await client.query(
-                `UPDATE tblserial_numbers sn
-                 SET "${serialStatusColumn}" = $1
-                 WHERE COALESCE(
-                   to_jsonb(sn)->>'purchaseId',
-                   to_jsonb(sn)->>'purchase_id',
-                   to_jsonb(sn)->>'po_id',
-                   to_jsonb(sn)->>'purchaseOrderId',
-                   to_jsonb(sn)->>'purchase_order_id'
-                 ) = $2
-                   AND LOWER(COALESCE("${serialStatusColumn}"::text, '')) <> 'installed'`,
-                ['in-stock', String(id)],
+          const protectedStatuses = [
+            'installed',
+            'reserved',
+            'for-delivery',
+            'sold',
+            'released',
+            'delivered',
+            'out',
+            'outbound',
+            'defective',
+            'in-stock',
+          ];
+
+          const purchaseMatchSql = serialPurchaseIdColumn
+            ? `"${serialPurchaseIdColumn}"::text = $1`
+            : `COALESCE(
+                 to_jsonb(sn)->>'purchaseId',
+                 to_jsonb(sn)->>'purchase_id',
+                 to_jsonb(sn)->>'po_id',
+                 to_jsonb(sn)->>'purchaseOrderId',
+                 to_jsonb(sn)->>'purchase_order_id'
+               ) = $1`;
+
+          const salesIdNullSql = serialSalesIdColumn
+            ? `"${serialSalesIdColumn}" IS NULL`
+            : `NULLIF(COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id', ''), '') IS NULL`;
+
+          const serialsToStock = await client.query<{
+            id: number;
+            serial_number: string | null;
+            status: string | null;
+          }>(
+            `SELECT
+               sn.id,
+               ${serialNumberColumn ? `"${serialNumberColumn}"::text` : `COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '')`} AS serial_number,
+               "${serialStatusColumn}"::text AS status
+             FROM tblserial_numbers sn
+             WHERE ${purchaseMatchSql}
+               AND ${salesIdNullSql}
+               AND REPLACE(REPLACE(LOWER(COALESCE("${serialStatusColumn}"::text, '')), '_', '-'), ' ', '-') <> ALL($2::text[])`,
+            [String(id), protectedStatuses],
+          );
+
+          if ((serialsToStock.rowCount ?? 0) > 0) {
+            const serialIds = serialsToStock.rows.map((row) => row.id);
+            await client.query(
+              `UPDATE tblserial_numbers
+               SET "${serialStatusColumn}" = $1
+               WHERE id = ANY($2::bigint[])`,
+              ['in-stock', serialIds],
+            );
+
+            const actor = options?.auditActor ?? { userId };
+            for (const row of serialsToStock.rows) {
+              await this.serialEventLogService.logEvent(
+                {
+                  serialId: row.id,
+                  serialNumber: String(row.serial_number ?? '').trim(),
+                  eventType: 'STATUS_CHANGED',
+                  previousStatus: row.status,
+                  newStatus: 'in-stock',
+                  newPurchaseId: id,
+                  performedBy: actor.userId ?? null,
+                  performedByUsername: actor.username ?? null,
+                  ipAddress: actor.ipAddress ?? null,
+                  reason: 'Purchase order approved',
+                },
+                client,
               );
+            }
+          }
 
-          updatedSerialCount = serialUpdateResult.rowCount ?? 0;
+          updatedSerialCount = serialsToStock.rowCount ?? 0;
 
           recordedNetPriceItems = await this.recordCapacityNetPricesForApprovedPurchase(
             client,
@@ -1859,6 +1916,24 @@ export class PurchaseService {
           (col) => col.toLowerCase() === 'previoussalesid',
         );
 
+        const linkedTransferSerials = await client.query<{
+          id: number;
+          serialNumber: string | null;
+          status: string | null;
+          salesId: string | null;
+          branchId: string | null;
+        }>(
+          `SELECT
+             id,
+             "serialNumber",
+             status,
+             "salesId"::text AS "salesId",
+             "branchId"::text AS "branchId"
+           FROM tblserial_numbers
+           WHERE "salesId" = $1`,
+          [salesId],
+        );
+
         if (hasPreviousSalesId) {
           if (receivingBranchId) {
             await client.query(
@@ -1891,6 +1966,27 @@ export class PurchaseService {
               [salesId],
             );
           }
+        }
+
+        for (const row of linkedTransferSerials.rows) {
+          await this.serialEventLogService.logEvent(
+            {
+              serialId: row.id,
+              serialNumber: String(row.serialNumber ?? '').trim(),
+              eventType: 'STATUS_CHANGED',
+              previousStatus: row.status,
+              newStatus: 'in-stock',
+              previousSalesId: Number(row.salesId) || salesId,
+              newSalesId: null,
+              previousBranchId: row.branchId ? Number(row.branchId) : null,
+              newBranchId: receivingBranchId,
+              performedBy: auditActor?.userId ?? userId ?? null,
+              performedByUsername: auditActor?.username ?? null,
+              ipAddress: auditActor?.ipAddress ?? null,
+              reason: 'Transfer PO received — serials released to receiving branch',
+            },
+            client,
+          );
         }
 
         return { purchaseId: id, salesId, status: 'received', receivingBranchId };
@@ -1930,6 +2026,7 @@ export class PurchaseService {
       approvalOnly: true,
       updateSerialsToInStock: true,
       successMessage: 'Purchase order approved and serials moved to in-stock',
+      auditActor,
     });
 
     if (response.success) {
@@ -3216,11 +3313,13 @@ export class PurchaseService {
                 const existingSerialResult = await client.query<{
                   id: number;
                   purchase_id: string | null;
+                  sales_id: string | null;
                   status: string | null;
                 }>(
                   `SELECT
                      sn.id,
                      sn."purchaseId"::text AS purchase_id,
+                     sn."salesId"::text AS sales_id,
                      COALESCE(sn."status"::text, '') AS status
                    FROM tblserial_numbers sn
                    WHERE LOWER(
@@ -3271,6 +3370,9 @@ export class PurchaseService {
                   const existingSerialStatus = String(existingSerial.status ?? '')
                     .trim()
                     .toLowerCase();
+                  if (this.toOptionalNumber(existingSerial.sales_id) !== null) {
+                    continue;
+                  }
                   if (this.shouldPreserveExistingSerialStatus(existingSerialStatus)) {
                     continue;
                   }
@@ -3282,6 +3384,21 @@ export class PurchaseService {
                          SET "${serialStatusColumn}" = $1
                          WHERE id = $2`,
                         ['in-stock', existingSerial.id],
+                      );
+                      await this.serialEventLogService.logEvent(
+                        {
+                          serialId: existingSerial.id,
+                          serialNumber: normalizedSerial,
+                          eventType: 'STATUS_CHANGED',
+                          previousStatus: existingSerial.status,
+                          newStatus: 'in-stock',
+                          newPurchaseId: id,
+                          performedBy: auditActor?.userId ?? userId ?? null,
+                          performedByUsername: auditActor?.username ?? null,
+                          ipAddress: auditActor?.ipAddress ?? null,
+                          reason: 'Approved purchase order edit locked serial to in-stock',
+                        },
+                        client,
                       );
                     }
                     continue;
