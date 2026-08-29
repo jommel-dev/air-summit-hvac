@@ -1,9 +1,10 @@
 ﻿import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { PoolClient } from 'pg';
 import { CreateSerialNumberDto } from './dto/create-serial-number.dto';
 import { UpdateSerialNumberDto } from './dto/update-serial-number.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { AuditLogService, AuditActorContext } from 'src/audit-log/audit-log.service';
-import { SerialEventLogService } from './serial-event-log.service';
+import { SerialEventLogService, LogEventParams } from './serial-event-log.service';
 import { ScanFileLoggerService } from './scan-file-logger.service';
 import { ScanSalesOrderDto } from './dto/scan-sales-order.dto';
 import {
@@ -140,40 +141,62 @@ export class SerialNumberService {
     );
   }
 
-  private async runInsert(tableName: string, record: Record<string, unknown>) {
+  private async runInsert(
+    tableName: string,
+    record: Record<string, unknown>,
+    client?: PoolClient,
+  ) {
     const columns = Object.keys(record);
     const values = Object.values(record);
     const quotedColumns = columns.map((column) => `"${column}"`).join(', ');
     const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
+    const sql = `INSERT INTO ${tableName} (${quotedColumns}) VALUES (${placeholders}) RETURNING id`;
 
-    return this.databaseService.query<{ id: number }>(
-      `INSERT INTO ${tableName} (${quotedColumns}) VALUES (${placeholders}) RETURNING id`,
-      values,
-    );
+    if (client) {
+      return client.query<{ id: number }>(sql, values);
+    }
+    return this.databaseService.query<{ id: number }>(sql, values);
   }
 
   private async runUpdateById(
     tableName: string,
     id: number,
     record: Record<string, unknown>,
+    client?: PoolClient,
   ) {
     const columns = Object.keys(record);
     if (columns.length === 0) {
-      return { rowCount: 0 };
+      return { rowCount: 0, rows: [] as Array<{ id: number }> };
     }
 
     const values = Object.values(record);
     const setClause = columns
       .map((column, index) => `"${column}" = $${index + 1}`)
       .join(', ');
-
-    return this.databaseService.query<{ id: number }>(
-      `UPDATE ${tableName}
+    const sql = `UPDATE ${tableName}
        SET ${setClause}
        WHERE id = $${values.length + 1}
-       RETURNING id`,
-      [...values, id],
-    );
+       RETURNING id`;
+    const params = [...values, id];
+
+    if (client) {
+      return client.query<{ id: number }>(sql, params);
+    }
+    return this.databaseService.query<{ id: number }>(sql, params);
+  }
+
+  private async persistSerialUpdateWithEvent(
+    id: number,
+    updateRecord: Record<string, unknown>,
+    event: LogEventParams,
+  ) {
+    return this.databaseService.withTransaction(async (client) => {
+      const result = await this.runUpdateById('tblserial_numbers', id, updateRecord, client);
+      if ((result.rowCount ?? 0) > 0) {
+        await this.serialEventLogService.logEvent(event, client);
+      }
+      return result;
+    });
   }
 
   private normalizeSerialNumber(value: unknown): string {
@@ -2117,40 +2140,46 @@ export class SerialNumberService {
     const revertOnlyInstalled = revertingToStock
       ? ` AND LOWER(COALESCE("${serialStatusColumn}", '')) = 'installed'`
       : '';
-    const result = await this.databaseService.query(
-      `UPDATE tblserial_numbers
-       SET ${setClauses.join(', ')}
-       WHERE LOWER(regexp_replace(BTRIM(COALESCE("serialNumber", '')), '\\s+', ' ', 'g')) = ANY(
-         SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($${params.length}::text[]) s
-       )${revertOnlyInstalled}`,
-      params,
-    );
+    const result = await this.databaseService.withTransaction(async (client) => {
+      const updateResult = await client.query(
+        `UPDATE tblserial_numbers
+         SET ${setClauses.join(', ')}
+         WHERE LOWER(regexp_replace(BTRIM(COALESCE("serialNumber", '')), '\\s+', ' ', 'g')) = ANY(
+           SELECT LOWER(regexp_replace(BTRIM(s), '\\s+', ' ', 'g')) FROM unnest($${params.length}::text[]) s
+         )${revertOnlyInstalled}`,
+        params,
+      );
 
-    // Log events for each affected serial
-    if (affectedRows.length > 0) {
-      const eventReason = revertingToStock ? normalizedRemarks : normalizedRemarks || null;
+      if (affectedRows.length > 0) {
+        const eventReason = revertingToStock ? normalizedRemarks : normalizedRemarks || null;
 
-      for (const row of affectedRows) {
-        let eventType: 'STATUS_CHANGED' | 'MARKED_DEFECTIVE' | 'RETURNED' = 'STATUS_CHANGED';
-        if (normalizedStatus === 'defective') {
-          eventType = 'MARKED_DEFECTIVE';
-        } else if (normalizedStatus === 'returned') {
-          eventType = 'RETURNED';
+        for (const row of affectedRows) {
+          let eventType: 'STATUS_CHANGED' | 'MARKED_DEFECTIVE' | 'RETURNED' = 'STATUS_CHANGED';
+          if (normalizedStatus === 'defective') {
+            eventType = 'MARKED_DEFECTIVE';
+          } else if (normalizedStatus === 'returned') {
+            eventType = 'RETURNED';
+          }
+
+          await this.serialEventLogService.logEvent(
+            {
+              serialId: row.id,
+              serialNumber: row.serialNumber,
+              eventType,
+              previousStatus: row.status,
+              newStatus: normalizedStatus,
+              performedBy: userId ?? null,
+              performedByUsername: auditActor?.username ?? null,
+              ipAddress: auditActor?.ipAddress ?? null,
+              reason: eventReason,
+            },
+            client,
+          );
         }
-
-        await this.serialEventLogService.logEvent({
-          serialId: row.id,
-          serialNumber: row.serialNumber,
-          eventType,
-          previousStatus: row.status,
-          newStatus: normalizedStatus,
-          performedBy: userId ?? null,
-          performedByUsername: auditActor?.username ?? null,
-          ipAddress: auditActor?.ipAddress ?? null,
-          reason: eventReason,
-        });
       }
-    }
+
+      return updateResult;
+    });
 
     await this.auditLogService.logMutation({
       action: revertingToStock ? 'SERIAL_REVERT_TO_STOCK' : 'SERIAL_BULK_UPDATE_STATUS',
@@ -2664,28 +2693,34 @@ export class SerialNumberService {
         insertRecord[serialCreatedByColumn] = userId;
       }
 
-      const insertResult = await this.runInsert('tblserial_numbers', insertRecord);
+      const insertResult = await this.databaseService.withTransaction(async (client) => {
+        const result = await this.runInsert('tblserial_numbers', insertRecord, client);
+        if ((result.rowCount ?? 0) > 0) {
+          const newSerialId = result.rows[0]?.id;
+          await this.serialEventLogService.logEvent(
+            {
+              serialId: newSerialId,
+              serialNumber,
+              eventType: 'FORCE_INSERT_SO',
+              previousStatus: null,
+              newStatus: 'reserved',
+              previousSalesId: null,
+              newSalesId: salesId,
+              previousBranchId: null,
+              newBranchId: branchId,
+              performedBy: actor?.userId ?? null,
+              performedByUsername: actor?.username ?? null,
+              ipAddress: actor?.ipAddress ?? null,
+            },
+            client,
+          );
+        }
+        return result;
+      });
 
       if (insertResult.rowCount === 0) {
         return auditFailure('Unable to create serial number record');
       }
-
-      const newSerialId = insertResult.rows[0]?.id;
-
-      await this.serialEventLogService.logEvent({
-        serialId: newSerialId,
-        serialNumber,
-        eventType: 'FORCE_INSERT_SO',
-        previousStatus: null,
-        newStatus: 'reserved',
-        previousSalesId: null,
-        newSalesId: salesId,
-        previousBranchId: null,
-        newBranchId: branchId,
-        performedBy: actor?.userId ?? null,
-        performedByUsername: actor?.username ?? null,
-        ipAddress: actor?.ipAddress ?? null,
-      });
 
       return auditSuccess({
         success: true,
@@ -2699,7 +2734,7 @@ export class SerialNumberService {
     const serial = serialResult.rows[0];
     const currentSalesId = Number(serial.salesId);
     const normalizedStatus = String(serial.status ?? '').trim().toLowerCase();
-    const reservedStatuses = new Set(['reserved', 'sold', 'released', 'out', 'outbound']);
+    const reservedStatuses = new Set(['reserved', 'for-delivery', 'sold', 'released', 'out', 'outbound']);
 
     // Defective check: after serial lookup, before product/capacity mismatch
     if (serial.isDefective && !dto.forceAssign) {
@@ -2813,9 +2848,24 @@ export class SerialNumberService {
           return auditFailure('Unit type column is not configured in tblserial_numbers');
         }
 
-        const unitTypeUpdateResult = await this.runUpdateById('tblserial_numbers', serial.id, {
-          [serialUnitTypeColumn]: expectedUnitType,
-        });
+        const unitTypeUpdateResult = await this.persistSerialUpdateWithEvent(
+          serial.id,
+          { [serialUnitTypeColumn]: expectedUnitType },
+          {
+            serialId: serial.id,
+            serialNumber: serial.serialNumber ?? serialNumber,
+            eventType: 'UNIT_TYPE_CORRECTED',
+            previousStatus: serial.status,
+            newStatus: serial.status,
+            previousSalesId: Number.isFinite(currentSalesId) && currentSalesId > 0 ? currentSalesId : null,
+            newSalesId: salesId,
+            previousBranchId: serial.branchId ? Number(serial.branchId) : null,
+            newBranchId: branchId,
+            performedBy: actor?.userId ?? null,
+            performedByUsername: actor?.username ?? null,
+            ipAddress: actor?.ipAddress ?? null,
+          },
+        );
 
         if (unitTypeUpdateResult.rowCount === 0) {
           return auditFailure('Unable to update serial unit type');
@@ -2823,21 +2873,6 @@ export class SerialNumberService {
 
         unitTypeCorrectedFrom = scannedUnitType;
         serial.unitType = expectedUnitType;
-
-        await this.serialEventLogService.logEvent({
-          serialId: serial.id,
-          serialNumber: serial.serialNumber ?? serialNumber,
-          eventType: 'UNIT_TYPE_CORRECTED',
-          previousStatus: serial.status,
-          newStatus: serial.status,
-          previousSalesId: Number.isFinite(currentSalesId) && currentSalesId > 0 ? currentSalesId : null,
-          newSalesId: salesId,
-          previousBranchId: serial.branchId ? Number(serial.branchId) : null,
-          newBranchId: branchId,
-          performedBy: actor?.userId ?? null,
-          performedByUsername: actor?.username ?? null,
-          ipAddress: actor?.ipAddress ?? null,
-        });
       }
     }
 
@@ -2892,26 +2927,28 @@ export class SerialNumberService {
         reassignUpdateRecord[serialCreatedByColumn] = userId;
       }
 
-      const reassignResult = await this.runUpdateById('tblserial_numbers', serial.id, reassignUpdateRecord);
+      const reassignResult = await this.persistSerialUpdateWithEvent(
+        serial.id,
+        reassignUpdateRecord,
+        {
+          serialId: serial.id,
+          serialNumber: serial.serialNumber ?? serialNumber,
+          eventType: 'ASSIGNED_TO_SO',
+          previousStatus: serial.status,
+          newStatus: 'reserved',
+          previousSalesId: currentSalesId,
+          newSalesId: salesId,
+          previousBranchId: serial.branchId ? Number(serial.branchId) : null,
+          newBranchId: branchId,
+          performedBy: actor?.userId ?? null,
+          performedByUsername: actor?.username ?? null,
+          ipAddress: actor?.ipAddress ?? null,
+        },
+      );
 
       if (reassignResult.rowCount === 0) {
         return auditFailure('Unable to update serial number for sales order');
       }
-
-      await this.serialEventLogService.logEvent({
-        serialId: serial.id,
-        serialNumber: serial.serialNumber ?? serialNumber,
-        eventType: 'ASSIGNED_TO_SO',
-        previousStatus: serial.status,
-        newStatus: 'reserved',
-        previousSalesId: currentSalesId,
-        newSalesId: salesId,
-        previousBranchId: serial.branchId ? Number(serial.branchId) : null,
-        newBranchId: branchId,
-        performedBy: actor?.userId ?? null,
-        performedByUsername: actor?.username ?? null,
-        ipAddress: actor?.ipAddress ?? null,
-      });
 
       return auditSuccess({
         success: true,
@@ -2966,7 +3003,24 @@ export class SerialNumberService {
         scannedUpdateRecord[serialCreatedByColumn] = userId;
       }
 
-      const scannedUpdateResult = await this.runUpdateById('tblserial_numbers', serial.id, scannedUpdateRecord);
+      const scannedUpdateResult = await this.persistSerialUpdateWithEvent(
+        serial.id,
+        scannedUpdateRecord,
+        {
+          serialId: serial.id,
+          serialNumber: serial.serialNumber ?? serialNumber,
+          eventType: 'ASSIGNED_TO_SO',
+          previousStatus: serial.status,
+          newStatus: 'reserved',
+          previousSalesId: Number.isFinite(currentSalesId) && currentSalesId > 0 ? currentSalesId : null,
+          newSalesId: salesId,
+          previousBranchId: serial.branchId ? Number(serial.branchId) : null,
+          newBranchId: branchId,
+          performedBy: actor?.userId ?? null,
+          performedByUsername: actor?.username ?? null,
+          ipAddress: actor?.ipAddress ?? null,
+        },
+      );
 
       if (scannedUpdateResult.rowCount === 0) {
         return auditFailure('Unable to update serial number for sales order');
@@ -2974,21 +3028,6 @@ export class SerialNumberService {
 
       // Fetch PO number for the response details
       const previousPoNumber = await this.getPurchaseOrderReference(serialPurchaseId);
-
-      await this.serialEventLogService.logEvent({
-        serialId: serial.id,
-        serialNumber: serial.serialNumber ?? serialNumber,
-        eventType: 'ASSIGNED_TO_SO',
-        previousStatus: serial.status,
-        newStatus: 'reserved',
-        previousSalesId: Number.isFinite(currentSalesId) && currentSalesId > 0 ? currentSalesId : null,
-        newSalesId: salesId,
-        previousBranchId: serial.branchId ? Number(serial.branchId) : null,
-        newBranchId: branchId,
-        performedBy: actor?.userId ?? null,
-        performedByUsername: actor?.username ?? null,
-        ipAddress: actor?.ipAddress ?? null,
-      });
 
       await this.logSerialScanAudit(
         'SERIAL_SCAN_SUCCESS',
@@ -3034,26 +3073,28 @@ export class SerialNumberService {
       updateRecord[serialCreatedByColumn] = userId;
     }
 
-    const updateResult = await this.runUpdateById('tblserial_numbers', serial.id, updateRecord);
+    const updateResult = await this.persistSerialUpdateWithEvent(
+      serial.id,
+      updateRecord,
+      {
+        serialId: serial.id,
+        serialNumber: serial.serialNumber ?? serialNumber,
+        eventType: 'ASSIGNED_TO_SO',
+        previousStatus: serial.status,
+        newStatus: 'reserved',
+        previousSalesId: Number.isFinite(currentSalesId) && currentSalesId > 0 ? currentSalesId : null,
+        newSalesId: salesId,
+        previousBranchId: serial.branchId ? Number(serial.branchId) : null,
+        newBranchId: branchId,
+        performedBy: actor?.userId ?? null,
+        performedByUsername: actor?.username ?? null,
+        ipAddress: actor?.ipAddress ?? null,
+      },
+    );
 
     if (updateResult.rowCount === 0) {
       return auditFailure('Unable to update serial number for sales order');
     }
-
-    await this.serialEventLogService.logEvent({
-      serialId: serial.id,
-      serialNumber: serial.serialNumber ?? serialNumber,
-      eventType: 'ASSIGNED_TO_SO',
-      previousStatus: serial.status,
-      newStatus: 'reserved',
-      previousSalesId: Number.isFinite(currentSalesId) && currentSalesId > 0 ? currentSalesId : null,
-      newSalesId: salesId,
-      previousBranchId: serial.branchId ? Number(serial.branchId) : null,
-      newBranchId: branchId,
-      performedBy: actor?.userId ?? null,
-      performedByUsername: actor?.username ?? null,
-      ipAddress: actor?.ipAddress ?? null,
-    });
 
     return auditSuccess({
       success: true,
@@ -4073,10 +4114,21 @@ export class SerialNumberService {
       updateRecord[serialStatusColumn] = 'in-stock';
     }
 
-    const updateResult = await this.runUpdateById(
-      'tblserial_numbers',
+    const updateResult = await this.persistSerialUpdateWithEvent(
       existing.id,
       updateRecord,
+      {
+        serialId: existing.id,
+        serialNumber: serialNumber,
+        eventType: 'REMOVED_FROM_SO',
+        previousStatus: existing.status,
+        newStatus: 'in-stock',
+        previousSalesId: salesId,
+        newSalesId: null,
+        performedBy: actor?.userId ?? null,
+        performedByUsername: actor?.username ?? null,
+        ipAddress: actor?.ipAddress ?? null,
+      },
     );
 
     if (updateResult.rowCount === 0) {
@@ -4085,19 +4137,6 @@ export class SerialNumberService {
         message: 'Unable to remove serial number from sales order',
       };
     }
-
-    await this.serialEventLogService.logEvent({
-      serialId: existing.id,
-      serialNumber: serialNumber,
-      eventType: 'REMOVED_FROM_SO',
-      previousStatus: existing.status,
-      newStatus: 'in-stock',
-      previousSalesId: salesId,
-      newSalesId: null,
-      performedBy: actor?.userId ?? null,
-      performedByUsername: actor?.username ?? null,
-      ipAddress: actor?.ipAddress ?? null,
-    });
 
     // Capture after state for audit logging
     const afterState = {

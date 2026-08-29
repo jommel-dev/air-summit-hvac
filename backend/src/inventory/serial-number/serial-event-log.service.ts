@@ -118,6 +118,7 @@ export class SerialEventLogService {
       }
     } catch (error) {
       console.error('Failed to log serial event:', error);
+      throw error;
     }
   }
 

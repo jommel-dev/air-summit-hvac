@@ -1,4 +1,5 @@
 import axios, { AxiosHeaders, InternalAxiosRequestConfig } from 'axios';
+import { ENV } from '../../core/config/env.generated';
 import {
   clearAccessToken,
   getAccessToken,
@@ -11,21 +12,7 @@ import {
 
 type RetryConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
-const appEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
-const configuredApiBaseUrl = String(appEnv?.['NG_APP_API_BASE_URL'] ?? '').trim();
-const nodeEnv = String(appEnv?.['NODE_ENV'] ?? '').trim().toLowerCase();
-const hostName = String(globalThis.location?.hostname ?? '').trim().toLowerCase();
-const isLocalHost = hostName === 'localhost' || hostName === '127.0.0.1';
-const isProductionBuild = nodeEnv === 'production' || !isLocalHost;
-const fallbackProductionApiBaseUrl = 'https://air-summit-backend-ewbho.ondigitalocean.app';
-
-if (!configuredApiBaseUrl && isProductionBuild) {
-  console.warn(
-    'NG_APP_API_BASE_URL is missing. Falling back to the configured production API URL.',
-  );
-}
-
-const API_BASE_URL = configuredApiBaseUrl || (isLocalHost ? 'http://localhost:3000' : fallbackProductionApiBaseUrl);
+const API_BASE_URL = String(ENV.NG_APP_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
 const ACTIVE_BRANCH_STORAGE_KEY = 'activeBranchId';
 
 export const apiClient = axios.create({

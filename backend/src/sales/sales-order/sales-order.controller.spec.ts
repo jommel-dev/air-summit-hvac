@@ -8,6 +8,7 @@ import { MaterialsService } from 'src/inventory/materials/materials.service';
 import { PurchaseService } from 'src/inventory/purchase/purchase.service';
 import { AuditLogService } from 'src/audit-log/audit-log.service';
 import { SoNumberService } from './so-number.service';
+import { SerialEventLogService } from 'src/inventory/serial-number/serial-event-log.service';
 import { ConfigService } from '@nestjs/config';
 
 describe('SalesOrderController', () => {
@@ -25,6 +26,7 @@ describe('SalesOrderController', () => {
         { provide: PurchaseService, useValue: {} },
         { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
         { provide: SoNumberService, useValue: {} },
+        { provide: SerialEventLogService, useValue: { logEvent: jest.fn() } },
         { provide: ConfigService, useValue: { get: () => 'test-secret' } },
       ],
     }).compile();

@@ -14,6 +14,10 @@ import { MaterialTransactionsService } from 'src/inventory/material-transactions
 import { MaterialsService } from 'src/inventory/materials/materials.service';
 import { PurchaseService } from 'src/inventory/purchase/purchase.service';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
+import {
+  SerialEventLogService,
+  SerialEventType,
+} from 'src/inventory/serial-number/serial-event-log.service';
 import { SoNumberService } from './so-number.service';
 import {
   assertActiveProductCapacity,
@@ -82,6 +86,7 @@ export class SalesOrderService {
     private readonly purchaseService: PurchaseService,
     private readonly auditLogService: AuditLogService,
     private readonly soNumberService: SoNumberService,
+    private readonly serialEventLogService: SerialEventLogService,
   ) {}
 
   async getNextSoNumber() {
@@ -272,22 +277,36 @@ export class SalesOrderService {
         return { success: false, message: `No eligible orders to remit. ${reasons}`, skipped };
       }
 
-      // Step 2: Update only eligible orders
-      const result = await this.databaseService.query(
-        `UPDATE tblsales_order
-         SET status = 'remitted'
-         WHERE id = ANY($1::integer[])`,
-        [eligible],
-      );
+      // Step 2: Update only eligible orders and promote linked serials together
+      const result = await this.databaseService.withTransaction(async (client) => {
+        const updated = await client.query(
+          `UPDATE tblsales_order
+           SET status = 'remitted'
+           WHERE id = ANY($1::integer[])`,
+          [eligible],
+        );
 
-      await this.databaseService.query(
-        `UPDATE tblso_payments
-         SET status = 'unpaid'
-         WHERE so_id = ANY($1::integer[])
-           AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(method, ''))), '_', '-'), ' ', '-')
-             IN ('bank-transfer', 'cheque', 'credit-card')`,
-        [eligible],
-      );
+        await client.query(
+          `UPDATE tblso_payments
+           SET status = 'unpaid'
+           WHERE so_id = ANY($1::integer[])
+             AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(method, ''))), '_', '-'), ' ', '-')
+               IN ('bank-transfer', 'cheque', 'credit-card')`,
+          [eligible],
+        );
+
+        for (const orderId of eligible) {
+          await this.updateLinkedSalesSerialStatuses(
+            client,
+            orderId,
+            'installed',
+            undefined,
+            auditActor ?? { userId },
+          );
+        }
+
+        return updated;
+      });
 
       const updatedCount = result.rowCount ?? 0;
       let message = `${updatedCount} order(s) remitted successfully`;
@@ -379,10 +398,19 @@ export class SalesOrderService {
         };
       }
 
-      await this.databaseService.query(
-        `UPDATE tblsales_order SET status = 'complete' WHERE id = $1`,
-        [id],
-      );
+      await this.databaseService.withTransaction(async (client) => {
+        await client.query(
+          `UPDATE tblsales_order SET status = 'complete' WHERE id = $1`,
+          [id],
+        );
+        await this.updateLinkedSalesSerialStatuses(
+          client,
+          id,
+          'installed',
+          undefined,
+          auditActor ?? { userId },
+        );
+      });
 
       const afterSnapshot = await this.getSalesOrderAuditSnapshot(id);
       await this.auditLogService.logMutation({
@@ -2926,40 +2954,168 @@ export class SalesOrderService {
       .replace(/[\s_]+/g, '-');
   }
 
+  private toLinkedSalesId(value: unknown): number | null {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  private async logSerialLifecycleEvent(
+    client: PoolClient,
+    params: {
+      serialId: number;
+      serialNumber: string;
+      eventType: SerialEventType;
+      previousStatus?: string | null;
+      newStatus?: string | null;
+      previousSalesId?: number | null;
+      newSalesId?: number | null;
+      previousBranchId?: number | null;
+      newBranchId?: number | null;
+      reason?: string | null;
+      metadata?: Record<string, unknown> | null;
+    },
+    actor?: AuditActorContext,
+  ): Promise<void> {
+    await this.serialEventLogService.logEvent(
+      {
+        serialId: params.serialId,
+        serialNumber: params.serialNumber,
+        eventType: params.eventType,
+        previousStatus: params.previousStatus ?? null,
+        newStatus: params.newStatus ?? null,
+        previousSalesId: params.previousSalesId ?? null,
+        newSalesId: params.newSalesId ?? null,
+        previousBranchId: params.previousBranchId ?? null,
+        newBranchId: params.newBranchId ?? null,
+        performedBy: actor?.userId ?? null,
+        performedByUsername: actor?.username ?? null,
+        ipAddress: actor?.ipAddress ?? null,
+        reason: params.reason ?? null,
+        metadata: params.metadata ?? null,
+      },
+      client,
+    );
+  }
+
+  private async logAssignedToSoIfChanged(
+    client: PoolClient,
+    args: {
+      serialId: number;
+      serialNumber: string;
+      previousStatus: string | null;
+      newStatus: string;
+      previousSalesId: number | null;
+      newSalesId: number;
+    },
+    actor?: AuditActorContext,
+  ): Promise<void> {
+    const alreadyOnThisOrder = args.previousSalesId === args.newSalesId;
+    const statusUnchanged =
+      this.normalizeWorkflowStatus(args.previousStatus) ===
+      this.normalizeWorkflowStatus(args.newStatus);
+    if (alreadyOnThisOrder && statusUnchanged) {
+      return;
+    }
+
+    await this.logSerialLifecycleEvent(
+      client,
+      {
+        serialId: args.serialId,
+        serialNumber: args.serialNumber,
+        eventType: 'ASSIGNED_TO_SO',
+        previousStatus: args.previousStatus,
+        newStatus: args.newStatus,
+        previousSalesId: args.previousSalesId,
+        newSalesId: args.newSalesId,
+      },
+      actor,
+    );
+  }
+
   private async updateLinkedSalesSerialStatuses(
-    executor: { query: PoolClient['query'] },
+    executor: PoolClient,
     salesOrderId: number,
     nextStatus: string,
     fromStatuses?: string[],
+    actor?: AuditActorContext,
   ): Promise<number> {
     const serialColumns = await this.getTableColumns(executor, 'tblserial_numbers');
     const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
     const serialStatusColumn = this.pickColumn(serialColumns, ['status']);
+    const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
 
     if (!serialSalesIdColumn || !serialStatusColumn) {
       throw new Error('Sales/status columns are not configured in tblserial_numbers');
     }
 
+    const normalizedNextStatus = this.normalizeWorkflowStatus(nextStatus);
     const normalizedFromStatuses = (fromStatuses ?? [])
       .map((status) => this.normalizeWorkflowStatus(status))
       .filter((status) => status.length > 0);
 
-    const params: unknown[] = [nextStatus, String(salesOrderId)];
-    const whereParts = [`"${serialSalesIdColumn}"::text = $2`];
+    const params: unknown[] = [String(salesOrderId)];
+    const whereParts = [`"${serialSalesIdColumn}"::text = $1`];
+    whereParts.push(
+      `REPLACE(REPLACE(LOWER(COALESCE("${serialStatusColumn}"::text, '')), '_', '-'), ' ', '-') <> $${params.length + 1}`,
+    );
+    params.push(normalizedNextStatus);
 
     if (normalizedFromStatuses.length > 0) {
       params.push(normalizedFromStatuses);
       whereParts.push(
-        `REPLACE(REPLACE(LOWER(COALESCE("${serialStatusColumn}"::text, '')), '_', '-'), ' ', '-') = ANY($3::text[])`,
+        `REPLACE(REPLACE(LOWER(COALESCE("${serialStatusColumn}"::text, '')), '_', '-'), ' ', '-') = ANY($${params.length}::text[])`,
       );
     }
 
-    const result = await executor.query(
-      `UPDATE tblserial_numbers
-       SET "${serialStatusColumn}" = $1
+    const serialNumberSelect = serialNumberColumn
+      ? `"${serialNumberColumn}"::text`
+      : `COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '')`;
+
+    const beforeResult = await executor.query<{
+      id: number;
+      serial_number: string | null;
+      status: string | null;
+    }>(
+      `SELECT
+         sn.id,
+         ${serialNumberSelect} AS serial_number,
+         "${serialStatusColumn}"::text AS status
+       FROM tblserial_numbers sn
        WHERE ${whereParts.join(' AND ')}`,
       params,
     );
+
+    if ((beforeResult.rowCount ?? 0) === 0) {
+      return 0;
+    }
+
+    const ids = beforeResult.rows.map((row) => row.id);
+    const result = await executor.query(
+      `UPDATE tblserial_numbers
+       SET "${serialStatusColumn}" = $1
+       WHERE id = ANY($2::bigint[])`,
+      [normalizedNextStatus, ids],
+    );
+
+    const eventType: SerialEventType =
+      normalizedNextStatus === 'installed' ? 'DELIVERED' : 'STATUS_CHANGED';
+
+    for (const row of beforeResult.rows) {
+      await this.logSerialLifecycleEvent(
+        executor,
+        {
+          serialId: row.id,
+          serialNumber: this.normalizeSerialNumber(row.serial_number),
+          eventType,
+          previousStatus: row.status,
+          newStatus: normalizedNextStatus,
+          previousSalesId: salesOrderId,
+          newSalesId: salesOrderId,
+          reason: `Sales order status set serials to ${normalizedNextStatus}`,
+        },
+        actor,
+      );
+    }
 
     return result.rowCount ?? 0;
   }
@@ -3929,6 +4085,7 @@ export class SalesOrderService {
                   id: number;
                   sales_id: string | null;
                   purchase_id: string | null;
+                  status: string | null;
                 }>(
                   `SELECT
                      sn.id,
@@ -3937,7 +4094,8 @@ export class SalesOrderService {
                        to_jsonb(sn)->>'purchaseId',
                        to_jsonb(sn)->>'purchase_id',
                        to_jsonb(sn)->>'po_id'
-                     ) AS purchase_id
+                     ) AS purchase_id,
+                     COALESCE(to_jsonb(sn)->>'status', '') AS status
                    FROM tblserial_numbers sn
                    WHERE LOWER(
                      regexp_replace(BTRIM(COALESCE(sn."serialNumber", '')), '\\s+', ' ', 'g')
@@ -3973,7 +4131,24 @@ export class SalesOrderService {
                   if (serialPoIdColumn) insertRecord[serialPoIdColumn] = null;
                   if (serialPoNoColumn) insertRecord[serialPoNoColumn] = null;
 
-                  await this.runInsert(client, 'tblserial_numbers', insertRecord);
+                  const inserted = await this.runInsert(client, 'tblserial_numbers', insertRecord);
+                  const newSerialId = Number(inserted.rows[0]?.id);
+                  if (Number.isFinite(newSerialId) && newSerialId > 0) {
+                    await this.logSerialLifecycleEvent(
+                      client,
+                      {
+                        serialId: newSerialId,
+                        serialNumber: normalizedSerial,
+                        eventType: allowCreateMissingSerials ? 'FORCE_INSERT_SO' : 'ASSIGNED_TO_SO',
+                        previousStatus: null,
+                        newStatus: serialStatus,
+                        previousSalesId: null,
+                        newSalesId: salesOrderId,
+                        reason: 'Serial assigned while creating sales order',
+                      },
+                      auditActor ?? { userId, branchId },
+                    );
+                  }
                   continue;
                 }
 
@@ -4041,6 +4216,19 @@ export class SalesOrderService {
                     ],
                   );
                 }
+
+                await this.logAssignedToSoIfChanged(
+                  client,
+                  {
+                    serialId: existingSerial.id,
+                    serialNumber: normalizedSerial,
+                    previousStatus: existingSerial.status,
+                    newStatus: serialStatus,
+                    previousSalesId: this.toLinkedSalesId(existingSerial.sales_id),
+                    newSalesId: salesOrderId,
+                  },
+                  auditActor ?? { userId, branchId },
+                );
               }
             }
           }
@@ -4374,6 +4562,16 @@ export class SalesOrderService {
 
             await this.runInsert(client, 'tblconcern_details', record);
           }
+        }
+
+        if (this.normalizeWorkflowStatus(status) === 'for-delivery') {
+          await this.updateLinkedSalesSerialStatuses(
+            client,
+            salesOrderId,
+            'for-delivery',
+            ['reserved', 'pending', 'scanned', 'in-stock'],
+            auditActor ?? { userId, branchId },
+          );
         }
 
         return {
@@ -6958,10 +7156,15 @@ export class SalesOrderService {
                   continue;
                 }
 
-                const existingSerialResult = await client.query<{ id: number; sales_id: string | null }>(
+                const existingSerialResult = await client.query<{
+                  id: number;
+                  sales_id: string | null;
+                  status: string | null;
+                }>(
                   `SELECT
                      sn.id,
-                     sn."salesId"::text AS sales_id
+                     sn."salesId"::text AS sales_id,
+                     COALESCE(sn.status::text, '') AS status
                    FROM tblserial_numbers sn
                    WHERE LOWER(
                      regexp_replace(BTRIM(COALESCE(sn."serialNumber", '')), '\\s+', ' ', 'g')
@@ -7033,6 +7236,19 @@ export class SalesOrderService {
                     ],
                   );
                 }
+
+                await this.logAssignedToSoIfChanged(
+                  client,
+                  {
+                    serialId: existingSerial.id,
+                    serialNumber: normalizedSerial,
+                    previousStatus: existingSerial.status,
+                    newStatus: serialStatus,
+                    previousSalesId: this.toLinkedSalesId(existingSerial.sales_id),
+                    newSalesId: id,
+                  },
+                  auditActor ?? { userId, branchId },
+                );
               }
             }
           }
@@ -7437,6 +7653,31 @@ export class SalesOrderService {
             }
           }
 
+          const releaseSelectParams: unknown[] = [String(id)];
+          let releaseSelectWhere = `"${serialSalesIdColumn}"::text = $1`;
+          if (isPartialSerialRelease && serialNumberColumn) {
+            releaseSelectParams.push(selectedReturnedSerials.map((serial) => serial.toLowerCase()));
+            releaseSelectWhere += ` AND LOWER(
+              regexp_replace(BTRIM(COALESCE("${serialNumberColumn}"::text, '')), '\\s+', ' ', 'g')
+            ) = ANY($2::text[])`;
+          }
+
+          const serialsToRelease = await client.query<{
+            id: number;
+            serial_number: string | null;
+            status: string | null;
+            sales_id: string | null;
+          }>(
+            `SELECT
+               sn.id,
+               COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number') AS serial_number,
+               COALESCE(to_jsonb(sn)->>'status', '') AS status,
+               COALESCE(to_jsonb(sn)->>'salesId', to_jsonb(sn)->>'sales_id') AS sales_id
+             FROM tblserial_numbers sn
+             WHERE ${releaseSelectWhere}`,
+            releaseSelectParams,
+          );
+
           const serialResetParams: unknown[] = [null];
           const serialResetSet: string[] = [`"${serialSalesIdColumn}" = $1`];
 
@@ -7532,6 +7773,36 @@ export class SalesOrderService {
             }
           }
 
+          const selectedSerialSetForLog = new Set(
+            selectedReturnedSerials.map((serial) => serial.toLowerCase()),
+          );
+          const releaseReason = String(payload.remarks ?? '').trim() || null;
+          for (const row of serialsToRelease.rows) {
+            const serialNumber = this.normalizeSerialNumber(row.serial_number);
+            const isDefectiveRow =
+              shouldMarkReturnedSerialsDefective &&
+              selectedSerialSetForLog.has(serialNumber.toLowerCase());
+            const eventType: SerialEventType = shouldReleaseCancelledSerials
+              ? 'REMOVED_FROM_SO'
+              : isDefectiveRow
+                ? 'MARKED_DEFECTIVE'
+                : 'RETURNED';
+            await this.logSerialLifecycleEvent(
+              client,
+              {
+                serialId: row.id,
+                serialNumber,
+                eventType,
+                previousStatus: row.status,
+                newStatus: isDefectiveRow ? 'defective' : 'in-stock',
+                previousSalesId: this.toLinkedSalesId(row.sales_id) ?? id,
+                newSalesId: null,
+                reason: releaseReason,
+              },
+              auditActor ?? { userId, branchId },
+            );
+          }
+
           if (isReturnedUnitsFlow) {
             const previousTotal = this.toOptionalNumber(existingSales.total_amount) ?? 0;
             const pruneResult = await this.pruneProductItemsAfterPartialReturn(
@@ -7564,15 +7835,23 @@ export class SalesOrderService {
         }
 
         if (this.normalizeWorkflowStatus(status) === 'for-delivery') {
-          await this.updateLinkedSalesSerialStatuses(client, id, 'for-delivery', [
-            'reserved',
-            'pending',
-            'scanned',
-          ]);
+          await this.updateLinkedSalesSerialStatuses(
+            client,
+            id,
+            'for-delivery',
+            ['reserved', 'pending', 'scanned', 'in-stock'],
+            auditActor ?? { userId, branchId },
+          );
         }
 
         if (['remitted', 'complete', 'completed'].includes(normalizedStatus)) {
-          await this.updateLinkedSalesSerialStatuses(client, id, 'installed');
+          await this.updateLinkedSalesSerialStatuses(
+            client,
+            id,
+            'installed',
+            undefined,
+            auditActor ?? { userId, branchId },
+          );
         }
 
         // const materialSync = await this.materialStockService.applyFromSalesStatusChange(client, {
