@@ -546,13 +546,24 @@
                         type="text"
                         [(ngModel)]="serialSearch"
                         (ngModelChange)="onSerialSearchChange()"
-                        placeholder="Smart search serial or unit type..."
-                        class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 sm:max-w-xs"
+                        placeholder="Search or paste serials (comma or space separated)..."
+                        title="Paste multiple serial numbers separated by comma, space, or semicolon — same as global search."
+                        class="h-9 w-full rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 placeholder:text-gray-400 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 sm:max-w-xl"
                       />
                       <p class="text-xs text-gray-500 dark:text-gray-400">
                         Showing {{ activeTabFilteredSerialCount }} of {{ activeTabSerialCount }}
                       </p>
                     </div>
+                    @if (isBulkSerialSearch) {
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Matching {{ serialSearchTokenCount }} serial number{{ serialSearchTokenCount === 1 ? '' : 's' }}
+                        @if (unmatchedSerialSearchCount > 0) {
+                          <span class="text-amber-600 dark:text-amber-400">
+                            · {{ unmatchedSerialSearchCount }} not in this list
+                          </span>
+                        }
+                      </p>
+                    }
 
                     <div class="mt-2 flex flex-wrap gap-2">
                       @for (option of serialUnitTypeOptions; track option.value) {
@@ -583,6 +594,10 @@
                           class="rounded-lg border border-success-300 bg-success-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-success-600 disabled:opacity-60">
                           {{ isBulkUpdating ? 'Updating...' : 'Mark as Installed' }}
                         </button>
+                        <button type="button" (click)="copySelectedOrFilteredSerials()"
+                          class="rounded-lg border border-brand-300 px-3 py-1.5 text-xs font-medium text-brand-700 transition hover:bg-brand-50 dark:border-brand-600 dark:text-brand-300 dark:hover:bg-brand-900/20">
+                          Copy Selected
+                        </button>
                         <button type="button" (click)="clearSerialSelection()"
                           class="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300">
                           Clear
@@ -596,14 +611,25 @@
                       </div>
                     }
 
-                    @if (canBulkInstall) {
-                    <div class="mt-2 flex items-center gap-2">
-                      <button type="button" (click)="selectAllVisibleSerials(paginatedActiveTabSerialList)"
-                        class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
-                        {{ paginatedActiveTabSerialList.length > 0 && paginatedActiveTabSerialList.every(s => selectedSerials.has(s.serialNumber)) ? 'Deselect Page' : 'Select Page' }}
+                    <div class="mt-2 flex flex-wrap items-center gap-2">
+                      @if (canBulkInstall) {
+                        <button type="button" (click)="selectAllVisibleSerials(paginatedActiveTabSerialList)"
+                          class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+                          {{ paginatedActiveTabSerialList.length > 0 && paginatedActiveTabSerialList.every(s => selectedSerials.has(s.serialNumber)) ? 'Deselect Page' : 'Select Page' }}
+                        </button>
+                      }
+                      <button
+                        type="button"
+                        (click)="copySelectedOrFilteredSerials()"
+                        [disabled]="selectedSerials.size === 0 && activeTabFilteredSerialCount === 0"
+                        class="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                      >
+                        {{ copySerialsButtonLabel }}
                       </button>
+                      @if (serialCopyMessage) {
+                        <span class="text-xs text-success-600 dark:text-success-400">{{ serialCopyMessage }}</span>
+                      }
                     </div>
-                    }
 
                     <div class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
                       @for (serialEntry of paginatedActiveTabSerialList; track serialEntry.serialNumber + '::' + serialEntry.unitType) {
@@ -617,13 +643,31 @@
                               (click)="$event.stopPropagation()" (change)="toggleSerialSelection(serialEntry.serialNumber)"
                               class="mt-0.5 h-3.5 w-3.5 shrink-0 accent-brand-500" />
                           }
-                          <div>
-                            <p>{{ serialEntry.serialNumber }}</p>
-                            @if (serialEntry.unitType) {
-                              <p class="mt-1 text-[11px] font-normal uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                                {{ serialEntry.unitType }}
-                              </p>
-                            }
+                          <div class="flex min-w-0 flex-1 items-start justify-between gap-2">
+                            <div class="min-w-0">
+                              <p class="break-all">{{ serialEntry.serialNumber }}</p>
+                              @if (serialEntry.unitType) {
+                                <p class="mt-1 text-[11px] font-normal uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                  {{ serialEntry.unitType }}
+                                </p>
+                              }
+                            </div>
+                            <button
+                              type="button"
+                              (click)="copySerialNumber(serialEntry.serialNumber, $event)"
+                              [attr.title]="copiedSerialNumber === serialEntry.serialNumber ? 'Copied' : 'Copy serial number'"
+                              class="shrink-0 rounded p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+                            >
+                              @if (copiedSerialNumber === serialEntry.serialNumber) {
+                                <svg class="h-3.5 w-3.5 text-success-600 dark:text-success-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                              } @else {
+                                <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                              }
+                            </button>
                           </div>
                         </div>
                       } @empty {

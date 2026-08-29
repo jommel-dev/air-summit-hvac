@@ -186,6 +186,9 @@ export class InventoryComponent implements OnInit {
   isBulkUpdating = false;
   bulkUpdateMessage = '';
   bulkUpdateError = '';
+  serialCopyMessage = '';
+  copiedSerialNumber: string | null = null;
+  private serialCopyResetTimer: ReturnType<typeof setTimeout> | null = null;
   isDeletingInStockSerials = false;
   deleteInStockMessage = '';
   deleteInStockError = '';
@@ -1118,18 +1121,48 @@ export class InventoryComponent implements OnInit {
       });
     }
 
-    const normalizedQuery = this.normalizeSearchText(this.serialSearch);
-    if (!normalizedQuery) {
+    const tokens = this.parseSerialSearchTokens(this.serialSearch);
+    if (tokens.length === 0) {
       return list;
     }
 
-    const tokens = normalizedQuery.split(' ').filter(Boolean);
+    if (this.isBulkSerialSearchQuery(this.serialSearch, tokens)) {
+      return list.filter((entry) => {
+        const serial = this.normalizeSearchText(entry.serialNumber);
+        return tokens.some((token) => serial.includes(token));
+      });
+    }
+
     return list.filter((entry) => {
       const searchableText = this.normalizeSearchText(
         `${entry.serialNumber} ${entry.unitType}`,
       );
       return tokens.every((token) => searchableText.includes(token));
     });
+  }
+
+  get isBulkSerialSearch(): boolean {
+    const tokens = this.parseSerialSearchTokens(this.serialSearch);
+    return this.isBulkSerialSearchQuery(this.serialSearch, tokens);
+  }
+
+  get serialSearchTokenCount(): number {
+    return this.parseSerialSearchTokens(this.serialSearch).length;
+  }
+
+  get unmatchedSerialSearchCount(): number {
+    if (!this.isBulkSerialSearch) {
+      return 0;
+    }
+
+    const tokens = this.parseSerialSearchTokens(this.serialSearch);
+    const matchedSerials = this.activeTabSerialList.map((entry) =>
+      this.normalizeSearchText(entry.serialNumber),
+    );
+
+    return tokens.filter(
+      (token) => !matchedSerials.some((serial) => serial.includes(token)),
+    ).length;
   }
 
   get activeTabFilteredSerialCount(): number {
@@ -2771,6 +2804,53 @@ export class InventoryComponent implements OnInit {
     return value.toLowerCase().trim().replace(/\s+/g, ' ');
   }
 
+  private parseSerialSearchTokens(query: string): string[] {
+    const cleaned = String(query ?? '').replace(/^\uFEFF/, '').trim();
+    if (!cleaned) {
+      return [];
+    }
+
+    const values = cleaned
+      .split(/[,;\t\n\r]+|\s+/)
+      .map((part) => part.trim().replace(/^["']|["']$/g, ''))
+      .filter((part) => part.length > 0)
+      .map((part) => part.toLowerCase());
+
+    const seen = new Set<string>();
+    const unique: string[] = [];
+    for (const value of values) {
+      if (seen.has(value)) {
+        continue;
+      }
+      seen.add(value);
+      unique.push(value);
+    }
+
+    return unique;
+  }
+
+  private looksLikeSerialSearchToken(token: string): boolean {
+    const normalized = token.trim();
+    if (normalized.length < 5) {
+      return false;
+    }
+
+    return /[0-9]/.test(normalized) || normalized.length >= 10;
+  }
+
+  private isBulkSerialSearchQuery(query: string, tokens: string[]): boolean {
+    if (tokens.length < 2) {
+      return false;
+    }
+
+    if (/[,;\t\n\r]/.test(query)) {
+      return true;
+    }
+
+    const serialLikeCount = tokens.filter((token) => this.looksLikeSerialSearchToken(token)).length;
+    return serialLikeCount >= 2;
+  }
+
   private canAccessInventoryPermission(permissionKeys: string[]): boolean {
     const acceptedKeys = permissionKeys ?? [];
     if (acceptedKeys.length === 0) {
@@ -3190,6 +3270,95 @@ export class InventoryComponent implements OnInit {
     this.bulkUpdateMessage = '';
     this.bulkUpdateError = '';
     this.installAuthPassword = '';
+  }
+
+  get copySerialsButtonLabel(): string {
+    if (this.selectedSerials.size > 0) {
+      return `Copy Selected (${this.selectedSerials.size})`;
+    }
+
+    return `Copy Serials (${this.activeTabFilteredSerialCount})`;
+  }
+
+  copySerialNumber(serialNumber: string, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    void this.copySerialsToClipboard([serialNumber], serialNumber);
+  }
+
+  copySelectedOrFilteredSerials(): void {
+    const serials = this.selectedSerials.size > 0
+      ? Array.from(this.selectedSerials)
+      : this.activeTabSerialList.map((entry) => entry.serialNumber);
+
+    void this.copySerialsToClipboard(serials);
+  }
+
+  private async copySerialsToClipboard(
+    serialNumbers: string[],
+    copiedSerialNumber: string | null = null,
+  ): Promise<void> {
+    const uniqueSerials = [...new Set(
+      serialNumbers.map((value) => String(value ?? '').trim()).filter((value) => value.length > 0),
+    )];
+
+    if (uniqueSerials.length === 0) {
+      this.setSerialCopyFeedback('No serial numbers to copy.', null);
+      return;
+    }
+
+    const text = uniqueSerials.join('\n');
+    const copied = await this.writeTextToClipboard(text);
+    if (!copied) {
+      this.setSerialCopyFeedback('Could not copy serial numbers. Please try again.', null);
+      return;
+    }
+
+    const message = uniqueSerials.length === 1
+      ? 'Serial number copied.'
+      : `${uniqueSerials.length} serial numbers copied.`;
+    this.setSerialCopyFeedback(message, copiedSerialNumber);
+  }
+
+  private setSerialCopyFeedback(message: string, copiedSerialNumber: string | null): void {
+    this.serialCopyMessage = message;
+    this.copiedSerialNumber = copiedSerialNumber;
+
+    if (this.serialCopyResetTimer) {
+      clearTimeout(this.serialCopyResetTimer);
+    }
+
+    this.serialCopyResetTimer = setTimeout(() => {
+      this.serialCopyMessage = '';
+      this.copiedSerialNumber = null;
+      this.serialCopyResetTimer = null;
+    }, 1800);
+  }
+
+  private async writeTextToClipboard(text: string): Promise<boolean> {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // Fall through to the execCommand fallback for non-secure origins.
+    }
+
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      document.body.appendChild(textarea);
+      textarea.select();
+      const copied = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      return copied;
+    } catch {
+      return false;
+    }
   }
 
   private requireRevertToStockAuth(): { password: string; remarks: string } | undefined {
