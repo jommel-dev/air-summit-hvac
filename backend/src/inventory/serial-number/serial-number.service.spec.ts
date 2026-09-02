@@ -68,4 +68,83 @@ describe('SerialNumberService', () => {
     expect(result.items[0].serialNumber).toBe('SN-001');
     expect(result.notFound).toEqual(['MISSING-99']);
   });
+
+  it('excludes defective serials from in-stock in getSerialNumbersByScope', async () => {
+    const databaseService = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              serialNumber: 'SN-OK',
+              status: 'in-stock',
+              unitType: 'Indoor',
+              isDefective: false,
+            },
+            {
+              serialNumber: 'SN-DEF-STATUS',
+              status: 'defective',
+              unitType: 'Indoor',
+              isDefective: false,
+            },
+            {
+              serialNumber: 'SN-DEF-FLAG',
+              status: 'in-stock',
+              unitType: 'Outdoor',
+              isDefective: true,
+            },
+            {
+              serialNumber: 'SN-RESERVED',
+              status: 'reserved',
+              unitType: 'Indoor',
+              isDefective: false,
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rows: [{ unit: 'set', unitTypes: 'Indoor,Outdoor' }],
+        }),
+    };
+    (service as unknown as { databaseService: typeof databaseService }).databaseService =
+      databaseService;
+
+    const result = await service.getSerialNumbersByScope('1', '2');
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.item.serials.inStock.map((entry) => entry.serialNumber)).toEqual(['SN-OK']);
+    expect(result.item.counts.inStock).toBe(1);
+    expect(result.item.counts.reserved).toBe(1);
+  });
+
+  it('excludes defective serials from in-stock in getCapacityStockSummary', async () => {
+    const databaseService = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({
+          rows: [
+            { serialNumber: 'SN-OK', status: 'in-stock', isDefective: false },
+            { serialNumber: 'SN-DEFECTIVE', status: 'defective', isDefective: true },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rows: [{ unit: 'pc', unitTypes: 'Window' }],
+        }),
+    };
+    (service as unknown as { databaseService: typeof databaseService }).databaseService =
+      databaseService;
+
+    const result = await service.getCapacityStockSummary('1', '2');
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+
+    expect(result.item.serials.inStock).toEqual(['SN-OK']);
+    expect(result.item.counts.inStock).toBe(1);
+  });
 });

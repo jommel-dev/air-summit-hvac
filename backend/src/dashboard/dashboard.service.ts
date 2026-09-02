@@ -692,7 +692,7 @@ export class DashboardService {
          FROM serial_scope ss
          WHERE ss.serial_number <> ''
            AND ss.normalized_status NOT IN (
-             'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound'
+             'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound', 'defective'
            )
            AND ($1::text IS NULL OR ss.branch_id = $1::text)`,
         [branchParam],
@@ -750,7 +750,7 @@ export class DashboardService {
              capacity_id,
              COUNT(*) FILTER (
                WHERE normalized_status NOT IN (
-                 'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound'
+                 'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound', 'defective'
                )
              )::int AS in_stock
            FROM serial_scope
@@ -950,7 +950,7 @@ export class DashboardService {
              COALESCE(to_jsonb(sn)->>'capacityId', to_jsonb(sn)->>'capacity_id', '') AS capacity_id,
              COUNT(*) FILTER (
                WHERE REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sn)->>'status', ''))), '_', '-'), ' ', '-') NOT IN (
-                 'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound'
+                 'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound', 'defective'
                )
              )::numeric AS in_stock,
              COALESCE(to_jsonb(sn)->>'branchId', to_jsonb(sn)->>'branch_id', '') AS branch_id
@@ -1071,7 +1071,7 @@ export class DashboardService {
           AND LOWER(COALESCE(to_jsonb(tpi)->>'transType', to_jsonb(tpi)->>'trans_type', 'purchase')) = 'purchase'
          WHERE ss.purchase_id <> ''
            AND ss.normalized_status NOT IN (
-             'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound'
+             'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound', 'defective'
            )
            AND ($1::text IS NULL OR ss.branch_id = $1::text)
          GROUP BY COALESCE(to_jsonb(v)->>'name', 'Unknown Vendor')
@@ -2096,7 +2096,7 @@ export class DashboardService {
                ss.capacity_id,
                COUNT(*) FILTER (
                  WHERE ss.normalized_status NOT IN (
-                   'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound'
+                   'scanned', 'reserved', 'delivered', 'installed', 'sold', 'released', 'out', 'outbound', 'defective'
                  )
                )::int AS in_stock
              FROM serial_scope ss
