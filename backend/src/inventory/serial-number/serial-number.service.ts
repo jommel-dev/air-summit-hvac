@@ -51,6 +51,7 @@ type SerialScanRow = {
 type CapacityStockSerialRow = {
   serialNumber: string | null;
   status: string | null;
+  isDefective?: boolean | null;
 };
 
 type ScopedSerialRow = {
@@ -60,7 +61,10 @@ type ScopedSerialRow = {
   productId: string | null;
   capacityId: string | null;
   unitType: string | null;
+  isDefective?: boolean | null;
 };
+
+type CapacitySerialBucket = 'in-stock' | 'reserved' | 'installed' | 'excluded';
 
 type ProductUnitMetaRow = {
   unit: string | null;
@@ -215,6 +219,46 @@ export class SerialNumberService {
       .trim();
 
     return normalized;
+  }
+
+  private normalizeInventoryStatus(status: unknown): string {
+    return String(status ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/_/g, '-')
+      .replace(/\s+/g, '-');
+  }
+
+  private isDefectiveSerial(status: unknown, isDefective?: boolean | null): boolean {
+    return this.normalizeInventoryStatus(status) === 'defective' || Boolean(isDefective);
+  }
+
+  private classifyCapacitySerialBucket(
+    status: unknown,
+    isDefective?: boolean | null,
+  ): CapacitySerialBucket {
+    if (this.isDefectiveSerial(status, isDefective)) {
+      return 'excluded';
+    }
+
+    const normalizedStatus = this.normalizeInventoryStatus(status);
+    if (normalizedStatus === 'scanned') {
+      return 'excluded';
+    }
+
+    if (normalizedStatus === 'reserved') {
+      return 'reserved';
+    }
+
+    if (
+      ['delivered', 'installed', 'for-delivery', 'sold', 'released', 'out', 'outbound'].includes(
+        normalizedStatus,
+      )
+    ) {
+      return 'installed';
+    }
+
+    return 'in-stock';
   }
 
   private async logSerialScanAudit(
@@ -900,7 +944,8 @@ export class SerialNumberService {
            to_jsonb(sn)->>'serial_number',
            ''
          ) AS "serialNumber",
-         COALESCE(to_jsonb(sn)->>'status', '') AS status
+         COALESCE(to_jsonb(sn)->>'status', '') AS status,
+         COALESCE((to_jsonb(sn)->>'isDefective')::boolean, false) AS "isDefective"
        FROM tblserial_numbers sn
        WHERE COALESCE(
          to_jsonb(sn)->>'productId',
@@ -960,21 +1005,17 @@ export class SerialNumberService {
         continue;
       }
 
-      const normalizedStatus = String(row.status ?? '').trim().toLowerCase();
-      if (normalizedStatus === 'scanned') {
+      const bucket = this.classifyCapacitySerialBucket(row.status, row.isDefective);
+      if (bucket === 'excluded') {
         continue;
       }
 
-      if (normalizedStatus === 'reserved') {
+      if (bucket === 'reserved') {
         reservedSerials.push(serialNumber);
         continue;
       }
 
-      if (
-        ['delivered', 'installed', 'for-delivery', 'sold', 'released', 'out', 'outbound'].includes(
-          normalizedStatus,
-        )
-      ) {
+      if (bucket === 'installed') {
         deliveredSerials.push(serialNumber);
         continue;
       }
@@ -1070,7 +1111,8 @@ export class SerialNumberService {
            to_jsonb(sn)->>'unitType',
            to_jsonb(sn)->>'unit_type',
            ''
-         ) AS "unitType"
+         ) AS "unitType",
+         COALESCE((to_jsonb(sn)->>'isDefective')::boolean, false) AS "isDefective"
        FROM tblserial_numbers sn
        WHERE COALESCE(
          to_jsonb(sn)->>'productId',
@@ -1132,22 +1174,18 @@ export class SerialNumberService {
 
       const unitType = this.normalizeUnitType(row.unitType);
       const entry = { serialNumber, unitType };
-      const normalizedStatus = String(row.status ?? '').trim().toLowerCase();
+      const bucket = this.classifyCapacitySerialBucket(row.status, row.isDefective);
 
-      if (normalizedStatus === 'scanned') {
+      if (bucket === 'excluded') {
         continue;
       }
 
-      if (normalizedStatus === 'reserved') {
+      if (bucket === 'reserved') {
         reserved.push(entry);
         continue;
       }
 
-      if (
-        ['delivered', 'installed', 'for-delivery', 'sold', 'released', 'out', 'outbound'].includes(
-          normalizedStatus,
-        )
-      ) {
+      if (bucket === 'installed') {
         delivered.push(entry);
         continue;
       }
@@ -4249,7 +4287,7 @@ export class SerialNumberService {
     const inStockStatuses = ['in-stock', 'in_stock', 'instock', ''];
     const excludedStatuses = [
       'scanned', 'reserved', 'delivered', 'installed', 'sold',
-      'released', 'out', 'outbound', 'for-delivery',
+      'released', 'out', 'outbound', 'for-delivery', 'defective',
     ];
 
     const result = await this.databaseService.query<{ id: number }>(
@@ -4263,6 +4301,7 @@ export class SerialNumberService {
          to_jsonb(tblserial_numbers)->>'capacity_id', ''
        ) = $2::text
        AND LOWER(TRIM(COALESCE(to_jsonb(tblserial_numbers)->>'status', ''))) NOT IN (${excludedStatuses.map((_, i) => `$${i + 3}`).join(', ')})
+       AND COALESCE((to_jsonb(tblserial_numbers)->>'isDefective')::boolean, false) = false
        RETURNING id`,
       [String(productId), String(capacityId), ...excludedStatuses],
     );
