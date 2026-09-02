@@ -115,6 +115,7 @@ export class CreateSalesOrderReturnedSerialDetailDto {
 	defectReason?: string;
 	defectDate?: string | null;
 	serialNumbers?: string[];
+	defectiveSerialNumbers?: string[];
 }
 
 export class CreateSalesOrderDto {

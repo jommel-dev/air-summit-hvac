@@ -86,6 +86,7 @@ export interface SalesOrderReturnedSerialDetailsPayload {
   defectReason?: string;
   defectDate?: string | null;
   serialNumbers?: string[];
+  defectiveSerialNumbers?: string[];
 }
 
 export interface SalesOrderExpenseDetailsPayload {
