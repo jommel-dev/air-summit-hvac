@@ -536,9 +536,9 @@ export class SalesOrderComponent {
   returnSerialGroups: SalesReturnSerialOptionGroup[] = [];
   returnForm = {
     remarks: '',
-    isDefective: false,
   };
   selectedReturnedSerialNumbers = new Set<string>();
+  selectedDefectiveSerialNumbers = new Set<string>();
   editingSalesId: number | null = null;
   customerMode: 'existing' | 'new' = 'existing';
   uiMessage = '';
@@ -1716,9 +1716,9 @@ export class SalesOrderComponent {
     this.returnModalError = '';
     this.returnForm = {
       remarks: '',
-      isDefective: false,
     };
     this.selectedReturnedSerialNumbers = new Set<string>();
+    this.selectedDefectiveSerialNumbers = new Set<string>();
     this.returnSerialGroups = [];
 
     try {
@@ -1748,17 +1748,17 @@ export class SalesOrderComponent {
     this.returnSerialGroups = [];
     this.returnForm = {
       remarks: '',
-      isDefective: false,
     };
     this.selectedReturnedSerialNumbers = new Set<string>();
-  }
-
-  onReturnDefectiveChange(value: boolean): void {
-    this.returnForm.isDefective = value;
+    this.selectedDefectiveSerialNumbers = new Set<string>();
   }
 
   isReturnedSerialSelected(serialNumber: string): boolean {
     return this.selectedReturnedSerialNumbers.has(this.normalizeSerial(serialNumber));
+  }
+
+  isReturnedSerialDefective(serialNumber: string): boolean {
+    return this.selectedDefectiveSerialNumbers.has(this.normalizeSerial(serialNumber));
   }
 
   isReturnProductFullySelected(group: SalesReturnSerialOptionGroup): boolean {
@@ -1769,8 +1769,15 @@ export class SalesOrderComponent {
     return group.serials.filter((serial) => this.isReturnedSerialSelected(serial)).length;
   }
 
+  getReturnDefectiveCount(): number {
+    return [...this.selectedDefectiveSerialNumbers].filter((serial) =>
+      this.selectedReturnedSerialNumbers.has(serial),
+    ).length;
+  }
+
   toggleReturnProductSelection(group: SalesReturnSerialOptionGroup, checked: boolean): void {
-    const next = new Set(this.selectedReturnedSerialNumbers);
+    const nextReturned = new Set(this.selectedReturnedSerialNumbers);
+    const nextDefective = new Set(this.selectedDefectiveSerialNumbers);
     for (const serial of group.serials) {
       const normalizedSerial = this.normalizeSerial(serial);
       if (!normalizedSerial) {
@@ -1778,12 +1785,14 @@ export class SalesOrderComponent {
       }
 
       if (checked) {
-        next.add(normalizedSerial);
+        nextReturned.add(normalizedSerial);
       } else {
-        next.delete(normalizedSerial);
+        nextReturned.delete(normalizedSerial);
+        nextDefective.delete(normalizedSerial);
       }
     }
-    this.selectedReturnedSerialNumbers = next;
+    this.selectedReturnedSerialNumbers = nextReturned;
+    this.selectedDefectiveSerialNumbers = nextDefective;
   }
 
   toggleReturnedSerialSelection(serialNumber: string, checked: boolean): void {
@@ -1792,13 +1801,34 @@ export class SalesOrderComponent {
       return;
     }
 
-    const next = new Set(this.selectedReturnedSerialNumbers);
+    const nextReturned = new Set(this.selectedReturnedSerialNumbers);
+    const nextDefective = new Set(this.selectedDefectiveSerialNumbers);
     if (checked) {
-      next.add(normalizedSerial);
+      nextReturned.add(normalizedSerial);
     } else {
-      next.delete(normalizedSerial);
+      nextReturned.delete(normalizedSerial);
+      nextDefective.delete(normalizedSerial);
     }
-    this.selectedReturnedSerialNumbers = next;
+    this.selectedReturnedSerialNumbers = nextReturned;
+    this.selectedDefectiveSerialNumbers = nextDefective;
+  }
+
+  toggleReturnedSerialDefective(serialNumber: string): void {
+    const normalizedSerial = this.normalizeSerial(serialNumber);
+    if (!normalizedSerial) {
+      return;
+    }
+
+    const nextReturned = new Set(this.selectedReturnedSerialNumbers);
+    const nextDefective = new Set(this.selectedDefectiveSerialNumbers);
+    if (nextDefective.has(normalizedSerial)) {
+      nextDefective.delete(normalizedSerial);
+    } else {
+      nextReturned.add(normalizedSerial);
+      nextDefective.add(normalizedSerial);
+    }
+    this.selectedReturnedSerialNumbers = nextReturned;
+    this.selectedDefectiveSerialNumbers = nextDefective;
   }
 
   async confirmReturnedUnits(): Promise<void> {
@@ -1828,16 +1858,20 @@ export class SalesOrderComponent {
     );
     const isPartialReturn = this.selectedReturnedSerialNumbers.size < totalReturnableSerials;
 
+    const defectiveSerialNumbers = [...this.selectedDefectiveSerialNumbers].filter((serial) =>
+      this.selectedReturnedSerialNumbers.has(serial),
+    );
+
     try {
       const response = await this.salesOrderService.updateSalesOrder(order.id, {
         productItems: [],
         status: isPartialReturn ? 'for-delivery' : 'pending',
         remarks: `Returned Units: ${remarks}`,
         returnedSerialDetails: {
-          isDefective: this.returnForm.isDefective,
-          defectReason: this.returnForm.isDefective ? remarks : undefined,
-          defectDate: this.returnForm.isDefective ? new Date().toISOString() : null,
           serialNumbers: [...this.selectedReturnedSerialNumbers],
+          defectiveSerialNumbers,
+          defectReason: defectiveSerialNumbers.length > 0 ? remarks : undefined,
+          defectDate: defectiveSerialNumbers.length > 0 ? new Date().toISOString() : null,
         },
       });
 
@@ -1846,14 +1880,16 @@ export class SalesOrderComponent {
         return;
       }
 
+      const defectiveNote =
+        defectiveSerialNumbers.length > 0
+          ? ` ${defectiveSerialNumbers.length} serial(s) tagged defective.`
+          : '';
       if (isPartialReturn) {
-        this.uiMessage = this.returnForm.isDefective
-          ? 'Selected units were returned and marked defective. Remaining products stayed as For Delivery.'
-          : 'Selected units were returned and removed from the SO. Remaining products stayed as For Delivery.';
+        this.uiMessage =
+          `Selected units were returned and removed from the SO.${defectiveNote} Remaining products stayed as For Delivery.`;
       } else {
-        this.uiMessage = this.returnForm.isDefective
-          ? 'All selected product items were returned, marked defective, removed from the SO, and status moved back to Pending.'
-          : 'All product items were returned, removed from the SO, and status moved back to Pending.';
+        this.uiMessage =
+          `All product items were returned, removed from the SO, and status moved back to Pending.${defectiveNote}`;
       }
       this.closeReturnModal(true);
       await this.loadTabData(this.activeTab);

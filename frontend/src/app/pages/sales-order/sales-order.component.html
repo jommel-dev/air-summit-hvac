@@ -1867,7 +1867,7 @@
             Return SO {{ pendingReturnOrder?.soNumber || pendingReturnOrder?.id }}
           </h3>
           <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
-            Choose the product, capacity, and serial numbers to return. Selected product items will be removed from this sales order; remaining products stay.
+            Choose the product, capacity, and serial numbers to return. Tag <span class="font-medium">Defect unit</span> only on serials that are actually defective.
           </p>
         </div>
 
@@ -1889,28 +1889,20 @@
             ></textarea>
           </div>
 
-          <label class="flex items-start gap-3 rounded-2xl border border-warning-200 bg-warning-50/60 px-4 py-3 text-sm text-warning-900 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-100">
-            <input
-              type="checkbox"
-              [ngModel]="returnForm.isDefective"
-              (ngModelChange)="onReturnDefectiveChange($event)"
-              name="returnIsDefective"
-              class="mt-1 h-4 w-4 rounded border-warning-400 text-warning-600 focus:ring-warning-500"
-            />
-            <span>
-              Mark selected returned serials as defective.
-            </span>
-          </label>
-
           @if (isReturnModalLoading) {
             <div class="rounded-2xl border border-gray-200 bg-gray-50 px-4 py-4 text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-800/60 dark:text-gray-300">
               Loading product items and serial numbers...
             </div>
           } @else {
             <div class="space-y-4">
-              <div class="flex items-center justify-between">
+              <div class="flex items-center justify-between gap-3">
                 <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Select Product, Capacity, and Serials</h4>
-                <span class="text-xs text-gray-500 dark:text-gray-400">Selected: {{ selectedReturnedSerialNumbers.size }} serial(s)</span>
+                <span class="text-xs text-gray-500 dark:text-gray-400">
+                  Selected: {{ selectedReturnedSerialNumbers.size }} serial(s)
+                  @if (getReturnDefectiveCount() > 0) {
+                    · {{ getReturnDefectiveCount() }} defective
+                  }
+                </span>
               </div>
 
               @if (returnSerialGroups.length > 0) {
@@ -1941,17 +1933,34 @@
                           <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                             {{ formatReturnUnitLabel(unitGroup.unitLabel) }}
                           </p>
-                          <div class="grid gap-2 sm:grid-cols-2">
+                          <div class="grid gap-2">
                             @for (serial of unitGroup.serials; track serial) {
-                              <label class="flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
-                                <input
-                                  type="checkbox"
-                                  [checked]="isReturnedSerialSelected(serial)"
-                                  (change)="toggleReturnedSerialSelection(serial, $any($event.target).checked)"
-                                  class="h-4 w-4 rounded border-warning-400 text-warning-600 focus:ring-warning-500"
-                                />
-                                <span class="font-mono text-xs">{{ serial }}</span>
-                              </label>
+                              <div
+                                class="flex items-center gap-3 rounded-xl border px-3 py-2 text-sm"
+                                [class]="isReturnedSerialDefective(serial)
+                                  ? 'border-rose-200 bg-rose-50/80 text-gray-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-gray-200'
+                                  : 'border-gray-200 bg-white text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200'"
+                              >
+                                <label class="flex min-w-0 flex-1 items-center gap-3">
+                                  <input
+                                    type="checkbox"
+                                    [checked]="isReturnedSerialSelected(serial)"
+                                    (change)="toggleReturnedSerialSelection(serial, $any($event.target).checked)"
+                                    class="h-4 w-4 rounded border-warning-400 text-warning-600 focus:ring-warning-500"
+                                  />
+                                  <span class="truncate font-mono text-xs">{{ serial }}</span>
+                                </label>
+                                <button
+                                  type="button"
+                                  (click)="toggleReturnedSerialDefective(serial)"
+                                  [attr.aria-pressed]="isReturnedSerialDefective(serial)"
+                                  [class]="isReturnedSerialDefective(serial)
+                                    ? 'shrink-0 rounded-full border border-rose-300 bg-rose-500 px-2.5 py-1 text-[11px] font-semibold text-white dark:border-rose-400/40 dark:bg-rose-500'
+                                    : 'shrink-0 rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600 hover:border-rose-300 hover:text-rose-600 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:border-rose-400/50 dark:hover:text-rose-300'"
+                                >
+                                  Defect unit
+                                </button>
+                              </div>
                             }
                           </div>
                         </div>

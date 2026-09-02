@@ -7548,7 +7548,6 @@ export class SalesOrderService {
         const normalizedPreviousStatus = this.normalizeWorkflowStatus(existingSales.status);
         const normalizedRemarks = String(payload.remarks ?? '').trim().toLowerCase();
         const returnedSerialDetails = payload.returnedSerialDetails;
-        const shouldMarkReturnedSerialsDefective = Boolean(returnedSerialDetails?.isDefective);
         const selectedReturnedSerials = [...new Set(
           (Array.isArray(returnedSerialDetails?.serialNumbers)
             ? returnedSerialDetails.serialNumbers
@@ -7556,6 +7555,19 @@ export class SalesOrderService {
           )
             .map((serial) => this.normalizeSerialNumber(serial))
             .filter((serial) => serial.length > 0),
+        )];
+        const selectedReturnedSerialSet = new Set(
+          selectedReturnedSerials.map((serial) => serial.toLowerCase()),
+        );
+        const selectedDefectiveSerials = [...new Set(
+          (Array.isArray(returnedSerialDetails?.defectiveSerialNumbers)
+            ? returnedSerialDetails.defectiveSerialNumbers
+            : []
+          )
+            .map((serial) => this.normalizeSerialNumber(serial))
+            .filter((serial) =>
+              serial.length > 0 && selectedReturnedSerialSet.has(serial.toLowerCase()),
+            ),
         )];
         const isReturnedUnitsFlow =
           normalizedPreviousStatus === 'for-delivery' &&
@@ -7588,13 +7600,6 @@ export class SalesOrderService {
 
           if (isReturnedUnitsFlow && selectedReturnedSerials.length === 0) {
             throw new Error('Select at least one product serial number to return.');
-          }
-
-          if (
-            shouldMarkReturnedSerialsDefective &&
-            selectedReturnedSerials.length === 0
-          ) {
-            throw new Error('Select at least one serial number for defective return.');
           }
 
           const isPartialSerialRelease =
@@ -7727,11 +7732,7 @@ export class SalesOrderService {
             serialResetParams,
           );
 
-          if (
-            shouldMarkReturnedSerialsDefective &&
-            selectedReturnedSerials.length > 0 &&
-            serialNumberColumn
-          ) {
+          if (selectedDefectiveSerials.length > 0 && serialNumberColumn) {
             const serialDefectParams: unknown[] = [];
             const serialDefectSet: string[] = [];
 
@@ -7757,7 +7758,7 @@ export class SalesOrderService {
             }
 
             if (serialDefectSet.length > 0) {
-              serialDefectParams.push(selectedReturnedSerials);
+              serialDefectParams.push(selectedDefectiveSerials);
               await client.query(
                 `UPDATE tblserial_numbers
                  SET ${serialDefectSet.join(', ')}
@@ -7773,15 +7774,15 @@ export class SalesOrderService {
             }
           }
 
-          const selectedSerialSetForLog = new Set(
-            selectedReturnedSerials.map((serial) => serial.toLowerCase()),
+          const selectedDefectiveSerialSet = new Set(
+            selectedDefectiveSerials.map((serial) => serial.toLowerCase()),
           );
           const releaseReason = String(payload.remarks ?? '').trim() || null;
           for (const row of serialsToRelease.rows) {
             const serialNumber = this.normalizeSerialNumber(row.serial_number);
             const isDefectiveRow =
-              shouldMarkReturnedSerialsDefective &&
-              selectedSerialSetForLog.has(serialNumber.toLowerCase());
+              !shouldReleaseCancelledSerials &&
+              selectedDefectiveSerialSet.has(serialNumber.toLowerCase());
             const eventType: SerialEventType = shouldReleaseCancelledSerials
               ? 'REMOVED_FROM_SO'
               : isDefectiveRow
