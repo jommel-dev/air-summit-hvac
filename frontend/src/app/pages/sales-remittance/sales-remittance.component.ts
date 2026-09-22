@@ -328,7 +328,14 @@ export class SalesRemittanceComponent implements OnInit {
       });
 
       if ((response.data as any)?.success) {
+        const savedOrderId = this.miscModalOrderId;
+        const shouldRefreshDetail = this.isDetailDrawerOpen && this.detailOrder?.id === savedOrderId;
+        this.isSavingMisc = false;
         this.closeMiscModal();
+        await this.loadOrders();
+        if (shouldRefreshDetail && this.detailOrder) {
+          await this.openDetailDrawer(this.detailOrder);
+        }
       } else {
         this.openErrorModalDialog('Error', (response.data as any)?.message ?? 'Failed to add item.');
       }

@@ -859,6 +859,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
           ? 'Purchase request updated successfully'
           : 'Purchase request created successfully');
       this.resetCreateForm();
+      this.isCreating = false;
       await this.closeCreateDrawer();
       this.page = 1;
       await this.loadTabData(this.activeTab);

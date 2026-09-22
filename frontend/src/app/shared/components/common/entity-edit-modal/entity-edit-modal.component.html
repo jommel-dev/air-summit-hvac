@@ -47,9 +47,9 @@
       }
     </div>
 
-    @if (formError) {
+    @if (formError || errorMessage) {
       <div class="rounded-lg border border-error-300 bg-error-50 px-3 py-2 text-sm text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
-        {{ formError }}
+        {{ formError || errorMessage }}
       </div>
     }
 

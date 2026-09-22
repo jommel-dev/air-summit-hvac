@@ -135,6 +135,7 @@ export class MaterialInventoryComponent implements OnInit {
       await this.materialService.createBrand(this.brandForm.name, this.brandForm.prefix);
       this.successMessage = 'Brand created successfully';
       await this.loadBrands();
+      this.isSubmitting = false;
       this.closeBrandDrawer();
     } catch (error: any) {
       this.errorMessage = error.response?.data?.message || 'Failed to create brand';
@@ -210,6 +211,7 @@ export class MaterialInventoryComponent implements OnInit {
       }
 
       await this.loadMaterials();
+      this.isSubmitting = false;
       this.closeDrawer();
     } catch (error: any) {
       this.errorMessage = error.response?.data?.message || 'Failed to save material';

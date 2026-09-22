@@ -575,7 +575,13 @@
 
       </div>
 
-      <div class="flex items-center justify-end gap-2 border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+      <div class="border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+        @if (uiError) {
+          <div class="mb-3 rounded-lg border border-error-300 bg-error-50 px-3 py-2 text-sm text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+            {{ uiError }}
+          </div>
+        }
+      <div class="flex items-center justify-end gap-2">
         <button
           type="button"
           (click)="closeDrawer()"
@@ -598,6 +604,7 @@
         >
           {{ isSubmitting ? 'Saving...' : 'Save Quotation' }}
         </button>
+      </div>
       </div>
     </div>
   </aside>

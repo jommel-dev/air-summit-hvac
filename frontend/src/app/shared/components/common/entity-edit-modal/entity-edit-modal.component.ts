@@ -31,6 +31,7 @@ export class EntityEditModalComponent implements OnChanges {
   @Input() submitLabel = 'Save Changes';
   @Input() cancelLabel = 'Cancel';
   @Input() isSubmitting = false;
+  @Input() errorMessage = '';
 
   @Output() close = new EventEmitter<void>();
   @Output() save = new EventEmitter<Record<string, unknown>>();
