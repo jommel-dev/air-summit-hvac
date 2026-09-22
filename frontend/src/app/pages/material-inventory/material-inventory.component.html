@@ -323,6 +323,11 @@
 
           <!-- Footer -->
           <div class="border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+            @if (errorMessage) {
+              <div class="mb-3 rounded-lg border border-error-300 bg-error-50 px-3 py-2 text-sm text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+                {{ errorMessage }}
+              </div>
+            }
             <div class="flex justify-end gap-3">
               <button
                 type="button"
@@ -379,6 +384,11 @@
           </div>
         </div>
         <div class="border-t border-gray-200 px-6 py-4 dark:border-gray-800">
+          @if (errorMessage) {
+            <div class="mb-3 rounded-lg border border-error-300 bg-error-50 px-3 py-2 text-sm text-error-700 dark:border-error-500/30 dark:bg-error-500/10 dark:text-error-400">
+              {{ errorMessage }}
+            </div>
+          }
           <div class="flex justify-end gap-3">
             <button
               type="button"

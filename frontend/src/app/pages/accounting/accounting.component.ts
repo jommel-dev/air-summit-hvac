@@ -1131,6 +1131,7 @@ export class AccountingComponent implements OnInit {
       accountTitles: v.accountTitles.map((t) => ({ ...t })),
     };
     this.isEditingViewingVoucher = true;
+    this.reportError = '';
   }
 
   startEditGeneralJournal(): void {
@@ -1153,6 +1154,7 @@ export class AccountingComponent implements OnInit {
         : [this.createJournalSundryDraft()],
     };
     this.isEditingGeneralJournalView = true;
+    this.reportError = '';
   }
 
   openChequeVoucherPrintSettingsDrawer(): void {

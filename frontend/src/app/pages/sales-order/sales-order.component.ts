@@ -387,7 +387,9 @@ export class SalesOrderComponent {
           }
         }
         this.selectedOrderIds.clear();
+        this.isBulkAssigning = false;
         this.closeAssignInstallerModal();
+        await this.loadTabData(this.activeTab);
       } else {
         this.openErrorModal('Assign Error', result.message || 'Failed to assign installer');
       }

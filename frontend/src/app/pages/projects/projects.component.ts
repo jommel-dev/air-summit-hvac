@@ -187,6 +187,7 @@ export class ProjectsComponent implements OnInit, OnDestroy {
     // Avoid stacking over the view drawer
     this.isDrawerOpen = false;
     this.isSettlementOpen = false;
+    this.errorMessage = '';
     this.isFormOpen = true;
     void this.loadCustomerOptions('');
   }
@@ -214,6 +215,7 @@ export class ProjectsComponent implements OnInit, OnDestroy {
     // Close view drawer so Edit modal is not covered
     this.isDrawerOpen = false;
     this.isSettlementOpen = false;
+    this.errorMessage = '';
     this.isFormOpen = true;
     void this.loadCustomerOptions(this.customerSearch);
   }
@@ -302,6 +304,7 @@ export class ProjectsComponent implements OnInit, OnDestroy {
         return;
       }
 
+      this.isSaving = false;
       this.isFormOpen = false;
       this.successMessage =
         this.formMode === 'create' ? 'Project created successfully' : 'Project updated successfully';

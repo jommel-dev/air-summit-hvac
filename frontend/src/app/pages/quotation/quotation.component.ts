@@ -735,6 +735,7 @@ export class QuotationComponent implements OnInit, OnDestroy {
       }
 
       this.uiMessage = response.message ?? 'Quotation saved successfully';
+      this.isSubmitting = false;
       this.closeDrawer();
       await this.loadQuotations();
     } catch (error: unknown) {

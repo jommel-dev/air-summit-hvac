@@ -281,6 +281,7 @@ export class InventoryComponent implements OnInit {
   editModalFields: EntityEditFieldConfig[] = [];
   editModalInitialValues: Record<string, unknown> = {};
   isEditModalSubmitting = false;
+  editModalError = '';
 
   creationFormMode: CreationFormMode = 'all-in-one';
   isSubmittingCreation = false;
@@ -1440,6 +1441,7 @@ export class InventoryComponent implements OnInit {
       unit: product.unit ?? 'SET',
       unitTypes: Array.isArray(product.unitTypes) ? product.unitTypes.join(', ') : '',
     };
+    this.editModalError = '';
     this.isEditModalOpen = true;
   }
 
@@ -1499,6 +1501,7 @@ export class InventoryComponent implements OnInit {
       indoorModel: String(capacity.indoorModel ?? ''),
       outdoorModel: String(capacity.outdoorModel ?? ''),
     };
+    this.editModalError = '';
     this.isEditModalOpen = true;
   }
 
@@ -1514,6 +1517,7 @@ export class InventoryComponent implements OnInit {
     this.editModalFields = [];
     this.editModalInitialValues = {};
     this.editModalSubmitLabel = 'Save Changes';
+    this.editModalError = '';
   }
 
   async onEditModalSave(payload: Record<string, unknown>): Promise<void> {
@@ -1545,23 +1549,23 @@ export class InventoryComponent implements OnInit {
       .filter((entry) => entry.length > 0);
 
     if (!productName) {
-      this.errorMessage = 'Product name is required';
+      this.editModalError = 'Product name is required';
       return;
     }
 
     if (!unit) {
-      this.errorMessage = 'Unit is required';
+      this.editModalError = 'Unit is required';
       return;
     }
 
     if (unitTypes.length === 0) {
-      this.errorMessage = 'At least one unit type is required';
+      this.editModalError = 'At least one unit type is required';
       return;
     }
 
     this.isUpdatingProduct = true;
     this.isEditModalSubmitting = true;
-    this.errorMessage = '';
+    this.editModalError = '';
 
     try {
       const response = await apiClient.patch<ApiMutationResponse>(`/products/${productId}`, {
@@ -1571,7 +1575,7 @@ export class InventoryComponent implements OnInit {
       });
 
       if (!response.data.success) {
-        this.errorMessage = response.data.message ?? 'Unable to update product details';
+        this.editModalError = response.data.message ?? 'Unable to update product details';
         return;
       }
 
@@ -1580,16 +1584,18 @@ export class InventoryComponent implements OnInit {
         productId,
       });
 
-      this.addCapacitySuccess = response.data.message ?? 'Product details updated successfully';
+      this.successMessage = response.data.message ?? 'Product details updated successfully';
       this.addCapacityError = '';
+      this.isUpdatingProduct = false;
+      this.isEditModalSubmitting = false;
       this.closeEditModal();
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
-        this.errorMessage =
+        this.editModalError =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Unable to update product details';
       } else {
-        this.errorMessage = 'Unable to update product details';
+        this.editModalError = 'Unable to update product details';
       }
     } finally {
       this.isUpdatingProduct = false;
@@ -1613,18 +1619,18 @@ export class InventoryComponent implements OnInit {
     const outdoorModel = String(payload['outdoorModel'] ?? '').trim();
 
     if (!capacityName) {
-      this.errorMessage = 'Capacity name is required';
+      this.editModalError = 'Capacity name is required';
       return;
     }
 
     if (!Number.isFinite(srp) || !Number.isFinite(netPrice)) {
-      this.errorMessage = 'SRP and Net Price must be valid numbers';
+      this.editModalError = 'SRP and Net Price must be valid numbers';
       return;
     }
 
     this.isUpdatingCapacity = true;
     this.isEditModalSubmitting = true;
-    this.errorMessage = '';
+    this.editModalError = '';
 
     try {
       const response = await apiClient.patch<ApiMutationResponse>(`/capacity/${selectedCapacity.id}`, {
@@ -1637,7 +1643,7 @@ export class InventoryComponent implements OnInit {
       });
 
       if (!response.data.success) {
-        this.errorMessage = response.data.message ?? 'Unable to update capacity details';
+        this.editModalError = response.data.message ?? 'Unable to update capacity details';
         return;
       }
 
@@ -1647,16 +1653,18 @@ export class InventoryComponent implements OnInit {
         capacityId: selectedCapacity.id,
       });
 
-      this.addCapacitySuccess = response.data.message ?? 'Capacity updated successfully';
+      this.successMessage = response.data.message ?? 'Capacity updated successfully';
       this.addCapacityError = '';
+      this.isUpdatingCapacity = false;
+      this.isEditModalSubmitting = false;
       this.closeEditModal();
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) {
-        this.errorMessage =
+        this.editModalError =
           (error.response?.data as { message?: string } | undefined)?.message ??
           'Unable to update capacity details';
       } else {
-        this.errorMessage = 'Unable to update capacity details';
+        this.editModalError = 'Unable to update capacity details';
       }
     } finally {
       this.isUpdatingCapacity = false;
