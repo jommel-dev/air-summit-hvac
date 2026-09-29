@@ -11,6 +11,7 @@ import {
   catalogActiveSql,
   findPendingCatalogAlerts,
 } from 'src/common/utils/catalog-soft-delete';
+import { alignIdentitySequence } from 'src/common/utils/align-identity-sequence';
 
 @Injectable()
 export class ProductsService {
@@ -481,6 +482,9 @@ export class ProductsService {
         if (createdByColumn) {
           insertRecord[createdByColumn] = payload.created_by;
         }
+
+        await alignIdentitySequence(client, 'tblproducts');
+        await alignIdentitySequence(client, 'tblcapacity');
 
         const productInsertResult = await this.runInsert(
           client,

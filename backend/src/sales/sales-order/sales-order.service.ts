@@ -652,7 +652,73 @@ export class SalesOrderService {
        WHERE id = $2`,
       [total, salesId],
     );
+
+    try {
+      await this.alignSinglePaymentWithComponentTotal(salesId, total, db);
+    } catch {
+      // Order total is already stored. Payment alignment should not fail the save.
+    }
+
     return total;
+  }
+
+  /**
+   * A single payment saved as the product/service subtotal (for example 82500)
+   * should become that subtotal plus non-inclusion excess (82500 + 4800 = 87300).
+   * Split payments and amounts that are not the pre-excess subtotal are left as entered.
+   */
+  private async alignSinglePaymentWithComponentTotal(
+    salesId: number,
+    orderTotal: number,
+    executor: { query: PoolClient['query'] },
+  ): Promise<void> {
+    const roundedTotal = Math.round(orderTotal * 100) / 100;
+    if (!Number.isFinite(roundedTotal) || roundedTotal <= 0) {
+      return;
+    }
+
+    const excessResult = await executor.query<{ excess: string }>(
+      `SELECT COALESCE(SUM(COALESCE(mi.total_price, 0)), 0)::text AS excess
+       FROM tblso_miscellaneous_items mi
+       WHERE mi.sales_id = $1
+         AND LOWER(TRIM(COALESCE(mi.category, ''))) = 'excess'
+         AND COALESCE(mi.is_inclusion, false) = false`,
+      [salesId],
+    );
+    const excess = Math.round((Number(excessResult.rows[0]?.excess) || 0) * 100) / 100;
+    if (excess <= 0) {
+      return;
+    }
+
+    const paymentColumns = await this.getTableColumns(executor, 'tblso_payments');
+    const soIdColumn = this.pickColumn(paymentColumns, ['so_id', 'soId']);
+    const amountColumn = this.pickColumn(paymentColumns, ['amount']);
+    if (!soIdColumn || !amountColumn) {
+      return;
+    }
+
+    const payments = await executor.query<{ id: string; amount: string }>(
+      `SELECT id::text AS id, COALESCE("${amountColumn}", 0)::text AS amount
+       FROM tblso_payments
+       WHERE "${soIdColumn}"::text = $1`,
+      [String(salesId)],
+    );
+    if ((payments.rowCount ?? payments.rows.length) !== 1) {
+      return;
+    }
+
+    const current = Math.round((Number(payments.rows[0]?.amount) || 0) * 100) / 100;
+    const withoutExcess = Math.round((roundedTotal - excess) * 100) / 100;
+    if (Math.abs(current - withoutExcess) > 0.009 || Math.abs(current - roundedTotal) <= 0.009) {
+      return;
+    }
+
+    await executor.query(
+      `UPDATE tblso_payments
+       SET "${amountColumn}" = $1
+       WHERE id::text = $2`,
+      [roundedTotal, payments.rows[0].id],
+    );
   }
 
   private toOptionalNumber(value: unknown): number | null {
@@ -3632,6 +3698,7 @@ export class SalesOrderService {
           COALESCE(sc.serial_count, 0)::int AS serial_count,
           COALESCE(pt.payment_method, '-') AS payment_method,
           COALESCE(pt.paid_amount, 0) AS paid_amount,
+          COALESCE(ext.excess_total, 0) AS excess_total,
           COALESCE(pt.payment_count, 0)::int AS payment_count,
           COALESCE(pt.cc_charge, '') AS cc_charge,
           COALESCE(cd.concern_status, '') AS concern_status,
@@ -3662,6 +3729,7 @@ export class SalesOrderService {
       SELECT
         id, so_number AS "soNumber", customer_id AS "customerId", customer_name AS "customerName",
         total_amount::numeric AS "totalAmount", paid_amount::numeric AS "paidAmount",
+        excess_total::numeric AS "excessTotal",
         payment_count AS "paymentCount", computed_status AS status, sales_type AS "salesType",
         project_name AS "projectName", project_code AS "projectCode", payment_method AS "paymentMethod",
         schedule_date AS "scheduleDate", created_at AS "createdAt", serial_count AS "serialCount",
@@ -3682,6 +3750,7 @@ export class SalesOrderService {
         totalAmount: Number(row.totalAmount ?? 0),
         // Keep raw payment sum; frontend applies CC Charge (%) for display.
         paidAmount: Number(row.paidAmount ?? 0),
+        excessTotal: Number(row.excessTotal ?? 0),
         paymentCount: Number(row.paymentCount ?? 0),
         serialCount: Number(row.serialCount ?? 0),
         ccCharge: row.ccCharge != null ? String(row.ccCharge) : '',
