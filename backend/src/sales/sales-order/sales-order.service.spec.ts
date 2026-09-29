@@ -144,6 +144,40 @@ describe('SalesOrderService', () => {
     });
   });
 
+  describe('alignSinglePaymentWithComponentTotal', () => {
+    it('adds non-inclusion excess onto a single payment that matches the pre-excess subtotal', async () => {
+      database.query
+        .mockResolvedValueOnce({ rows: [{ excess: '4800' }], rowCount: 1 })
+        .mockResolvedValueOnce({
+          rows: [{ column_name: 'so_id' }, { column_name: 'amount' }],
+          rowCount: 2,
+        })
+        .mockResolvedValueOnce({ rows: [{ id: '9', amount: '82500' }], rowCount: 1 })
+        .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+
+      await (service as any).alignSinglePaymentWithComponentTotal(15, 87300, database);
+
+      expect(database.query).toHaveBeenLastCalledWith(
+        expect.stringContaining('UPDATE tblso_payments'),
+        [87300, '9'],
+      );
+    });
+
+    it('leaves a partial payment amount unchanged', async () => {
+      database.query
+        .mockResolvedValueOnce({ rows: [{ excess: '4800' }], rowCount: 1 })
+        .mockResolvedValueOnce({
+          rows: [{ column_name: 'so_id' }, { column_name: 'amount' }],
+          rowCount: 2,
+        })
+        .mockResolvedValueOnce({ rows: [{ id: '9', amount: '40000' }], rowCount: 1 });
+
+      await (service as any).alignSinglePaymentWithComponentTotal(15, 87300, database);
+
+      expect(database.query).toHaveBeenCalledTimes(3);
+    });
+  });
+
   describe('syncSalesOrderTotalFromComponents', () => {
     it('persists product + service + excess total on the sales order', async () => {
       database.query

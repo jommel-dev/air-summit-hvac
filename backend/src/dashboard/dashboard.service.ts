@@ -520,6 +520,7 @@ export class DashboardService {
         COALESCE(SUM(ps.amount) FILTER (
           WHERE COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
         ), 0) AS paid_amount,
+        COUNT(*)::int AS payment_count,
         COALESCE(SUM(ps.amount) FILTER (
           WHERE ps.normalized_method IN (${this.receivableVerificationMethodsSql})
             AND COALESCE(NULLIF(ps.normalized_status, ''), 'unpaid') NOT IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
@@ -573,7 +574,43 @@ export class DashboardService {
       WHERE COALESCE(ps.so_id, '') <> ''
       GROUP BY ps.so_id
     ),
-    sales_scope AS (
+    product_totals AS (
+      SELECT
+        COALESCE(to_jsonb(tpi)->>'salesId', to_jsonb(tpi)->>'sales_id') AS so_id,
+        SUM(
+          COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'totalSetQty', to_jsonb(tpi)->>'total_set_qty', ''), '')::numeric, 0)
+          * CASE
+              WHEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', ''), '')::numeric, 0) > 0
+                THEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'discountPrice', to_jsonb(tpi)->>'discount_price', ''), '')::numeric, 0)
+              WHEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', ''), '')::numeric, 0) > 0
+                THEN COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'sellPrice', to_jsonb(tpi)->>'sell_price', ''), '')::numeric, 0)
+              ELSE COALESCE(NULLIF(COALESCE(to_jsonb(tpi)->>'unitPrice', to_jsonb(tpi)->>'unit_price', ''), '')::numeric, 0)
+            END
+        ) AS product_total
+      FROM tbltransaction_product_items tpi
+      WHERE COALESCE(to_jsonb(tpi)->>'salesId', to_jsonb(tpi)->>'sales_id') IS NOT NULL
+      GROUP BY 1
+    ),
+    service_totals AS (
+      SELECT
+        sd.sales_id::text AS so_id,
+        SUM(
+          COALESCE(sd.service_cost, 0)
+          * COALESCE(NULLIF(sd.service_duration_hours, 0), 1)
+        ) AS service_total
+      FROM tblservice_details sd
+      GROUP BY sd.sales_id
+    ),
+    excess_totals AS (
+      SELECT
+        mi.sales_id::text AS so_id,
+        SUM(COALESCE(mi.total_price, 0)) AS excess_total
+      FROM tblso_miscellaneous_items mi
+      WHERE LOWER(TRIM(COALESCE(mi.category, ''))) = 'excess'
+        AND COALESCE(mi.is_inclusion, false) = false
+      GROUP BY mi.sales_id
+    ),
+    sales_priced AS (
       SELECT
         so.id::text AS so_id,
         COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS so_number,
@@ -582,23 +619,21 @@ export class DashboardService {
           WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
             THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
           ELSE 0
-        END AS total_amount,
+        END AS stored_total,
+        COALESCE(prt.product_total, 0)
+          + COALESCE(svt.service_total, 0)
+          + COALESCE(ext.excess_total, 0) AS component_total,
+        COALESCE(ext.excess_total, 0) AS excess_total,
+        COALESCE(pt.paid_amount, 0) AS raw_paid_amount,
+        COALESCE(pt.payment_count, 0) AS payment_count,
         REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', COALESCE(so.status, 'pending')))), '_', '-'), ' ', '-') AS normalized_status,
         COALESCE(NULLIF(to_jsonb(so)->>'created_at', ''), NULLIF(to_jsonb(so)->>'createdAt', ''))::timestamptz AS created_at,
+        COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', '') AS schedule_date,
         COALESCE(
           COALESCE(NULLIF(to_jsonb(so)->>'due_date', ''), NULLIF(to_jsonb(so)->>'dueDate', ''))::timestamptz,
           pt.next_due_date
         ) AS due_date,
         COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id,
-        COALESCE(pt.paid_amount, 0) AS paid_amount,
-        GREATEST(
-          CASE
-            WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
-              THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
-            ELSE 0
-          END - COALESCE(pt.paid_amount, 0) - COALESCE(pt.outstanding_receivable_amount, 0),
-          0
-        ) AS remaining_amount,
         COALESCE(pt.outstanding_receivable_amount, 0) AS outstanding_receivable_amount,
         COALESCE(pt.outstanding_receivable_count, 0) AS outstanding_receivable_count,
         COALESCE(pt.payment_methods, 'Unknown') AS payment_methods,
@@ -614,6 +649,54 @@ export class DashboardService {
         ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
       LEFT JOIN payment_totals pt
         ON pt.so_id = so.id::text
+      LEFT JOIN product_totals prt
+        ON prt.so_id = so.id::text
+      LEFT JOIN service_totals svt
+        ON svt.so_id = so.id::text
+      LEFT JOIN excess_totals ext
+        ON ext.so_id = so.id::text
+    ),
+    sales_amounts AS (
+      SELECT
+        sp.*,
+        CASE
+          WHEN sp.component_total > 0 THEN sp.component_total
+          ELSE sp.stored_total
+        END AS total_amount,
+        CASE
+          WHEN sp.payment_count = 1
+            AND sp.excess_total > 0.009
+            AND ABS(
+              sp.raw_paid_amount - (
+                (CASE WHEN sp.component_total > 0 THEN sp.component_total ELSE sp.stored_total END)
+                - sp.excess_total
+              )
+            ) <= 0.009
+            THEN CASE WHEN sp.component_total > 0 THEN sp.component_total ELSE sp.stored_total END
+          ELSE sp.raw_paid_amount
+        END AS paid_amount
+      FROM sales_priced sp
+    ),
+    sales_scope AS (
+      SELECT
+        sa.so_id,
+        sa.so_number,
+        sa.customer,
+        sa.total_amount,
+        sa.normalized_status,
+        sa.created_at,
+        sa.schedule_date,
+        sa.due_date,
+        sa.branch_id,
+        sa.paid_amount,
+        GREATEST(sa.total_amount - sa.paid_amount - sa.outstanding_receivable_amount, 0) AS remaining_amount,
+        sa.outstanding_receivable_amount,
+        sa.outstanding_receivable_count,
+        sa.payment_methods,
+        sa.credit_terms_methods,
+        sa.outstanding_payment_methods,
+        sa.sales_type
+      FROM sales_amounts sa
     )`;
   }
 
@@ -847,80 +930,24 @@ export class DashboardService {
       );
 
       const receivableResult = await this.databaseService.query<ReceivableRow>(
-        `WITH payment_totals AS (
-           SELECT
-             COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
-             SUM(
-               CASE
-                WHEN COALESCE(to_jsonb(sp)->>'amount', '0') ~ '^-?\d+(\.\d+)?$'
-                 AND REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(sp)->>'status', ''))), '_', '-'), ' ', '-') IN ('paid', 'posted', 'cleared', 'complete', 'completed', 'remitted')
-                   THEN COALESCE(to_jsonb(sp)->>'amount', '0')::numeric
-                 ELSE 0
-               END
-             ) AS paid_amount
-           FROM tblso_payments sp
-           GROUP BY COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId')
-         ),
-         sales_scope AS (
-           SELECT
-             so.id::text AS so_id,
-             CASE
-               WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
-               ELSE 0
-             END AS total_amount,
-             REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', 'pending'))), '_', '-'), ' ', '-') AS normalized_status,
-             COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
-           FROM tblsales_order so
-         )
-         SELECT COALESCE(SUM(GREATEST(ss.total_amount - COALESCE(pt.paid_amount, 0), 0)), 0)::text AS amount
+        `${this.getSalesDashboardBaseCte()}
+         SELECT COALESCE(SUM(GREATEST(ss.total_amount - ss.paid_amount, 0)), 0)::text AS amount
          FROM sales_scope ss
-         LEFT JOIN payment_totals pt
-           ON pt.so_id = ss.so_id
          WHERE ss.normalized_status IN ('approved', 'released', 'delivered', 'partial', 'remitted', 'paid')
            AND ($1::text IS NULL OR ss.branch_id = $1::text)`,
         [branchParam],
       );
 
       const topCustomersResult = await this.databaseService.query<TopCustomerRow>(
-        `WITH payment_totals AS (
-           SELECT
-             COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId') AS so_id,
-             SUM(
-               CASE
-                 WHEN COALESCE(to_jsonb(sp)->>'amount', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                   THEN COALESCE(to_jsonb(sp)->>'amount', '0')::numeric
-                 ELSE 0
-               END
-             ) AS paid_amount
-           FROM tblso_payments sp
-           GROUP BY COALESCE(to_jsonb(sp)->>'so_id', to_jsonb(sp)->>'soId')
-         ),
-         sales_scope AS (
-           SELECT
-             so.id::text AS so_id,
-             COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '') AS customer_id,
-             CASE
-               WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                 THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
-               ELSE 0
-             END AS total_amount,
-             COALESCE(NULLIF(to_jsonb(so)->>'created_at', ''), NULLIF(to_jsonb(so)->>'createdAt', ''))::timestamptz AS created_at,
-             COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
-           FROM tblsales_order so
-         )
+        `${this.getSalesDashboardBaseCte()}
          SELECT
-           COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS name,
+           ss.customer AS name,
            COUNT(*)::text AS orders,
-           COALESCE(SUM(GREATEST(ss.total_amount - COALESCE(pt.paid_amount, 0), 0)), 0)::text AS balance
+           COALESCE(SUM(GREATEST(ss.total_amount - ss.paid_amount, 0)), 0)::text AS balance
          FROM sales_scope ss
-         LEFT JOIN tblcustomer c
-           ON c.id::text = ss.customer_id
-         LEFT JOIN payment_totals pt
-           ON pt.so_id = ss.so_id
          WHERE ss.created_at >= (CURRENT_DATE - INTERVAL '30 day')::timestamp
            AND ($1::text IS NULL OR ss.branch_id = $1::text)
-         GROUP BY COALESCE(to_jsonb(c)->>'name', 'Unknown Customer')
+         GROUP BY ss.customer
          ORDER BY COUNT(*) DESC, SUM(ss.total_amount) DESC
          LIMIT 3`,
         [branchParam],
@@ -1999,25 +2026,9 @@ export class DashboardService {
           status: string;
           scheduleDate: string;
         }>(
-          `WITH sales_scope AS (
-             SELECT
-               so.id::text AS id,
-               COALESCE(to_jsonb(so)->>'so_number', to_jsonb(so)->>'soNumber', CONCAT('#', so.id::text)) AS so_number,
-               COALESCE(to_jsonb(c)->>'name', 'Unknown Customer') AS customer,
-               CASE
-                 WHEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0') ~ '^-?\\d+(\\.\\d+)?$'
-                   THEN COALESCE(to_jsonb(so)->>'total_amount', to_jsonb(so)->>'totalAmount', '0')::numeric
-                 ELSE 0
-               END AS total_amount,
-               REPLACE(REPLACE(LOWER(TRIM(COALESCE(to_jsonb(so)->>'status', COALESCE(so.status, 'pending')))), '_', '-'), ' ', '-') AS normalized_status,
-               COALESCE(to_jsonb(so)->>'scheduleDate', to_jsonb(so)->>'schedule_date', '') AS schedule_date,
-               COALESCE(to_jsonb(so)->>'branchId', to_jsonb(so)->>'branch_id', '') AS branch_id
-             FROM tblsales_order so
-             LEFT JOIN tblcustomer c
-               ON c.id::text = COALESCE(to_jsonb(so)->>'customer_id', to_jsonb(so)->>'customerId', '')
-           )
+          `${this.getSalesDashboardBaseCte()}
            SELECT
-             ss.id,
+             ss.so_id AS id,
              ss.so_number::text AS "soNumber",
              ss.customer::text AS customer,
              ss.total_amount::text AS amount,
@@ -2026,7 +2037,7 @@ export class DashboardService {
            FROM sales_scope ss
            WHERE ss.normalized_status IN ('pending', 'for-delivery', 'to-remit', 'released', 'in-progress')
              AND ($1::text IS NULL OR ss.branch_id = $1::text)
-           ORDER BY NULLIF(ss.schedule_date, '') ASC NULLS LAST, ss.id DESC
+           ORDER BY NULLIF(ss.schedule_date, '') ASC NULLS LAST, ss.so_id DESC
            LIMIT 100`,
           [branchParam],
         );

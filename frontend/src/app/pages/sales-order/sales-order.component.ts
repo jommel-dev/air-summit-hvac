@@ -608,6 +608,7 @@ export class SalesOrderComponent {
   additionalExcessItems: AdditionalExcessFormItem[] = [];
   private additionalExcessBaselineIds: number[] = [];
   private paymentAmountEditedByUser = false;
+  private lastSyncedPaymentAmount: number | null = null;
   private isInitializingDrawer = false;
   branchOptions: Array<{ id: number; branchName: string }> = [];
   activeExpenseTabIndex = 0;
@@ -4205,13 +4206,16 @@ export class SalesOrderComponent {
       await this.loadAdditionalExcessItems(orderId);
       this.recalculateTotalAmount();
       this.isInitializingDrawer = false;
-      // Keep saved Payment Details amounts as the actual amount; do not
-      // overwrite them from product/service totals on edit load.
-      this.paymentAmountEditedByUser = true;
+      // A saved amount that already matches the order total keeps auto-calculating.
+      // A different amount (partial or custom) stays as entered.
+      const followsOrderTotal = this.paymentAmountFollowsOrderTotal();
+      this.paymentAmountEditedByUser = !followsOrderTotal;
+      this.lastSyncedPaymentAmount = null;
       this.form.paymentDetails = (this.form.paymentDetails ?? []).map((payment: SalesPaymentFormItem) => ({
         ...payment,
-        isAmountManual: true,
+        isAmountManual: !followsOrderTotal,
       }));
+      this.syncPaymentAmounts();
       await this.loadSalesHistory(orderId);
       this.captureDrawerBaselineSnapshot();
     } catch (error: unknown) {
@@ -4456,6 +4460,7 @@ export class SalesOrderComponent {
       installer: item.installer ?? '',
       totalAmount: Number(item.totalAmount ?? 0),
       paidAmount: Number(item.paidAmount ?? 0),
+      excessTotal: Number(item.excessTotal ?? 0),
       paymentCount: Number(item.paymentCount ?? 0),
       paymentMethod: item.paymentMethod ?? '-',
       ccCharge: item.ccCharge ?? '',
@@ -4791,14 +4796,29 @@ export class SalesOrderComponent {
     return payment?.autoTermsDueDate ?? true;
   }
 
-  onPaymentAmountChange(index: number): void {
+  onPaymentAmountChange(index: number, event?: Event): void {
     const payment = this.form.paymentDetails[index];
     if (!payment) {
       return;
     }
 
+    // Programmatic updates from syncPaymentAmounts must not freeze auto-calc.
+    if (event && event.isTrusted === false) {
+      return;
+    }
+
+    const typedAmount = Number((event?.target as HTMLInputElement | null)?.value ?? payment.amount) || 0;
+    const computedAmount = this.applyCcChargeToAmount(Number(this.form.totalAmount) || 0, payment);
+    if (
+      Math.abs(typedAmount - computedAmount) <= 0.009 ||
+      (this.lastSyncedPaymentAmount != null && Math.abs(typedAmount - this.lastSyncedPaymentAmount) <= 0.009)
+    ) {
+      return;
+    }
+
     this.paymentAmountEditedByUser = true;
     payment.isAmountManual = true;
+    this.lastSyncedPaymentAmount = null;
   }
 
   onTermsChanged(index: number): void {
@@ -5133,7 +5153,9 @@ export class SalesOrderComponent {
         unitPrice: number;
         isInclusion: boolean;
       }>>(`/sales-order/${salesId}/misc-items`);
-      const items = (Array.isArray(response.data) ? response.data : []).filter((item) => item.category === 'excess');
+      const items = (Array.isArray(response.data) ? response.data : []).filter(
+        (item) => String(item.category ?? '').trim().toLowerCase() === 'excess',
+      );
 
       this.additionalExcessItems =
         items.length > 0
@@ -5157,21 +5179,27 @@ export class SalesOrderComponent {
   }
 
   private getPersistableAdditionalExcessItems(): AdditionalExcessFormItem[] {
-    return (this.additionalExcessItems ?? []).filter((item) => String(item.itemName ?? '').trim().length > 0);
+    return (this.additionalExcessItems ?? [])
+      .filter((item) => {
+        const name = String(item.itemName ?? '').trim();
+        const qty = Math.max(0, Number(item.quantity) || 0);
+        const unitPrice = Number(item.unitPrice) || 0;
+        return name.length > 0 || qty * unitPrice !== 0;
+      })
+      .map((item) => ({
+        ...item,
+        itemName: String(item.itemName ?? '').trim() || 'Additional Excess',
+      }));
   }
 
   private async persistAdditionalExcessItems(salesId: number): Promise<void> {
     const persistableItems = this.getPersistableAdditionalExcessItems();
+    const createdIds: number[] = [];
 
-    try {
-      for (const itemId of this.additionalExcessBaselineIds) {
-        await apiClient.delete(`/sales-order/${salesId}/misc-items/${itemId}`, {
-          params: { skipTotalAmountUpdate: true },
-        });
-      }
-
-      for (const item of persistableItems) {
-        await apiClient.post(`/sales-order/${salesId}/misc-items`, {
+    for (const item of persistableItems) {
+      const response = await apiClient.post<{ success?: boolean; message?: string; id?: number }>(
+        `/sales-order/${salesId}/misc-items`,
+        {
           category: 'excess',
           itemName: String(item.itemName).trim(),
           description: item.description?.trim() || undefined,
@@ -5180,13 +5208,33 @@ export class SalesOrderComponent {
           unitPrice: Number(item.unitPrice) || 0,
           isInclusion: item.isInclusion ?? false,
           skipTotalAmountUpdate: true,
-        });
+        },
+      );
+
+      if (response.data?.success === false) {
+        throw new Error(response.data.message || 'Failed to save additional excess');
       }
 
-      this.additionalExcessBaselineIds = [];
-    } catch (error) {
-      console.error('[Additional Excess] Failed to persist items:', error);
+      const createdId = Number(response.data?.id);
+      if (Number.isFinite(createdId) && createdId > 0) {
+        createdIds.push(createdId);
+      }
     }
+
+    for (const itemId of this.additionalExcessBaselineIds) {
+      const response = await apiClient.delete<{ success?: boolean; message?: string }>(
+        `/sales-order/${salesId}/misc-items/${itemId}`,
+        {
+          params: { skipTotalAmountUpdate: true },
+        },
+      );
+
+      if (response.data?.success === false) {
+        throw new Error(response.data.message || 'Failed to update additional excess');
+      }
+    }
+
+    this.additionalExcessBaselineIds = createdIds;
   }
 
   onSerialScanInputChange(productIndex: number, unitLabel: string, value: string): void {
@@ -5901,6 +5949,7 @@ export class SalesOrderComponent {
     this.additionalExcessItems = [this.createEmptyAdditionalExcessItem()];
     this.additionalExcessBaselineIds = [];
     this.paymentAmountEditedByUser = false;
+    this.lastSyncedPaymentAmount = null;
     this.isInitializingDrawer = false;
     this.ensureSelectedUnitType(0);
     this.syncPaymentAmounts();
@@ -6446,11 +6495,36 @@ export class SalesOrderComponent {
     return this.calculateAmountWithCcCharge(baseAmount, payment.method, payment.ccCharge);
   }
 
+  private paymentAmountFollowsOrderTotal(): boolean {
+    if ((this.form.paymentDetails?.length ?? 0) !== 1) {
+      return false;
+    }
+
+    const payment = this.form.paymentDetails[0];
+    const currentAmount = Number(payment?.amount) || 0;
+    const fullAmount = Number(this.form.totalAmount) || 0;
+    const excessTotal = this.getAdditionalExcessTotal();
+    const amountWithoutExcess = Math.round((fullAmount - excessTotal) * 100) / 100;
+    const fullWithCc = this.applyCcChargeToAmount(fullAmount, payment);
+    const withoutExcessWithCc = this.applyCcChargeToAmount(amountWithoutExcess, payment);
+
+    return (
+      currentAmount <= 0 ||
+      Math.abs(currentAmount - fullAmount) <= 0.009 ||
+      Math.abs(currentAmount - fullWithCc) <= 0.009 ||
+      Math.abs(currentAmount - amountWithoutExcess) <= 0.009 ||
+      Math.abs(currentAmount - withoutExcessWithCc) <= 0.009
+    );
+  }
+
   private syncPaymentAmounts(): void {
     const computedAmount = Number(this.form.totalAmount) || 0;
+    const excessTotal = this.getAdditionalExcessTotal();
+    const amountWithoutExcess = Math.round((computedAmount - excessTotal) * 100) / 100;
     const isSplitPayment = this.form.paymentDetails.length > 1;
 
     if (isSplitPayment) {
+      this.lastSyncedPaymentAmount = null;
       this.form.paymentDetails = this.form.paymentDetails.map(
         (payment: SalesPaymentFormItem) => {
           const nextPayment: SalesPaymentFormItem = {
@@ -6473,17 +6547,34 @@ export class SalesOrderComponent {
       return;
     }
 
+    let syncedAmount: number | null = this.lastSyncedPaymentAmount;
+
     this.form.paymentDetails = this.form.paymentDetails.map((payment: SalesPaymentFormItem) => {
+      const currentAmount = Number(payment.amount) || 0;
+      const fullWithCc = this.applyCcChargeToAmount(computedAmount, payment);
+      const withoutExcessWithCc = this.applyCcChargeToAmount(amountWithoutExcess, payment);
+      const matchesPreExcessSubtotal =
+        excessTotal > 0.009 &&
+        (Math.abs(currentAmount - amountWithoutExcess) <= 0.009 ||
+          Math.abs(currentAmount - withoutExcessWithCc) <= 0.009);
+      const followsLastSync =
+        this.lastSyncedPaymentAmount != null &&
+        Math.abs(currentAmount - this.lastSyncedPaymentAmount) <= 0.009;
       const shouldUseComputedAmount =
-        !this.paymentAmountEditedByUser &&
-        !payment.isAmountManual &&
-        computedAmount > 1;
-      const nextAmount = shouldUseComputedAmount
-        ? this.applyCcChargeToAmount(computedAmount, payment)
-        : Number(payment.amount) || 0;
+        computedAmount > 1 &&
+        ((!this.paymentAmountEditedByUser && !payment.isAmountManual) ||
+          matchesPreExcessSubtotal ||
+          followsLastSync);
+      const nextAmount = shouldUseComputedAmount ? fullWithCc : currentAmount;
+
+      if (shouldUseComputedAmount) {
+        syncedAmount = nextAmount;
+      }
+
       const nextPayment: SalesPaymentFormItem = {
         ...payment,
         amount: nextAmount,
+        isAmountManual: shouldUseComputedAmount ? false : payment.isAmountManual,
       };
 
       const explicitStatus = String(payment.status ?? '').trim().toLowerCase();
@@ -6494,6 +6585,8 @@ export class SalesOrderComponent {
         status: normalizedStatus || this.getDisplayPaymentStatus(nextPayment),
       };
     });
+
+    this.lastSyncedPaymentAmount = syncedAmount;
   }
 
   private toDateInputValue(value: string | null | undefined): string {
@@ -7051,19 +7144,30 @@ export class SalesOrderComponent {
   getOrderListAmount(order: SalesOrderRow): number {
     const totalAmount = Number(order.totalAmount ?? 0);
     const paidAmount = Number(order.paidAmount ?? 0);
+    const percent = this.parseCcChargePercent(order.ccCharge);
+    const withCc = (base: number): number => {
+      if (!this.isCreditCardMethod(order.paymentMethod) || percent <= 0) {
+        return base;
+      }
+      return Math.round(base * (1 + percent / 100) * 100) / 100;
+    };
 
-    // Payment Details amount is the actual amount shown on the Sales Order list.
-    if ((order.paymentCount ?? 0) > 0) {
+    // Split payments keep the amounts entered on each row.
+    if ((order.paymentCount ?? 0) > 1) {
       return paidAmount;
     }
 
-    const percent = this.parseCcChargePercent(order.ccCharge);
-    if (!this.isCreditCardMethod(order.paymentMethod) || percent <= 0) {
-      return totalAmount;
+    if ((order.paymentCount ?? 0) === 1) {
+      const excessTotal = Number(order.excessTotal ?? 0);
+      const withoutExcess = Math.round((totalAmount - excessTotal) * 100) / 100;
+      // Payment was saved as the pre-excess subtotal (82500) while excess is 4800.
+      if (excessTotal > 0.009 && Math.abs(paidAmount - withoutExcess) <= 0.009) {
+        return withCc(totalAmount);
+      }
+      return paidAmount > 0 ? paidAmount : withCc(totalAmount);
     }
 
-    const factor = 1 + percent / 100;
-    return Math.round(totalAmount * factor * 100) / 100;
+    return withCc(totalAmount);
   }
 
   getViewProductTotal(): number {
@@ -7129,6 +7233,17 @@ export class SalesOrderComponent {
 
     if (isSplit) {
       return storedAmount;
+    }
+
+    const excessTotal = this.getViewAdditionalExcessTotal();
+    const withoutExcess = Math.round((baseAmount - excessTotal) * 100) / 100;
+    if (
+      payments.length === 1 &&
+      excessTotal > 0.009 &&
+      baseAmount > 0 &&
+      Math.abs(storedAmount - withoutExcess) <= 0.009
+    ) {
+      return baseAmount;
     }
 
     if (payments.length === 1 && baseAmount > 0 && storedAmount > baseAmount + 0.009) {

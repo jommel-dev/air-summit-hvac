@@ -199,6 +199,7 @@ export interface SalesOrderListItem {
   customerName: string;
   totalAmount: number;
   paidAmount?: number;
+  excessTotal?: number;
   paymentCount?: number;
   paymentMethod: string;
   ccCharge?: string;
@@ -221,6 +222,7 @@ export interface SalesOrderRow {
   installer?: string;
   totalAmount: number;
   paidAmount?: number;
+  excessTotal?: number;
   paymentCount?: number;
   paymentMethod: string;
   ccCharge?: string;

@@ -960,11 +960,18 @@
 
     @if (creationFormMode === 'all-in-one') {
       <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 md:col-span-2">Brand Name</label>
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Brand Name</label>
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Prefix</label>
         <input
           type="text"
           [(ngModel)]="allInOneBrandName"
-          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90 md:col-span-2"
+          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+        />
+        <input
+          type="text"
+          [(ngModel)]="allInOneBrandPrefix"
+          placeholder="e.g. HR"
+          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm uppercase text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
         />
 
         <label class="inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
@@ -1080,6 +1087,13 @@
           type="text"
           [(ngModel)]="createBrandName"
           class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
+        />
+        <label class="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">Prefix</label>
+        <input
+          type="text"
+          [(ngModel)]="createBrandPrefix"
+          placeholder="e.g. HR"
+          class="h-10 rounded-lg border border-gray-300 bg-transparent px-3 text-sm uppercase text-gray-800 focus:border-brand-300 focus:outline-none dark:border-gray-700 dark:text-white/90"
         />
       </div>
     }

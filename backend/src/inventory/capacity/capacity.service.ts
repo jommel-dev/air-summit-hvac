@@ -8,6 +8,7 @@ import {
   catalogActiveSql,
   findPendingCatalogAlerts,
 } from 'src/common/utils/catalog-soft-delete';
+import { alignIdentitySequence } from 'src/common/utils/align-identity-sequence';
 
 @Injectable()
 export class CapacityService {
@@ -138,6 +139,8 @@ export class CapacityService {
 
     const recordColumns = Object.keys(record);
     const recordValues = Object.values(record);
+
+    await alignIdentitySequence(this.databaseService, 'tblcapacity');
 
     const insertResult = await this.databaseService.query<{ id: number }>(
       `INSERT INTO tblcapacity (${recordColumns.map((column) => `"${column}"`).join(', ')})

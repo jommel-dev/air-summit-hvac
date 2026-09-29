@@ -289,8 +289,10 @@ export class InventoryComponent implements OnInit {
   creationSuccess = '';
 
   createBrandName = '';
+  createBrandPrefix = '';
 
   allInOneBrandName = '';
+  allInOneBrandPrefix = '';
   allInOneIncludeProduct = true;
   allInOneProductName = '';
   allInOneUnit = 'SET';
@@ -1681,6 +1683,8 @@ export class InventoryComponent implements OnInit {
 
     const response = await apiClient.post<ApiMutationResponse & { item?: { id?: number; name?: string } }>('/brands', {
       name: brandName,
+      prefix: this.createBrandPrefix.trim().toUpperCase(),
+      type: 'ACU',
     });
 
     if (!response.data.success) {
@@ -1691,6 +1695,7 @@ export class InventoryComponent implements OnInit {
     await this.loadInventoryFolders({ brandName });
     this.selectBrand(brandName);
     this.createBrandName = '';
+    this.createBrandPrefix = '';
     this.creationSuccess = response.data.message ?? 'Brand created successfully';
     this.closeCreationDrawer();
   }
@@ -1704,6 +1709,8 @@ export class InventoryComponent implements OnInit {
 
     const brandResponse = await apiClient.post<ApiMutationResponse & { item?: { id?: number; name?: string } }>('/brands', {
       name: brandName,
+      prefix: this.allInOneBrandPrefix.trim().toUpperCase(),
+      type: 'ACU',
     });
 
     if (!brandResponse.data.success) {
@@ -1962,6 +1969,7 @@ export class InventoryComponent implements OnInit {
 
   private resetAllInOneFormFields(): void {
     this.allInOneBrandName = '';
+    this.allInOneBrandPrefix = '';
     this.allInOneIncludeProduct = true;
     this.allInOneProductName = '';
     this.allInOneUnit = 'SET';

@@ -5,6 +5,7 @@ import { DatabaseService } from 'src/database/database.service';
 import { PoolClient } from 'pg';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 import { catalogActiveSql } from 'src/common/utils/catalog-soft-delete';
+import { alignIdentitySequence } from 'src/common/utils/align-identity-sequence';
 
 @Injectable()
 export class BrandsService {
@@ -52,6 +53,8 @@ export class BrandsService {
 
     const columns = await this.getTableColumns(this.databaseService, 'tblbrands');
     const nameColumn = this.pickColumn(columns, ['name', 'brandName', 'brand_name']);
+    const prefixColumn = this.pickColumn(columns, ['prefix']);
+    const typeColumn = this.pickColumn(columns, ['type', 'brandType', 'brand_type']);
 
     if (!nameColumn) {
       return {
@@ -59,6 +62,11 @@ export class BrandsService {
         message: 'tblbrands name column is not configured',
       };
     }
+
+    const prefix = String(createBrandDto.prefix ?? '').trim().toUpperCase();
+    const brandType = String(createBrandDto.type ?? 'ACU').trim().toUpperCase() === 'MAT'
+      ? 'MAT'
+      : 'ACU';
 
     const duplicateCheck = await this.databaseService.query<{ id: number }>(
       `SELECT b.id
@@ -75,9 +83,41 @@ export class BrandsService {
       };
     }
 
+    if (prefix && prefixColumn) {
+      const prefixCheck = await this.databaseService.query<{ id: number }>(
+        `SELECT b.id
+         FROM tblbrands b
+         WHERE LOWER(TRIM(COALESCE(to_jsonb(b)->>$1, ''))) = LOWER(TRIM($2))
+         LIMIT 1`,
+        [prefixColumn, prefix],
+      );
+
+      if ((prefixCheck.rowCount ?? 0) > 0) {
+        return {
+          success: false,
+          message: 'Brand prefix already exists',
+        };
+      }
+    }
+
+    await alignIdentitySequence(this.databaseService, 'tblbrands');
+
+    const insertColumns = [`"${nameColumn}"`];
+    const insertValues: unknown[] = [brandName];
+    if (prefixColumn) {
+      insertColumns.push(`"${prefixColumn}"`);
+      insertValues.push(prefix || null);
+    }
+    if (typeColumn) {
+      insertColumns.push(`"${typeColumn}"`);
+      insertValues.push(brandType);
+    }
+
     const insertResult = await this.databaseService.query<{ id: number }>(
-      `INSERT INTO tblbrands ("${nameColumn}") VALUES ($1) RETURNING id`,
-      [brandName],
+      `INSERT INTO tblbrands (${insertColumns.join(', ')})
+       VALUES (${insertValues.map((_, index) => `$${index + 1}`).join(', ')})
+       RETURNING id`,
+      insertValues,
     );
 
     const brandId = insertResult.rows[0]?.id ?? null;
@@ -88,7 +128,7 @@ export class BrandsService {
       actor: auditActor,
       description: `Created brand ${brandName}`,
       requestBody: createBrandDto as unknown as Record<string, unknown>,
-      after: { id: brandId, name: brandName },
+      after: { id: brandId, name: brandName, prefix, type: brandType },
     });
 
     return {
@@ -97,6 +137,8 @@ export class BrandsService {
       item: {
         id: brandId,
         name: brandName,
+        prefix,
+        type: brandType,
       },
     };
   }
@@ -106,6 +148,7 @@ export class BrandsService {
       const result = await this.databaseService.query<{
         id: number;
         name_value: string | null;
+        prefix_value: string | null;
         type_value: string | null;
       }>(
         `SELECT
@@ -115,6 +158,7 @@ export class BrandsService {
              to_jsonb(b)->>'brandName',
              to_jsonb(b)->>'brand_name'
            ) AS name_value,
+           COALESCE(to_jsonb(b)->>'prefix', '') AS prefix_value,
            COALESCE(
              to_jsonb(b)->>'type',
              to_jsonb(b)->>'brandType',
@@ -129,6 +173,7 @@ export class BrandsService {
         items: result.rows.map((row) => ({
           id: row.id,
           name: row.name_value ?? `Brand ${row.id}`,
+          prefix: String(row.prefix_value ?? '').trim(),
           type: String(row.type_value ?? '').trim(),
         })),
       };
@@ -196,6 +241,7 @@ export class BrandsService {
 
     const columns = await this.getTableColumns(this.databaseService, 'tblbrands');
     const nameColumn = this.pickColumn(columns, ['name', 'brandName', 'brand_name']);
+    const prefixColumn = this.pickColumn(columns, ['prefix']);
 
     if (!nameColumn) {
       return {
@@ -203,6 +249,9 @@ export class BrandsService {
         message: 'tblbrands name column is not configured',
       };
     }
+
+    const hasPrefix = Object.prototype.hasOwnProperty.call(updateBrandDto, 'prefix');
+    const prefix = String(updateBrandDto.prefix ?? '').trim().toUpperCase();
 
     const duplicateCheck = await this.databaseService.query<{ id: number }>(
       `SELECT b.id
@@ -220,12 +269,38 @@ export class BrandsService {
       };
     }
 
+    if (hasPrefix && prefix && prefixColumn) {
+      const prefixCheck = await this.databaseService.query<{ id: number }>(
+        `SELECT b.id
+         FROM tblbrands b
+         WHERE b.id <> $1
+           AND LOWER(TRIM(COALESCE(to_jsonb(b)->>$2, ''))) = LOWER(TRIM($3))
+         LIMIT 1`,
+        [id, prefixColumn, prefix],
+      );
+
+      if ((prefixCheck.rowCount ?? 0) > 0) {
+        return {
+          success: false,
+          message: 'Brand prefix already exists',
+        };
+      }
+    }
+
+    const setClauses = [`"${nameColumn}" = $1`];
+    const updateValues: unknown[] = [brandName];
+    if (hasPrefix && prefixColumn) {
+      updateValues.push(prefix || null);
+      setClauses.push(`"${prefixColumn}" = $${updateValues.length}`);
+    }
+    updateValues.push(id);
+
     const updateResult = await this.databaseService.query<{ id: number }>(
       `UPDATE tblbrands
-       SET "${nameColumn}" = $1
-       WHERE id = $2
+       SET ${setClauses.join(', ')}
+       WHERE id = $${updateValues.length}
        RETURNING id`,
-      [brandName, id],
+      updateValues,
     );
 
     if ((updateResult.rowCount ?? 0) === 0) {
@@ -239,7 +314,7 @@ export class BrandsService {
       actor: auditActor,
       description: `Updated brand ${brandName}`,
       requestBody: updateBrandDto as unknown as Record<string, unknown>,
-      after: { id, name: brandName },
+      after: { id, name: brandName, prefix: hasPrefix ? prefix : undefined },
     });
 
     return {
@@ -248,6 +323,7 @@ export class BrandsService {
       item: {
         id,
         name: brandName,
+        prefix: hasPrefix ? prefix : undefined,
       },
     };
   }
