@@ -2557,13 +2557,13 @@
 
           <div class="w-full">
             <app-date-picker
-              id="sales-order-report-date-range"
-              mode="range"
+              id="sales-order-report-date"
+              mode="single"
               [staticCalendar]="false"
-              [defaultDate]="getReportDatePickerDefault()"
-              label="Date Range"
-              placeholder="Select date range"
-              (dateChange)="onReportDateRangeChange($event)"
+              [defaultDate]="dailyUnitReleaseDate || undefined"
+              label="Schedule Date"
+              placeholder="Select schedule date"
+              (dateChange)="onReportDateChange($event)"
             />
           </div>
         </div>

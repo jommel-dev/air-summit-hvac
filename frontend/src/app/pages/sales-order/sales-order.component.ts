@@ -546,14 +546,13 @@ export class SalesOrderComponent {
   uiMessage = '';
   uiError = '';
 
-  // Report chooser + date-range export state
+  // Report chooser + single schedule-date export state
   isReportChooserOpen = false;
   selectedReportType: 'daily-unit-release' | 'daily-remittance' | null = null;
   isDailyUnitReleaseModalOpen = false;
   isGeneratingDailyUnitRelease = false;
   dailyUnitReleaseError = '';
-  dailyUnitReleaseDateFrom = new Date().toISOString().split('T')[0];
-  dailyUnitReleaseDateTo = new Date().toISOString().split('T')[0];
+  dailyUnitReleaseDate = this.localToday();
 
   isMigrationModalOpen = false;
   isMigrationPreviewLoading = false;
@@ -2675,36 +2674,14 @@ export class SalesOrderComponent {
       : 'Export SO details with serial numbers, products, and payment info.';
   }
 
-  getReportDatePickerDefault(): string | string[] | undefined {
-    if (this.dailyUnitReleaseDateFrom && this.dailyUnitReleaseDateTo) {
-      return this.dailyUnitReleaseDateFrom === this.dailyUnitReleaseDateTo
-        ? this.dailyUnitReleaseDateFrom
-        : [this.dailyUnitReleaseDateFrom, this.dailyUnitReleaseDateTo];
-    }
-    return this.dailyUnitReleaseDateFrom || this.dailyUnitReleaseDateTo || undefined;
-  }
-
-  onReportDateRangeChange(event: { dateStr?: string }): void {
-    const dateStr = String(event.dateStr ?? '').trim();
-    if (!dateStr) {
-      this.dailyUnitReleaseDateFrom = '';
-      this.dailyUnitReleaseDateTo = '';
-      return;
-    }
-
-    const parts = dateStr
-      .split(/\s+to\s+/i)
-      .map((part) => part.trim())
-      .filter(Boolean);
-    this.dailyUnitReleaseDateFrom = parts[0] ?? '';
-    this.dailyUnitReleaseDateTo = parts[1] ?? parts[0] ?? '';
+  onReportDateChange(event: { dateStr?: string }): void {
+    this.dailyUnitReleaseDate = this.toScheduleDateOnly(event.dateStr);
   }
 
   openDailyUnitReleaseReport(): void {
     this.isDailyUnitReleaseModalOpen = true;
     this.dailyUnitReleaseError = '';
-    this.dailyUnitReleaseDateFrom = new Date().toISOString().split('T')[0];
-    this.dailyUnitReleaseDateTo = new Date().toISOString().split('T')[0];
+    this.dailyUnitReleaseDate = this.localToday();
   }
 
   closeDailyUnitReleaseReport(): void {
@@ -2724,8 +2701,9 @@ export class SalesOrderComponent {
   async generateDailyUnitReleaseReport(): Promise<void> {
     if (this.isGeneratingDailyUnitRelease) return;
 
-    if (!this.dailyUnitReleaseDateFrom || !this.dailyUnitReleaseDateTo) {
-      this.dailyUnitReleaseError = 'Both date fields are required.';
+    const scheduleDate = this.toScheduleDateOnly(this.dailyUnitReleaseDate);
+    if (!scheduleDate) {
+      this.dailyUnitReleaseError = 'Schedule date is required.';
       return;
     }
 
@@ -2733,12 +2711,10 @@ export class SalesOrderComponent {
     this.dailyUnitReleaseError = '';
 
     try {
-      const from = this.dailyUnitReleaseDateFrom;
-      const to = this.dailyUnitReleaseDateTo;
-      const details = await this.loadReportOrderDetailsByDateRange(from, to);
+      const details = await this.loadReportOrderDetailsByDateRange(scheduleDate, scheduleDate);
 
       if (details.length === 0) {
-        this.dailyUnitReleaseError = 'No sales orders found for the selected date range.';
+        this.dailyUnitReleaseError = 'No sales orders found for the selected schedule date.';
         return;
       }
 
@@ -2766,7 +2742,7 @@ export class SalesOrderComponent {
       ];
 
       for (const { order, detail } of details) {
-        const date = (order.scheduleDate ?? order.createdAt ?? '').split('T')[0];
+        const date = this.toScheduleDateOnly(detail.scheduleDate || order.scheduleDate);
         const soNo = detail.soNumber ?? '';
         const customer = detail.customerName ?? '';
         const installer = detail.installer ?? '';
@@ -2844,7 +2820,7 @@ export class SalesOrderComponent {
 
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const fileName = `daily_unit_release_${from}_${to}.xlsx`;
+      const fileName = `daily_unit_release_${scheduleDate}.xlsx`;
       const objectUrl = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = objectUrl;
@@ -2864,8 +2840,9 @@ export class SalesOrderComponent {
   async generateDailyRemittanceReport(): Promise<void> {
     if (this.isGeneratingDailyUnitRelease) return;
 
-    if (!this.dailyUnitReleaseDateFrom || !this.dailyUnitReleaseDateTo) {
-      this.dailyUnitReleaseError = 'Both date fields are required.';
+    const scheduleDate = this.toScheduleDateOnly(this.dailyUnitReleaseDate);
+    if (!scheduleDate) {
+      this.dailyUnitReleaseError = 'Schedule date is required.';
       return;
     }
 
@@ -2873,13 +2850,10 @@ export class SalesOrderComponent {
     this.dailyUnitReleaseError = '';
 
     try {
-      const details = await this.loadReportOrderDetailsByDateRange(
-        this.dailyUnitReleaseDateFrom,
-        this.dailyUnitReleaseDateTo,
-      );
+      const details = await this.loadReportOrderDetailsByDateRange(scheduleDate, scheduleDate);
 
       if (details.length === 0) {
-        this.dailyUnitReleaseError = 'No sales orders found for the selected date range.';
+        this.dailyUnitReleaseError = 'No sales orders found for the selected schedule date.';
         return;
       }
 
@@ -2900,13 +2874,11 @@ export class SalesOrderComponent {
       await this.writeRemittanceWorksheet(workbook, 'Daily Remittance', regularDetails);
       await this.writeRemittanceWorksheet(workbook, 'Terms', termsDetails);
 
-      const from = this.dailyUnitReleaseDateFrom;
-      const to = this.dailyUnitReleaseDateTo;
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       });
-      const fileName = `daily_remittance_${from}_${to}.xlsx`;
+      const fileName = `daily_remittance_${scheduleDate}.xlsx`;
       const objectUrl = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = objectUrl;
@@ -2923,25 +2895,55 @@ export class SalesOrderComponent {
     }
   }
 
+  private localToday(): string {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${now.getFullYear()}-${month}-${day}`;
+  }
+
+  private toScheduleDateOnly(value: string | null | undefined): string {
+    const raw = String(value ?? '').trim();
+    if (!raw || raw === '-') return '';
+    const match = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) return match[1];
+    return this.toDateInputValue(raw);
+  }
+
+  private async loadOrdersByScheduleDate(
+    loader: (page: number) => Promise<{ items: SalesOrderListItem[]; meta?: { totalPages?: number } }>,
+  ): Promise<SalesOrderListItem[]> {
+    const items: SalesOrderListItem[] = [];
+    let page = 1;
+    let totalPages = 1;
+
+    do {
+      const result = await loader(page);
+      const pageItems = result.items ?? [];
+      items.push(...pageItems);
+      totalPages = Math.max(1, Number(result.meta?.totalPages ?? 1));
+      if (pageItems.length === 0) break;
+      page += 1;
+    } while (page <= totalPages && page <= 200);
+
+    return items;
+  }
+
   private async loadReportOrderDetailsByDateRange(
     from: string,
     to: string,
   ): Promise<Array<{ order: SalesOrderListItem; detail: SalesOrderDetailItem }>> {
-    const allOrders: SalesOrderListItem[] = [];
-    for (const loader of [
-      () => this.salesOrderService.getDeliveries({ page: 1, limit: 500 }),
-      () => this.salesOrderService.getRemittedSales({ page: 1, limit: 500 }),
-      () => this.salesOrderService.getSchedules({ page: 1, limit: 500 }),
-    ]) {
-      const result = await loader();
-      allOrders.push(...result.items);
-    }
+    const query = { limit: 100, scheduleDateFrom: from, scheduleDateTo: to };
+    const batches = await Promise.all([
+      this.loadOrdersByScheduleDate((page) => this.salesOrderService.getDeliveries({ ...query, page })),
+      this.loadOrdersByScheduleDate((page) => this.salesOrderService.getRemittedSales({ ...query, page })),
+      this.loadOrdersByScheduleDate((page) => this.salesOrderService.getSchedules({ ...query, page })),
+    ]);
 
-    const uniqueOrders = [...new Map(allOrders.map((o) => [o.id, o])).values()];
+    const uniqueOrders = [...new Map(batches.flat().map((order) => [order.id, order])).values()];
     const filteredOrders = uniqueOrders.filter((order) => {
-      const dateStr = order.scheduleDate ?? order.createdAt ?? '';
-      const orderDate = dateStr.split('T')[0];
-      return orderDate >= from && orderDate <= to;
+      const orderDate = this.toScheduleDateOnly(order.scheduleDate);
+      return orderDate !== '' && orderDate >= from && orderDate <= to;
     });
 
     const details: Array<{ order: SalesOrderListItem; detail: SalesOrderDetailItem }> = [];
@@ -3004,7 +3006,7 @@ export class SalesOrderComponent {
     };
 
     for (const { order, detail } of details) {
-      const dateStr = order.scheduleDate ?? detail.scheduleDate ?? order.createdAt ?? detail.createdAt ?? '';
+      const dateStr = this.toScheduleDateOnly(detail.scheduleDate || order.scheduleDate);
       const miscItems = await this.getRemittanceMiscItems(detail.id);
       const breakdown = this.buildRemittanceAmountBreakdown(detail, miscItems);
       const payments = this.splitRemittancePaymentAmounts(detail, breakdown.baseTotal);
