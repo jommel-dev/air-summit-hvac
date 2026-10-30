@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { LoginModule } from './auth/login/login.module';
@@ -23,6 +24,7 @@ import { AccountingModule } from './accounting/accounting.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { PublicOrderFormModule } from './sales/public-order-form/public-order-form.module';
 import { PublicFeedbackModule } from './sales/public-feedback/public-feedback.module';
+import { BeginningStockModule } from './inventory/beginning-stock/beginning-stock.module';
 
 @Module({
   imports: [
@@ -30,6 +32,7 @@ import { PublicFeedbackModule } from './sales/public-feedback/public-feedback.mo
       isGlobal: true,
       envFilePath: [`.env.${process.env.NODE_ENV ?? 'development'}`, '.env'],
     }),
+    ScheduleModule.forRoot(),
     DatabaseModule,
     LoginModule,
     BrandsModule,
@@ -51,6 +54,7 @@ import { PublicFeedbackModule } from './sales/public-feedback/public-feedback.mo
     AuditLogModule,
     PublicOrderFormModule,
     PublicFeedbackModule,
+    BeginningStockModule,
   ],
   controllers: [AppController],
   providers: [AppService],
