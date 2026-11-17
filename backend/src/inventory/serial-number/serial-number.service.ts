@@ -498,6 +498,52 @@ export class SerialNumberService {
     return `purchase order #${normalizedPurchaseId}`;
   }
 
+  private isPostApprovalPurchaseStatus(status: string | null | undefined): boolean {
+    const normalized = String(status ?? '').trim().toLowerCase();
+    return ['approved', 'completed', 'received', 'transfer_received'].includes(normalized);
+  }
+
+  private async getPurchaseOrderStatus(
+    purchaseId: number | string | null | undefined,
+  ): Promise<string | null> {
+    const normalizedPurchaseId = String(purchaseId ?? '').trim();
+    if (!normalizedPurchaseId) {
+      return null;
+    }
+
+    for (const tableName of ['tblpurchase_orders', 'tblpo']) {
+      try {
+        const result = await this.databaseService.query<{ status: string | null }>(
+          `SELECT COALESCE(to_jsonb(po)->>'status', null) AS status
+           FROM ${tableName} po
+           WHERE po.id::text = $1
+           LIMIT 1`,
+          [normalizedPurchaseId],
+        );
+
+        if (result.rowCount === 0) {
+          continue;
+        }
+
+        const status = String(result.rows[0]?.status ?? '').trim();
+        return status || null;
+      } catch (error: unknown) {
+        const errorCode =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? String((error as { code?: unknown }).code ?? '')
+            : '';
+
+        if (errorCode === '42P01') {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    return null;
+  }
+
   private async getSalesOrderReference(
     salesId: number | string | null | undefined,
   ): Promise<string | null> {
@@ -3009,8 +3055,10 @@ export class SerialNumberService {
     }
 
     // --- Scanned-status serial acceptance (step 6 in pipeline) ---
-    // If the serial has status "scanned" and a non-null purchaseId, it was scanned for a PO
-    // that hasn't been approved yet. Reassign it to this SO with an informational response.
+    // Status "scanned" means the serial was received on a PO. That PO may already be
+    // approved: scanning after approval used to leave the serial on "scanned", and this
+    // branch then cleared purchaseId. Only a still-pending PO is detached, and approval
+    // restores that link from previousPurchaseId.
     const serialPurchaseId = this.toOptionalNumber(serial.purchaseId);
     if (normalizedStatus === 'scanned' && serialPurchaseId !== null && serialPurchaseId > 0) {
       const serialPurchaseIdColumn = this.pickColumn(serialColumns, [
@@ -3020,6 +3068,10 @@ export class SerialNumberService {
         'purchaseOrderId',
         'purchase_order_id',
       ]);
+      const purchaseStatus = await this.getPurchaseOrderStatus(serialPurchaseId);
+      const purchaseAlreadyApproved = this.isPostApprovalPurchaseStatus(purchaseStatus);
+      const previousBranchId = serial.branchId ? Number(serial.branchId) : null;
+      const nextBranchId = branchId !== null ? branchId : previousBranchId;
 
       const scannedUpdateRecord: Record<string, unknown> = {
         [serialSalesIdColumn]: salesId,
@@ -3027,12 +3079,15 @@ export class SerialNumberService {
       if (serialStatusColumn) {
         scannedUpdateRecord[serialStatusColumn] = 'reserved';
       }
-      if (serialPreviousPurchaseIdColumn) {
-        scannedUpdateRecord[serialPreviousPurchaseIdColumn] = serialPurchaseId;
-      }
-      // Clear the purchaseId since the serial is now assigned to an SO
-      if (serialPurchaseIdColumn) {
-        scannedUpdateRecord[serialPurchaseIdColumn] = null;
+      if (!purchaseAlreadyApproved) {
+        if (serialPreviousPurchaseIdColumn) {
+          scannedUpdateRecord[serialPreviousPurchaseIdColumn] = serialPurchaseId;
+        }
+        // Detach only while the PO is still pending so a cancelled PO cannot delete
+        // a serial that is already reserved on a sales order. Approval writes it back.
+        if (serialPurchaseIdColumn) {
+          scannedUpdateRecord[serialPurchaseIdColumn] = null;
+        }
       }
       if (serialBranchIdColumn && branchId !== null) {
         scannedUpdateRecord[serialBranchIdColumn] = branchId;
@@ -3050,18 +3105,37 @@ export class SerialNumberService {
           eventType: 'ASSIGNED_TO_SO',
           previousStatus: serial.status,
           newStatus: 'reserved',
+          previousPurchaseId: serialPurchaseId,
+          newPurchaseId: purchaseAlreadyApproved ? serialPurchaseId : null,
           previousSalesId: Number.isFinite(currentSalesId) && currentSalesId > 0 ? currentSalesId : null,
           newSalesId: salesId,
-          previousBranchId: serial.branchId ? Number(serial.branchId) : null,
-          newBranchId: branchId,
+          previousBranchId,
+          newBranchId: nextBranchId,
           performedBy: actor?.userId ?? null,
           performedByUsername: actor?.username ?? null,
           ipAddress: actor?.ipAddress ?? null,
+          reason: purchaseAlreadyApproved
+            ? 'Assigned to sales order from an approved purchase order'
+            : 'Assigned to sales order from a pending purchase order',
         },
       );
 
       if (scannedUpdateResult.rowCount === 0) {
         return auditFailure('Unable to update serial number for sales order');
+      }
+
+      if (purchaseAlreadyApproved) {
+        return auditSuccess({
+          success: true,
+          message: 'Serial number scanned successfully',
+          item: {
+            ...serial,
+            purchaseId: String(serialPurchaseId),
+            salesId: String(salesId),
+            status: 'reserved',
+            branchId: nextBranchId !== null ? String(nextBranchId) : serial.branchId,
+          },
+        });
       }
 
       // Fetch PO number for the response details
@@ -3089,7 +3163,7 @@ export class SerialNumberService {
           ...serial,
           salesId: String(salesId),
           status: 'reserved',
-          branchId: branchId !== null ? String(branchId) : serial.branchId,
+          branchId: nextBranchId !== null ? String(nextBranchId) : serial.branchId,
         },
       } as ScanSalesOrderResponse;
     }
@@ -3349,13 +3423,18 @@ export class SerialNumberService {
     }
 
     let purchaseBranchIdRaw: string | null = null;
+    let purchaseStatusRaw: string | null = null;
     const purchaseBranchSourceTables = ['tblpurchase_orders', 'tblpo'];
 
     for (const tableName of purchaseBranchSourceTables) {
       try {
-        const purchaseBranchResult = await this.databaseService.query<{ branchId: string | null }>(
+        const purchaseBranchResult = await this.databaseService.query<{
+          branchId: string | null;
+          status: string | null;
+        }>(
           `SELECT
-             COALESCE(to_jsonb(po)->>'branchId', to_jsonb(po)->>'branch_id', null) AS "branchId"
+             COALESCE(to_jsonb(po)->>'branchId', to_jsonb(po)->>'branch_id', null) AS "branchId",
+             COALESCE(to_jsonb(po)->>'status', null) AS status
            FROM ${tableName} po
            WHERE po.id::text = $1
            LIMIT 1`,
@@ -3364,6 +3443,7 @@ export class SerialNumberService {
 
         if (purchaseBranchResult.rowCount > 0) {
           purchaseBranchIdRaw = purchaseBranchResult.rows[0]?.branchId ?? null;
+          purchaseStatusRaw = purchaseBranchResult.rows[0]?.status ?? null;
           break;
         }
       } catch (error: unknown) {
@@ -3388,6 +3468,11 @@ export class SerialNumberService {
       (Number.isFinite(purchaseBranchId) && (purchaseBranchId as number) > 0
         ? (purchaseBranchId as number)
         : null);
+    // A serial scanned onto an already-approved PO is received stock. Leaving it
+    // "scanned" made a later sales-order assignment treat the PO as pending and
+    // clear purchaseId.
+    const purchaseAlreadyApproved = this.isPostApprovalPurchaseStatus(purchaseStatusRaw);
+    const receivedSerialStatus = purchaseAlreadyApproved ? 'in-stock' : 'scanned';
 
     const serialColumns = await this.getTableColumns('tblserial_numbers');
     const serialNumberColumn = this.pickColumn(serialColumns, [
@@ -3566,7 +3651,7 @@ export class SerialNumberService {
           serialRecord[serialBranchIdColumn] = branchId;
         }
         if (serialStatusColumn) {
-          serialRecord[serialStatusColumn] = 'scanned';
+          serialRecord[serialStatusColumn] = receivedSerialStatus;
         }
         if (serialCreatedByColumn) {
           serialRecord[serialCreatedByColumn] = userId ?? null;
@@ -3620,7 +3705,7 @@ export class SerialNumberService {
         serialNumber: serialNumber,
         eventType: 'SCANNED_IN_PO',
         previousStatus: null,
-        newStatus: 'scanned',
+        newStatus: receivedSerialStatus,
         previousPurchaseId: null,
         newPurchaseId: purchaseId,
         previousBranchId: null,
@@ -3637,7 +3722,7 @@ export class SerialNumberService {
           ...created,
           purchaseId: String(purchaseId),
           salesId: null,
-          status: 'scanned',
+          status: receivedSerialStatus,
           branchId: branchId !== null ? String(branchId) : created.branchId,
           unitType,
         },
@@ -3712,11 +3797,33 @@ export class SerialNumberService {
     if (currentPurchaseId === purchaseId) {
       const currentUnitType = this.normalizeUnitType(serial.unitType);
       if (currentUnitType === unitType.toLowerCase()) {
+        if (purchaseAlreadyApproved && normalizedStatus === 'scanned' && serialStatusColumn) {
+          await this.runUpdateById('tblserial_numbers', serial.id, {
+            [serialStatusColumn]: 'in-stock',
+          });
+          await this.serialEventLogService.logEvent({
+            serialId: serial.id,
+            serialNumber,
+            eventType: 'STATUS_CHANGED',
+            previousStatus: serial.status,
+            newStatus: 'in-stock',
+            previousPurchaseId: purchaseId,
+            newPurchaseId: purchaseId,
+            previousBranchId: serial.branchId ? Number(serial.branchId) : null,
+            newBranchId: serial.branchId ? Number(serial.branchId) : null,
+            performedBy: actor?.userId ?? null,
+            performedByUsername: actor?.username ?? null,
+            ipAddress: actor?.ipAddress ?? null,
+            reason: 'Purchase order already approved',
+          });
+        }
+
         return auditSuccess({
           success: true,
           message: 'Serial number already scanned for this purchase order',
           item: {
             ...serial,
+            status: purchaseAlreadyApproved && normalizedStatus === 'scanned' ? 'in-stock' : serial.status,
             unitType: currentUnitType,
           },
         });
@@ -3745,7 +3852,7 @@ export class SerialNumberService {
       updateRecord[serialBranchIdColumn] = branchId;
     }
     if (serialStatusColumn) {
-      updateRecord[serialStatusColumn] = 'scanned';
+      updateRecord[serialStatusColumn] = receivedSerialStatus;
     }
     if (serialCreatedByColumn) {
       updateRecord[serialCreatedByColumn] = userId ?? null;
@@ -3776,7 +3883,7 @@ export class SerialNumberService {
       serialNumber: serialNumber,
       eventType: 'SCANNED_IN_PO',
       previousStatus: serial.status,
-      newStatus: 'scanned',
+      newStatus: receivedSerialStatus,
       previousPurchaseId: Number.isFinite(currentPurchaseId) && currentPurchaseId > 0 ? currentPurchaseId : null,
       newPurchaseId: purchaseId,
       previousBranchId: serial.branchId ? Number(serial.branchId) : null,
@@ -3793,7 +3900,7 @@ export class SerialNumberService {
         ...serial,
         purchaseId: String(purchaseId),
         salesId: null,
-        status: 'scanned',
+        status: receivedSerialStatus,
         branchId: branchId !== null ? String(branchId) : serial.branchId,
         unitType,
       },
@@ -4703,8 +4810,12 @@ export class SerialNumberService {
         [...updateParams, serialIds],
       );
 
-      // Log ASSIGNED_ORDER event for each serial
+      // Log ASSIGNED_ORDER event for each serial.
+      // Write the purchase/sales columns, not only metadata, so history shows the
+      // resulting link. An omitted id is unchanged and must not be recorded as cleared.
       for (const serial of currentSerials) {
+        const resultingPurchaseId = purchaseId ?? serial.purchaseId;
+        const resultingSalesId = salesId ?? serial.salesId;
         await this.serialEventLogService.logEvent(
           {
             serialId: serial.id,
@@ -4714,11 +4825,15 @@ export class SerialNumberService {
             performedByUsername,
             ipAddress,
             reason: assignReason,
+            previousPurchaseId: serial.purchaseId,
+            newPurchaseId: resultingPurchaseId,
+            previousSalesId: serial.salesId,
+            newSalesId: resultingSalesId,
             metadata: {
               previousPurchaseId: serial.purchaseId,
               previousSalesId: serial.salesId,
-              newPurchaseId: purchaseId ?? null,
-              newSalesId: salesId ?? null,
+              newPurchaseId: resultingPurchaseId,
+              newSalesId: resultingSalesId,
             },
           },
           client,

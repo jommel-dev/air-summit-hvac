@@ -718,21 +718,76 @@
                       }
                     }
 
-                    @if (isMasterDataDrawerMode() && unresolvedLinkedSerialEntries.length > 0) {
+                    @if (isMasterDataDrawerMode() && removedOrUnknownProductGroups.length > 0) {
                       <div class="rounded-lg border border-warning-200 bg-warning-50/70 p-3 dark:border-warning-500/20 dark:bg-warning-500/10">
                         <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-warning-800 dark:text-warning-200">
-                          Unmapped Linked Serials
+                          Products removed or unknown on this PO
+                          <span class="ml-1 rounded-full bg-white/80 px-2 py-0.5 text-xs text-warning-700 dark:bg-warning-500/20 dark:text-warning-100">
+                            {{ removedOrUnknownSerialCount }}
+                          </span>
+                        </p>
+                        <p class="mb-3 text-xs text-warning-800 dark:text-warning-100">
+                          These serials still belong to this purchase order, but their product is no longer one of the PO lines.
+                        </p>
+                        <div class="space-y-3">
+                          @for (group of removedOrUnknownProductGroups; track group.key) {
+                            <div>
+                              <p class="mb-0.5 text-xs font-semibold text-warning-900 dark:text-warning-100">{{ group.title }}</p>
+                              <p class="mb-1 text-xs text-warning-800 dark:text-warning-100">{{ group.detail }}</p>
+                              <div class="overflow-x-auto rounded-lg border border-warning-200 bg-white/80 dark:border-warning-500/20 dark:bg-gray-900/40">
+                                <table class="w-full min-w-[320px]">
+                                  <thead>
+                                    <tr class="border-b border-warning-100 bg-warning-50 dark:border-warning-500/10 dark:bg-warning-500/5">
+                                      <th class="px-3 py-2 text-left text-xs font-medium text-warning-700 dark:text-warning-200">#</th>
+                                      <th class="px-3 py-2 text-left text-xs font-medium text-warning-700 dark:text-warning-200">Serial Number</th>
+                                      <th class="px-3 py-2 text-left text-xs font-medium text-warning-700 dark:text-warning-200">Unit</th>
+                                      <th class="px-3 py-2 text-left text-xs font-medium text-warning-700 dark:text-warning-200">Status</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    @for (serial of group.serials; track serial.serialNumber; let unresolvedIndex = $index) {
+                                      <tr class="border-b border-warning-100 last:border-b-0 dark:border-warning-500/10">
+                                        <td class="px-3 py-2 text-xs text-warning-900 dark:text-warning-100">{{ unresolvedIndex + 1 }}</td>
+                                        <td class="px-3 py-2 text-xs text-warning-900 dark:text-warning-100">{{ serial.serialNumber }}</td>
+                                        <td class="px-3 py-2 text-xs text-warning-900 dark:text-warning-100">{{ serial.unitType }}</td>
+                                        <td class="px-3 py-2 text-xs text-warning-900 dark:text-warning-100">
+                                          @if (isInstalledSerial(serial.serialNumber)) {
+                                            <span class="inline-flex rounded-full bg-warning-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-warning-800 dark:bg-warning-500/15 dark:text-warning-300">
+                                              Installed
+                                            </span>
+                                          } @else {
+                                            <span
+                                              class="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide"
+                                              [ngClass]="getStatusColorClasses(serial.status || getSerialStatus(serial.serialNumber))"
+                                            >
+                                              {{ serial.status || getSerialStatus(serial.serialNumber) }}
+                                            </span>
+                                          }
+                                        </td>
+                                      </tr>
+                                    }
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          }
+                        </div>
+                      </div>
+                    } @else if (isMasterDataDrawerMode() && unresolvedLinkedSerialEntries.length > 0) {
+                      <div class="rounded-lg border border-warning-200 bg-warning-50/70 p-3 dark:border-warning-500/20 dark:bg-warning-500/10">
+                        <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-warning-800 dark:text-warning-200">
+                          Products removed or unknown on this PO
                           <span class="ml-1 rounded-full bg-white/80 px-2 py-0.5 text-xs text-warning-700 dark:bg-warning-500/20 dark:text-warning-100">
                             {{ totalUnresolvedLinkedSerialCount }}
                           </span>
                         </p>
                         <p class="mb-3 text-xs text-warning-800 dark:text-warning-100">
-                          These serials are linked to this PO but could not be attached to a displayed line item because their mapping is incomplete or no longer matches the current product lines.
+                          These serials still belong to this purchase order, but their product or capacity is missing, so they cannot be placed on a product line.
                         </p>
                         <div class="space-y-3">
                           @for (entry of unresolvedLinkedSerialEntries; track entry.unitType) {
                             <div>
-                              <p class="mb-1 text-xs font-medium text-warning-900 dark:text-warning-100">{{ entry.unitType }}</p>
+                              <p class="mb-1 text-xs font-medium text-warning-900 dark:text-warning-100">Unknown product · {{ entry.unitType }}</p>
                               <div class="overflow-x-auto rounded-lg border border-warning-200 bg-white/80 dark:border-warning-500/20 dark:bg-gray-900/40">
                                 <table class="w-full min-w-[320px]">
                                   <thead>

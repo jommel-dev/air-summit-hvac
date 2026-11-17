@@ -10,6 +10,7 @@ import {
   DeletePurchaseAuthPayload,
   PurchaseOrderDetailItem,
   PurchaseOrderDetailProductItem,
+  UnmappedProductSerialGroup,
   ProductCapacityOption,
   ProductOption,
   PurchaseOrderItem,
@@ -180,6 +181,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
   serialStatusByNumber: Record<string, string> = {};
   poLinkedSerialNumbersByUnitType: Record<string, string[]> = {};
   unresolvedLinkedSerialNumbersByUnitType: Record<string, string[]> = {};
+  unmappedProductSerials: UnmappedProductSerialGroup[] = [];
   originatingSalesOrder: {
     id: number;
     soNumber: string | null;
@@ -2051,7 +2053,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       const allocated = allocations[`0::${normalizedLabel}`] ?? [];
       for (const [entryLabel, serials] of Object.entries(this.poLinkedSerialNumbersByUnitType)) {
         if (String(entryLabel ?? '').trim().toLowerCase() === normalizedLabel) {
-          const baseSerials = Array.isArray(serials) ? serials : [];
+          const baseSerials = (Array.isArray(serials) ? serials : []).filter(
+            (serial) => !this.isRemovedOrUnknownSerial(serial),
+          );
           const merged = [...baseSerials];
           const seen = new Set(merged.map((serial) => this.normalizeSerial(serial).toLowerCase()));
 
@@ -2140,7 +2144,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
 
       for (const serial of entry.serials) {
         const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
-        if (!normalizedSerial || seen.has(normalizedSerial)) {
+        if (!normalizedSerial || seen.has(normalizedSerial) || this.isRemovedOrUnknownSerial(serial)) {
           continue;
         }
 
@@ -2300,7 +2304,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
         const displayed = displayedSerialsByUnitType.get(unitLabel) ?? new Set<string>();
         const remaining = entry.serials.filter((serial) => {
           const normalizedSerial = this.normalizeSerial(serial).toLowerCase();
-          return normalizedSerial && !displayed.has(normalizedSerial);
+          return normalizedSerial && !displayed.has(normalizedSerial) && !this.isRemovedOrUnknownSerial(serial);
         });
 
         return {
@@ -2322,6 +2326,56 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     return this.unresolvedLinkedSerialEntries.reduce(
       (total, entry) => total + entry.serials.length,
       0,
+    );
+  }
+
+  get removedOrUnknownProductGroups(): Array<{
+    key: string;
+    title: string;
+    detail: string;
+    serials: UnmappedProductSerialGroup['serials'];
+  }> {
+    return this.unmappedProductSerials
+      .filter((group) => Array.isArray(group.serials) && group.serials.length > 0)
+      .map((group) => {
+        const productName = String(group.productName ?? '').trim();
+        const capacityName = String(group.capacityName ?? '').trim();
+        const title = productName
+          ? `${productName}${capacityName ? ` (${capacityName})` : ''}`
+          : 'Unknown product';
+        const detail =
+          group.reason === 'missing-product'
+            ? 'The serial has no product or capacity on record.'
+            : group.reason === 'catalog-deleted'
+              ? 'This product or capacity was deleted from the catalog, so it is no longer a line on this PO.'
+              : 'This product line was removed from the PO. The serials stayed linked because they were already scanned, in stock, or assigned to a sales order.';
+
+        return {
+          key: `${group.productId ?? 'none'}::${group.capacityId ?? 'none'}::${group.reason}`,
+          title,
+          detail,
+          serials: group.serials,
+        };
+      });
+  }
+
+  get removedOrUnknownSerialCount(): number {
+    return this.removedOrUnknownProductGroups.reduce(
+      (total, group) => total + group.serials.length,
+      0,
+    );
+  }
+
+  private isRemovedOrUnknownSerial(serialNumber: string): boolean {
+    const normalizedSerial = this.normalizeSerial(serialNumber).toLowerCase();
+    if (!normalizedSerial) {
+      return false;
+    }
+
+    return this.unmappedProductSerials.some((group) =>
+      group.serials.some(
+        (serial) => this.normalizeSerial(serial.serialNumber).toLowerCase() === normalizedSerial,
+      ),
     );
   }
 
@@ -3189,6 +3243,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       detail.unresolvedLinkedSerialNumbers && typeof detail.unresolvedLinkedSerialNumbers === 'object'
         ? this.normalizeSerialNumbersByUnitType(detail.unresolvedLinkedSerialNumbers)
         : {};
+    this.unmappedProductSerials = Array.isArray(detail.unmappedProductSerials)
+      ? detail.unmappedProductSerials
+      : [];
 
     // Re-apply product items serial data
     if (detail.productItems.length > 0) {
@@ -3354,6 +3411,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     };
     this.serialStatusByNumber = {};
     this.unresolvedLinkedSerialNumbersByUnitType = {};
+    this.unmappedProductSerials = [];
     this.poLinkedSerialNumbersByUnitType = {};
     this.vendorSearch = '';
     this.productSearchByItem = {};
@@ -3389,6 +3447,7 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.purchaseHistoryEntries = [];
     this.isPurchaseHistoryModalOpen = false;
     this.unresolvedLinkedSerialNumbersByUnitType = {};
+    this.unmappedProductSerials = [];
     this.poLinkedSerialNumbersByUnitType = {};
     this.queuedSerialScans = [];
     this.deletedSerialKeys.clear();
@@ -3805,12 +3864,40 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.recalculateTotalAmount();
   }
 
-  removeProductItem(index: number): void {
+  async removeProductItem(index: number): Promise<void> {
     if (this.createForm.productItems.length <= 1) {
       return;
     }
 
     const removedItem = this.createForm.productItems[index];
+    if (this.drawerMode === 'edit' && this.editingPurchaseId && removedItem) {
+      const productId = Number(removedItem.productId);
+      const capacityId = Number(removedItem.capacityId);
+      if (Number.isFinite(productId) && productId > 0 && Number.isFinite(capacityId) && capacityId > 0) {
+        try {
+          const response = await this.purchaseOrderService.removeProductItem(this.editingPurchaseId, {
+            productId,
+            capacityId,
+          });
+          if (!response.success) {
+            this.openErrorModal(
+              'Cannot remove product',
+              response.message ?? 'This product still has serial numbers linked to this PO.',
+            );
+            return;
+          }
+        } catch (error: unknown) {
+          const message = axios.isAxiosError(error)
+            ? (error.response?.data as { message?: string } | undefined)?.message
+            : undefined;
+          this.openErrorModal(
+            'Cannot remove product',
+            message ?? 'This product still has serial numbers linked to this PO.',
+          );
+          return;
+        }
+      }
+    }
 
     this.createForm.productItems = this.createForm.productItems.filter((_, itemIndex) => itemIndex !== index);
     delete this.selectedUnitTypeByProduct[index];
@@ -3829,18 +3916,6 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
     this.activeProductTabIndex = Math.max(0, Math.min(this.activeProductTabIndex, this.createForm.productItems.length - 1));
     this.ensureSelectedUnitType(this.activeProductTabIndex);
     this.recalculateTotalAmount();
-
-    // Auto-delete from DB when in edit mode
-    if (this.drawerMode === 'edit' && this.editingPurchaseId && removedItem) {
-      const productId = Number(removedItem.productId);
-      const capacityId = Number(removedItem.capacityId);
-      if (Number.isFinite(productId) && productId > 0 && Number.isFinite(capacityId) && capacityId > 0) {
-        void this.purchaseOrderService.removeProductItem(this.editingPurchaseId, {
-          productId,
-          capacityId,
-        });
-      }
-    }
   }
 
   onProductChanged(index: number, previousProductId?: string): void {
@@ -5557,6 +5632,9 @@ export class PurchaseOrderComponent implements OnInit, OnDestroy {
       detail.unresolvedLinkedSerialNumbers && typeof detail.unresolvedLinkedSerialNumbers === 'object'
         ? this.normalizeSerialNumbersByUnitType(detail.unresolvedLinkedSerialNumbers)
         : {};
+    this.unmappedProductSerials = Array.isArray(detail.unmappedProductSerials)
+      ? detail.unmappedProductSerials
+      : [];
 
     this.serialStatusByNumber =
       detail.serialStatuses && typeof detail.serialStatuses === 'object'
