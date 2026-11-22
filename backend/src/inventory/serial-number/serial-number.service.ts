@@ -3084,7 +3084,8 @@ export class SerialNumberService {
           scannedUpdateRecord[serialPreviousPurchaseIdColumn] = serialPurchaseId;
         }
         // Detach only while the PO is still pending so a cancelled PO cannot delete
-        // a serial that is already reserved on a sales order. Approval writes it back.
+        // a serial that is already reserved on a sales order. Approval, and removing
+        // the serial from the sales order, both write that purchase link back.
         if (serialPurchaseIdColumn) {
           scannedUpdateRecord[serialPurchaseIdColumn] = null;
         }
@@ -4157,6 +4158,148 @@ export class SerialNumberService {
     };
   }
 
+  /**
+   * A pending purchase order is unlinked while its serial sits on a sales order.
+   * previousPurchaseId keeps that purchase order so it can be put back when the
+   * sales assignment ends. Approved purchase orders are never unlinked, and a
+   * cancelled purchase order is not restored.
+   */
+  async restoreDetachedPurchaseLinks(
+    client: PoolClient,
+    serialIds: number[],
+    options?: { updateStatus?: boolean },
+  ): Promise<Map<number, { purchaseId: number; status: 'scanned' | 'in-stock' }>> {
+    const restored = new Map<number, { purchaseId: number; status: 'scanned' | 'in-stock' }>();
+    const ids = [...new Set(serialIds.filter((id) => Number.isFinite(id) && id > 0))];
+    if (ids.length === 0) {
+      return restored;
+    }
+
+    const serialColumns = await this.getTableColumns('tblserial_numbers');
+    const purchaseIdColumn = this.pickColumn(serialColumns, [
+      'purchaseId',
+      'purchase_id',
+      'po_id',
+      'purchaseOrderId',
+      'purchase_order_id',
+    ]);
+    const previousPurchaseIdColumn = this.pickColumn(serialColumns, [
+      'previousPurchaseId',
+      'previous_purchase_id',
+    ]);
+    const statusColumn = this.pickColumn(serialColumns, ['status']);
+    if (!purchaseIdColumn || !previousPurchaseIdColumn) {
+      return restored;
+    }
+
+    const updateStatus = options?.updateStatus !== false;
+    const candidates = await client.query<{
+      id: number;
+      purchase_id: string | null;
+      previous_purchase_id: string | null;
+    }>(
+      `SELECT
+         sn.id,
+         COALESCE(sn."${purchaseIdColumn}"::text, '') AS purchase_id,
+         COALESCE(sn."${previousPurchaseIdColumn}"::text, '') AS previous_purchase_id
+       FROM tblserial_numbers sn
+       WHERE sn.id = ANY($1::bigint[])`,
+      [ids],
+    );
+
+    const pending: Array<{ id: number; previousPurchaseId: number }> = [];
+    for (const row of candidates.rows) {
+      const currentPurchaseId = this.toOptionalNumber(row.purchase_id);
+      const previousPurchaseId = this.toOptionalNumber(row.previous_purchase_id);
+      if (currentPurchaseId !== null && currentPurchaseId > 0) {
+        continue;
+      }
+      if (previousPurchaseId === null || previousPurchaseId <= 0) {
+        continue;
+      }
+      pending.push({ id: row.id, previousPurchaseId });
+    }
+    if (pending.length === 0) {
+      return restored;
+    }
+
+    const purchaseStatuses = await this.getPurchaseStatuses([
+      ...new Set(pending.map((entry) => entry.previousPurchaseId)),
+    ]);
+
+    for (const entry of pending) {
+      const purchaseStatus = purchaseStatuses.get(entry.previousPurchaseId) ?? null;
+      const normalizedPurchaseStatus = String(purchaseStatus ?? '').trim().toLowerCase();
+      if (
+        !normalizedPurchaseStatus ||
+        ['cancelled', 'canceled', 'rejected', 'void'].includes(normalizedPurchaseStatus)
+      ) {
+        continue;
+      }
+
+      const status: 'scanned' | 'in-stock' = this.isPostApprovalPurchaseStatus(purchaseStatus)
+        ? 'in-stock'
+        : 'scanned';
+      const assignments = [
+        `"${purchaseIdColumn}" = $1`,
+        `"${previousPurchaseIdColumn}" = NULL`,
+      ];
+      const params: unknown[] = [entry.previousPurchaseId];
+      if (updateStatus && statusColumn) {
+        params.push(status);
+        assignments.push(`"${statusColumn}" = $${params.length}`);
+      }
+      params.push(entry.id);
+      await client.query(
+        `UPDATE tblserial_numbers
+         SET ${assignments.join(', ')}
+         WHERE id = $${params.length}`,
+        params,
+      );
+      restored.set(entry.id, { purchaseId: entry.previousPurchaseId, status });
+    }
+
+    return restored;
+  }
+
+  private async getPurchaseStatuses(purchaseIds: number[]): Promise<Map<number, string | null>> {
+    const statuses = new Map<number, string | null>();
+    if (purchaseIds.length === 0) {
+      return statuses;
+    }
+
+    for (const tableName of ['tblpurchase_orders', 'tblpo']) {
+      try {
+        const result = await this.databaseService.query<{ id: string; status: string | null }>(
+          `SELECT po.id::text AS id, COALESCE(to_jsonb(po)->>'status', null) AS status
+           FROM ${tableName} po
+           WHERE po.id = ANY($1::int[])`,
+          [purchaseIds],
+        );
+        for (const row of result.rows) {
+          const id = Number(row.id);
+          if (!Number.isFinite(id) || id <= 0) {
+            continue;
+          }
+          const status = String(row.status ?? '').trim();
+          statuses.set(id, status || null);
+        }
+        return statuses;
+      } catch (error: unknown) {
+        const errorCode =
+          typeof error === 'object' && error !== null && 'code' in error
+            ? String((error as { code?: unknown }).code ?? '')
+            : '';
+        if (errorCode === '42P01') {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    return statuses;
+  }
+
   async removeSalesOrderSerial(
     dto: RemoveSalesOrderSerialDto,
     actor?: AuditActorContext,
@@ -4259,22 +4402,47 @@ export class SerialNumberService {
       updateRecord[serialStatusColumn] = 'in-stock';
     }
 
-    const updateResult = await this.persistSerialUpdateWithEvent(
-      existing.id,
-      updateRecord,
-      {
-        serialId: existing.id,
-        serialNumber: serialNumber,
-        eventType: 'REMOVED_FROM_SO',
-        previousStatus: existing.status,
-        newStatus: 'in-stock',
-        previousSalesId: salesId,
-        newSalesId: null,
-        performedBy: actor?.userId ?? null,
-        performedByUsername: actor?.username ?? null,
-        ipAddress: actor?.ipAddress ?? null,
-      },
-    );
+    const updateResult = await this.databaseService.withTransaction(async (client) => {
+      const released = await this.runUpdateById(
+        'tblserial_numbers',
+        existing.id,
+        updateRecord,
+        client,
+      );
+      if ((released.rowCount ?? 0) === 0) {
+        return { rowCount: 0, restoredPurchaseId: null as number | null, nextStatus: 'in-stock' };
+      }
+
+      const restored = await this.restoreDetachedPurchaseLinks(client, [existing.id]);
+      const link = restored.get(existing.id);
+      const nextStatus = link?.status ?? 'in-stock';
+      await this.serialEventLogService.logEvent(
+        {
+          serialId: existing.id,
+          serialNumber,
+          eventType: 'REMOVED_FROM_SO',
+          previousStatus: existing.status,
+          newStatus: nextStatus,
+          previousPurchaseId: null,
+          newPurchaseId: link?.purchaseId ?? null,
+          previousSalesId: salesId,
+          newSalesId: null,
+          performedBy: actor?.userId ?? null,
+          performedByUsername: actor?.username ?? null,
+          ipAddress: actor?.ipAddress ?? null,
+          reason: link
+            ? 'Removed from sales order and restored the purchase order link'
+            : null,
+        },
+        client,
+      );
+
+      return {
+        rowCount: released.rowCount ?? 0,
+        restoredPurchaseId: link?.purchaseId ?? null,
+        nextStatus,
+      };
+    });
 
     if (updateResult.rowCount === 0) {
       return {
@@ -4287,7 +4455,8 @@ export class SerialNumberService {
     const afterState = {
       ...beforeState,
       salesId: null,
-      status: 'in-stock',
+      status: updateResult.nextStatus,
+      purchaseId: updateResult.restoredPurchaseId,
     };
 
     // Log audit entry for serial number removal from sales order

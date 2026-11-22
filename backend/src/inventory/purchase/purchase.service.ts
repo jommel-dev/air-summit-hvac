@@ -10,6 +10,7 @@ import { createHash, randomUUID } from 'crypto';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 import { SerialEventLogService } from 'src/inventory/serial-number/serial-event-log.service';
+import { SerialNumberService } from 'src/inventory/serial-number/serial-number.service';
 import {
   assertActiveProductCapacity,
   catalogDeletedSql,
@@ -133,6 +134,7 @@ export class PurchaseService {
     private readonly materialStockService: MaterialStockService,
     private readonly auditLogService: AuditLogService,
     private readonly serialEventLogService: SerialEventLogService,
+    private readonly serialNumberService: SerialNumberService,
   ) {}
 
   private async getPurchaseAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
@@ -2036,7 +2038,14 @@ export class PurchaseService {
           }
         }
 
+        const restoredPurchaseLinks = await this.serialNumberService.restoreDetachedPurchaseLinks(
+          client,
+          linkedTransferSerials.rows.map((row) => row.id),
+          { updateStatus: false },
+        );
+
         for (const row of linkedTransferSerials.rows) {
+          const restoredPurchase = restoredPurchaseLinks.get(row.id);
           await this.serialEventLogService.logEvent(
             {
               serialId: row.id,
@@ -2044,6 +2053,8 @@ export class PurchaseService {
               eventType: 'STATUS_CHANGED',
               previousStatus: row.status,
               newStatus: 'in-stock',
+              previousPurchaseId: restoredPurchase ? null : undefined,
+              newPurchaseId: restoredPurchase?.purchaseId,
               previousSalesId: Number(row.salesId) || salesId,
               newSalesId: null,
               previousBranchId: row.branchId ? Number(row.branchId) : null,
@@ -2051,7 +2062,9 @@ export class PurchaseService {
               performedBy: auditActor?.userId ?? userId ?? null,
               performedByUsername: auditActor?.username ?? null,
               ipAddress: auditActor?.ipAddress ?? null,
-              reason: 'Transfer PO received — serials released to receiving branch',
+              reason: restoredPurchase
+                ? 'Transfer PO received — serial released to receiving branch and purchase order link restored'
+                : 'Transfer PO received — serials released to receiving branch',
             },
             client,
           );

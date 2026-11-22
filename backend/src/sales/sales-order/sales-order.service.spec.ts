@@ -8,6 +8,7 @@ import { PurchaseService } from 'src/inventory/purchase/purchase.service';
 import { AuditLogService } from 'src/audit-log/audit-log.service';
 import { SoNumberService } from './so-number.service';
 import { SerialEventLogService } from 'src/inventory/serial-number/serial-event-log.service';
+import { SerialNumberService } from 'src/inventory/serial-number/serial-number.service';
 
 describe('SalesOrderService', () => {
   let service: SalesOrderService;
@@ -35,6 +36,10 @@ describe('SalesOrderService', () => {
         { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
         { provide: SoNumberService, useValue: { generateNext: jest.fn().mockResolvedValue('SO-000001') } },
         { provide: SerialEventLogService, useValue: { logEvent: jest.fn().mockResolvedValue(undefined) } },
+        {
+          provide: SerialNumberService,
+          useValue: { restoreDetachedPurchaseLinks: jest.fn().mockResolvedValue(new Map()) },
+        },
       ],
     }).compile();
 
