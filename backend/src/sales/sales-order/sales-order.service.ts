@@ -18,6 +18,7 @@ import {
   SerialEventLogService,
   SerialEventType,
 } from 'src/inventory/serial-number/serial-event-log.service';
+import { SerialNumberService } from 'src/inventory/serial-number/serial-number.service';
 import { SoNumberService } from './so-number.service';
 import {
   assertActiveProductCapacity,
@@ -87,6 +88,7 @@ export class SalesOrderService {
     private readonly auditLogService: AuditLogService,
     private readonly soNumberService: SoNumberService,
     private readonly serialEventLogService: SerialEventLogService,
+    private readonly serialNumberService: SerialNumberService,
   ) {}
 
   async getNextSoNumber() {
@@ -3035,6 +3037,8 @@ export class SalesOrderService {
       newStatus?: string | null;
       previousSalesId?: number | null;
       newSalesId?: number | null;
+      previousPurchaseId?: number | null;
+      newPurchaseId?: number | null;
       previousBranchId?: number | null;
       newBranchId?: number | null;
       reason?: string | null;
@@ -3049,6 +3053,8 @@ export class SalesOrderService {
         eventType: params.eventType,
         previousStatus: params.previousStatus ?? null,
         newStatus: params.newStatus ?? null,
+        previousPurchaseId: params.previousPurchaseId ?? null,
+        newPurchaseId: params.newPurchaseId ?? null,
         previousSalesId: params.previousSalesId ?? null,
         newSalesId: params.newSalesId ?? null,
         previousBranchId: params.previousBranchId ?? null,
@@ -7846,17 +7852,40 @@ export class SalesOrderService {
           const selectedDefectiveSerialSet = new Set(
             selectedDefectiveSerials.map((serial) => serial.toLowerCase()),
           );
+          const defectiveSerialIds = serialsToRelease.rows
+            .filter((row) =>
+              !shouldReleaseCancelledSerials &&
+              selectedDefectiveSerialSet.has(this.normalizeSerialNumber(row.serial_number).toLowerCase()),
+            )
+            .map((row) => row.id);
+          const defectiveSerialIdSet = new Set(defectiveSerialIds);
+          const releasedSerialIds = serialsToRelease.rows
+            .map((row) => row.id)
+            .filter((serialId) => !defectiveSerialIdSet.has(serialId));
+          const restoredLinks = await this.serialNumberService.restoreDetachedPurchaseLinks(
+            client,
+            releasedSerialIds,
+          );
+          const restoredDefectiveLinks = await this.serialNumberService.restoreDetachedPurchaseLinks(
+            client,
+            defectiveSerialIds,
+            { updateStatus: false },
+          );
+          for (const [serialId, link] of restoredDefectiveLinks) {
+            restoredLinks.set(serialId, link);
+          }
+
           const releaseReason = String(payload.remarks ?? '').trim() || null;
           for (const row of serialsToRelease.rows) {
             const serialNumber = this.normalizeSerialNumber(row.serial_number);
-            const isDefectiveRow =
-              !shouldReleaseCancelledSerials &&
-              selectedDefectiveSerialSet.has(serialNumber.toLowerCase());
+            const isDefectiveRow = defectiveSerialIdSet.has(row.id);
+            const restoredLink = restoredLinks.get(row.id);
             const eventType: SerialEventType = shouldReleaseCancelledSerials
               ? 'REMOVED_FROM_SO'
               : isDefectiveRow
                 ? 'MARKED_DEFECTIVE'
                 : 'RETURNED';
+            const releaseStatus = isDefectiveRow ? 'defective' : restoredLink?.status ?? 'in-stock';
             await this.logSerialLifecycleEvent(
               client,
               {
@@ -7864,10 +7893,14 @@ export class SalesOrderService {
                 serialNumber,
                 eventType,
                 previousStatus: row.status,
-                newStatus: isDefectiveRow ? 'defective' : 'in-stock',
+                newStatus: releaseStatus,
+                previousPurchaseId: restoredLink ? null : undefined,
+                newPurchaseId: restoredLink?.purchaseId,
                 previousSalesId: this.toLinkedSalesId(row.sales_id) ?? id,
                 newSalesId: null,
-                reason: releaseReason,
+                reason: restoredLink
+                  ? [releaseReason, 'Purchase order link restored'].filter(Boolean).join('. ')
+                  : releaseReason,
               },
               auditActor ?? { userId, branchId },
             );

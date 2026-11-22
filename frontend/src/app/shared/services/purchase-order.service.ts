@@ -87,6 +87,7 @@ export interface PurchaseOrderDetailItem {
   serialStatuses?: Record<string, string>;
   poLinkedSerialNumbers?: Record<string, string[]>;
   unresolvedLinkedSerialNumbers?: Record<string, string[]>;
+  unmappedProductSerials?: UnmappedProductSerialGroup[];
   createdAt: string | null;
   isTransferPO?: boolean;
   originatingSalesOrder?: {
@@ -108,6 +109,15 @@ export interface PurchaseOrderDetailItem {
       transferNotes: string | null;
     } | null;
   } | null;
+}
+
+export interface UnmappedProductSerialGroup {
+  productId: string | null;
+  capacityId: string | null;
+  productName: string;
+  capacityName: string;
+  reason: 'removed-from-po' | 'missing-product' | 'catalog-deleted';
+  serials: Array<{ serialNumber: string; unitType: string; status: string }>;
 }
 
 interface PurchaseOrderDetailResponse {

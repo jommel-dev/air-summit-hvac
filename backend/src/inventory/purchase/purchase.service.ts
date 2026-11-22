@@ -10,6 +10,7 @@ import { createHash, randomUUID } from 'crypto';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 import { AuditActorContext, AuditLogService } from 'src/audit-log/audit-log.service';
 import { SerialEventLogService } from 'src/inventory/serial-number/serial-event-log.service';
+import { SerialNumberService } from 'src/inventory/serial-number/serial-number.service';
 import {
   assertActiveProductCapacity,
   catalogDeletedSql,
@@ -105,6 +106,19 @@ type PurchaseSerialRow = {
   productId: string | null;
   capacityId: string | null;
   unitType: string | null;
+  productName?: string | null;
+  capacityName?: string | null;
+  isProductDeleted?: boolean;
+  isCapacityDeleted?: boolean;
+};
+
+type UnmappedProductSerialGroup = {
+  productId: string | null;
+  capacityId: string | null;
+  productName: string;
+  capacityName: string;
+  reason: 'removed-from-po' | 'missing-product' | 'catalog-deleted';
+  serials: Array<{ serialNumber: string; unitType: string; status: string }>;
 };
 
 type CapacityPriceUpdateColumns = {
@@ -120,6 +134,7 @@ export class PurchaseService {
     private readonly materialStockService: MaterialStockService,
     private readonly auditLogService: AuditLogService,
     private readonly serialEventLogService: SerialEventLogService,
+    private readonly serialNumberService: SerialNumberService,
   ) {}
 
   private async getPurchaseAuditSnapshot(id: number): Promise<Record<string, unknown> | null> {
@@ -1670,6 +1685,10 @@ export class PurchaseService {
             'purchaseOrderId',
             'purchase_order_id',
           ]);
+          const serialPreviousPurchaseIdColumn = this.pickColumn(serialColumns, [
+            'previousPurchaseId',
+            'previous_purchase_id',
+          ]);
           const serialSalesIdColumn = this.pickColumn(serialColumns, ['salesId', 'sales_id']);
           const serialNumberColumn = this.pickColumn(serialColumns, ['serialNumber', 'serial_number']);
 
@@ -1746,6 +1765,57 @@ export class PurchaseService {
           }
 
           updatedSerialCount = serialsToStock.rowCount ?? 0;
+
+          // Serials scanned onto this PO and then reserved on a sales order while the PO
+          // was still pending had purchaseId cleared. Put that link back now that the
+          // correct PO is approved. Do not touch a serial that already belongs to another PO.
+          if (serialPurchaseIdColumn && serialPreviousPurchaseIdColumn) {
+            const detachedSerials = await client.query<{
+              id: number;
+              serial_number: string | null;
+            }>(
+              `SELECT
+                 sn.id,
+                 ${serialNumberColumn ? `sn."${serialNumberColumn}"::text` : `COALESCE(to_jsonb(sn)->>'serialNumber', to_jsonb(sn)->>'serial_number', '')`} AS serial_number
+               FROM tblserial_numbers sn
+               WHERE sn."${serialPreviousPurchaseIdColumn}"::text = $1
+                 AND (
+                   sn."${serialPurchaseIdColumn}" IS NULL
+                   OR sn."${serialPurchaseIdColumn}"::text IN ('', '0')
+                 )`,
+              [String(id)],
+            );
+
+            if ((detachedSerials.rowCount ?? 0) > 0) {
+              const detachedIds = detachedSerials.rows.map((row) => row.id);
+              await client.query(
+                `UPDATE tblserial_numbers
+                 SET "${serialPurchaseIdColumn}" = $1
+                 WHERE id = ANY($2::bigint[])`,
+                [id, detachedIds],
+              );
+
+              const actor = options?.auditActor ?? { userId };
+              for (const row of detachedSerials.rows) {
+                await this.serialEventLogService.logEvent(
+                  {
+                    serialId: row.id,
+                    serialNumber: String(row.serial_number ?? '').trim(),
+                    eventType: 'STATUS_CHANGED',
+                    previousPurchaseId: null,
+                    newPurchaseId: id,
+                    performedBy: actor.userId ?? null,
+                    performedByUsername: actor.username ?? null,
+                    ipAddress: actor.ipAddress ?? null,
+                    reason: 'Purchase order approved - restored purchase link',
+                  },
+                  client,
+                );
+              }
+
+              updatedSerialCount += detachedSerials.rowCount ?? 0;
+            }
+          }
 
           recordedNetPriceItems = await this.recordCapacityNetPricesForApprovedPurchase(
             client,
@@ -1968,7 +2038,14 @@ export class PurchaseService {
           }
         }
 
+        const restoredPurchaseLinks = await this.serialNumberService.restoreDetachedPurchaseLinks(
+          client,
+          linkedTransferSerials.rows.map((row) => row.id),
+          { updateStatus: false },
+        );
+
         for (const row of linkedTransferSerials.rows) {
+          const restoredPurchase = restoredPurchaseLinks.get(row.id);
           await this.serialEventLogService.logEvent(
             {
               serialId: row.id,
@@ -1976,6 +2053,8 @@ export class PurchaseService {
               eventType: 'STATUS_CHANGED',
               previousStatus: row.status,
               newStatus: 'in-stock',
+              previousPurchaseId: restoredPurchase ? null : undefined,
+              newPurchaseId: restoredPurchase?.purchaseId,
               previousSalesId: Number(row.salesId) || salesId,
               newSalesId: null,
               previousBranchId: row.branchId ? Number(row.branchId) : null,
@@ -1983,7 +2062,9 @@ export class PurchaseService {
               performedBy: auditActor?.userId ?? userId ?? null,
               performedByUsername: auditActor?.username ?? null,
               ipAddress: auditActor?.ipAddress ?? null,
-              reason: 'Transfer PO received — serials released to receiving branch',
+              reason: restoredPurchase
+                ? 'Transfer PO received — serial released to receiving branch and purchase order link restored'
+                : 'Transfer PO received — serials released to receiving branch',
             },
             client,
           );
@@ -2347,8 +2428,26 @@ export class PurchaseService {
            COALESCE(
              to_jsonb(sn)->>'unitType',
              to_jsonb(sn)->>'unit_type'
-           ) AS "unitType"
+           ) AS "unitType",
+           COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', '') AS "productName",
+           COALESCE(to_jsonb(c)->>'capacity', '') AS "capacityName",
+           (${catalogDeletedSql('p')} OR p.id IS NULL) AS "isProductDeleted",
+           (${catalogDeletedSql('c')} OR c.id IS NULL) AS "isCapacityDeleted"
          FROM tblserial_numbers sn
+         LEFT JOIN tblproducts p
+           ON p.id::text = COALESCE(
+             to_jsonb(sn)->>'productId',
+             to_jsonb(sn)->>'product_id',
+             to_jsonb(sn)->>'prodId',
+             to_jsonb(sn)->>'prod_id'
+           )
+         LEFT JOIN tblcapacity c
+           ON c.id::text = COALESCE(
+             to_jsonb(sn)->>'capacityId',
+             to_jsonb(sn)->>'capacity_id',
+             to_jsonb(sn)->>'capId',
+             to_jsonb(sn)->>'cap_id'
+           )
          WHERE COALESCE(
            to_jsonb(sn)->>'purchaseId',
            to_jsonb(sn)->>'purchase_id',
@@ -2361,6 +2460,13 @@ export class PurchaseService {
       const serialStatuses: Record<string, string> = {};
       const poLinkedSerialNumbers: Record<string, string[]> = {};
       const unresolvedSerialsByUnitType: Record<string, string[]> = {};
+      const unmappedProductSerials = new Map<string, UnmappedProductSerialGroup>();
+      const purchaseLineKeys = new Set(
+        productResult.rows.map(
+          (product) =>
+            `${String(product.productId ?? '').trim()}::${String(product.capacityId ?? '').trim()}`,
+        ),
+      );
       const includeInstalled = true; // Always show all serials regardless of tab
       const preferPoLinkedSerials = options?.preferPoLinkedSerials === true;
       for (const serialRow of serialResult.rows) {
@@ -2382,6 +2488,34 @@ export class PurchaseService {
 
         if (!poLinkedSerialNumbers[unitType].includes(serialNumber)) {
           poLinkedSerialNumbers[unitType].push(serialNumber);
+        }
+
+        const lineKey = `${productId}::${capacityId}`;
+        const isOnCurrentLine = Boolean(productId && capacityId && purchaseLineKeys.has(lineKey));
+        if (!isOnCurrentLine) {
+          const reason: UnmappedProductSerialGroup['reason'] =
+            !productId || !capacityId
+              ? 'missing-product'
+              : Boolean(serialRow.isProductDeleted) || Boolean(serialRow.isCapacityDeleted)
+                ? 'catalog-deleted'
+                : 'removed-from-po';
+          const groupKey = reason === 'missing-product' ? 'missing-product' : lineKey;
+          const existingGroup = unmappedProductSerials.get(groupKey) ?? {
+            productId: productId || null,
+            capacityId: capacityId || null,
+            productName: String(serialRow.productName ?? '').trim(),
+            capacityName: String(serialRow.capacityName ?? '').trim(),
+            reason,
+            serials: [],
+          };
+          if (!existingGroup.serials.some((entry) => entry.serialNumber === serialNumber)) {
+            existingGroup.serials.push({
+              serialNumber,
+              unitType,
+              status: serialStatus || 'in_stock',
+            });
+          }
+          unmappedProductSerials.set(groupKey, existingGroup);
         }
 
         if (!productId || !capacityId) {
@@ -2628,6 +2762,7 @@ export class PurchaseService {
           serialStatuses,
           poLinkedSerialNumbers,
           unresolvedLinkedSerialNumbers: unresolvedSerialsByUnitType,
+          unmappedProductSerials: [...unmappedProductSerials.values()],
           createdAt: purchase.createdAt,
           isTransferPO,
           originatingSalesOrder,
@@ -3033,11 +3168,6 @@ export class PurchaseService {
             }
           }
 
-          // Pass 2: Existing items not matched → DELETE
-          const deletedIds = existingItems
-            .filter((e) => !usedExistingIds.has(e.id))
-            .map((e) => e.id);
-
           // --- Execute UPDATEs for matched items ---
           for (const { existingId, payloadItem } of updates) {
             const productId = this.toOptionalNumber(payloadItem.productId)!;
@@ -3240,10 +3370,24 @@ export class PurchaseService {
           }
 
           // --- Execute DELETEs for removed items ---
-          for (const removedId of deletedIds) {
+          // A line is removed only when no serial on this PO still points at it.
+          // Approval and sales-order assignment keep those serials, so deleting the
+          // line first is what leaves them as removed/unknown products.
+          const removedItems = existingItems.filter((item) => !usedExistingIds.has(item.id));
+          for (const removedItem of removedItems) {
+            const removedProductId = this.toOptionalNumber(removedItem.productId);
+            const removedCapacityId = this.toOptionalNumber(removedItem.capacityId);
+            if (removedProductId !== null && removedCapacityId !== null) {
+              await this.assertProductLineHasNoLinkedSerials(
+                client,
+                id,
+                removedProductId,
+                removedCapacityId,
+              );
+            }
             await client.query(
               `DELETE FROM tbltransaction_product_items WHERE id = $1`,
-              [removedId],
+              [removedItem.id],
             );
           }
 
@@ -5021,6 +5165,51 @@ export class PurchaseService {
   }
 
   /**
+   * A product line stays on the PO while any serial is still linked to that
+   * product and capacity. Scanned, in-stock, and sales-order serials are all
+   * kept on purpose, so the line must not disappear out from under them.
+   */
+  private async assertProductLineHasNoLinkedSerials(
+    client: PoolClient,
+    purchaseId: number,
+    productId: number,
+    capacityId: number,
+  ): Promise<void> {
+    const linkedResult = await client.query<{
+      serial_count: string;
+      product_name: string | null;
+      capacity_name: string | null;
+    }>(
+      `SELECT
+         COUNT(*)::text AS serial_count,
+         MAX(COALESCE(to_jsonb(p)->>'productName', to_jsonb(p)->>'product_name', '')) AS product_name,
+         MAX(COALESCE(to_jsonb(c)->>'capacity', '')) AS capacity_name
+       FROM tblserial_numbers sn
+       LEFT JOIN tblproducts p
+         ON p.id::text = sn."productId"::text
+       LEFT JOIN tblcapacity c
+         ON c.id::text = sn."capacityId"::text
+       WHERE sn."purchaseId"::text = $1
+         AND sn."productId"::text = $2
+         AND sn."capacityId"::text = $3`,
+      [String(purchaseId), String(productId), String(capacityId)],
+    );
+
+    const serialCount = Number(linkedResult.rows[0]?.serial_count ?? 0);
+    if (!Number.isFinite(serialCount) || serialCount <= 0) {
+      return;
+    }
+
+    const productName =
+      String(linkedResult.rows[0]?.product_name ?? '').trim() || `Product #${productId}`;
+    const capacityName = String(linkedResult.rows[0]?.capacity_name ?? '').trim();
+    const productLabel = capacityName ? `${productName} (${capacityName})` : productName;
+    throw new Error(
+      `Cannot remove ${productLabel} from this PO. ${serialCount} serial number${serialCount === 1 ? '' : 's'} still belong to it. Remove those serials first.`,
+    );
+  }
+
+  /**
    * Remove a product item from a PO and delete its associated serial numbers.
    */
   async removeProductItem(
@@ -5044,6 +5233,8 @@ export class PurchaseService {
 
     try {
       await this.databaseService.withTransaction(async (client) => {
+        await this.assertProductLineHasNoLinkedSerials(client, purchaseId, productId, capacityId);
+
         // Delete matching product item from tbltransaction_product_items
         const transItemColumns = await this.getTableColumns(client, 'tbltransaction_product_items');
         const transProductIdColumn = this.pickColumn(transItemColumns, ['productId', 'product_id']);

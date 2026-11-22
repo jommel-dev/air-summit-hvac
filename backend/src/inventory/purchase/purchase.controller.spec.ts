@@ -5,6 +5,7 @@ import { DatabaseService } from 'src/database/database.service';
 import { MaterialStockService } from 'src/inventory/material-stock/material-stock.service';
 import { AuditLogService } from 'src/audit-log/audit-log.service';
 import { SerialEventLogService } from 'src/inventory/serial-number/serial-event-log.service';
+import { SerialNumberService } from 'src/inventory/serial-number/serial-number.service';
 import { ConfigService } from '@nestjs/config';
 
 describe('PurchaseController', () => {
@@ -19,6 +20,10 @@ describe('PurchaseController', () => {
         { provide: MaterialStockService, useValue: {} },
         { provide: AuditLogService, useValue: { logMutation: jest.fn(), log: jest.fn() } },
         { provide: SerialEventLogService, useValue: { logEvent: jest.fn() } },
+        {
+          provide: SerialNumberService,
+          useValue: { restoreDetachedPurchaseLinks: jest.fn().mockResolvedValue(new Map()) },
+        },
         { provide: ConfigService, useValue: { get: () => 'test-secret' } },
       ],
     }).compile();

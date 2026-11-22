@@ -147,4 +147,149 @@ describe('SerialNumberService', () => {
     expect(result.item.serials.inStock).toEqual(['SN-OK']);
     expect(result.item.counts.inStock).toBe(1);
   });
+
+  it('restores the pending purchase order when a serial is removed from a sales order', async () => {
+    const clientQuery = jest.fn(async (sql: string) => {
+      if (String(sql).includes('previous_purchase_id') || String(sql).includes('previousPurchaseId')) {
+        return {
+          rows: [{ id: 7, purchase_id: '', previous_purchase_id: '185' }],
+        };
+      }
+      return { rowCount: 1, rows: [{ id: 7 }] };
+    });
+    const logEvent = jest.fn().mockResolvedValue(undefined);
+    const databaseService = {
+      query: jest.fn(async (sql: string) => {
+        if (String(sql).includes('information_schema.columns')) {
+          return {
+            rows: [
+              { column_name: 'salesId' },
+              { column_name: 'status' },
+              { column_name: 'purchaseId' },
+              { column_name: 'previousPurchaseId' },
+            ],
+          };
+        }
+        if (String(sql).includes('tblpurchase_orders')) {
+          return { rowCount: 1, rows: [{ id: '185', status: 'in-progress' }] };
+        }
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: 7,
+              salesId: '3502',
+              unitType: 'indoor',
+              status: 'reserved',
+              productId: '1',
+              capacityId: '2',
+            },
+          ],
+        };
+      }),
+      withTransaction: jest.fn(async (callback: (client: { query: jest.Mock }) => Promise<unknown>) =>
+        callback({ query: clientQuery }),
+      ),
+    };
+    (service as unknown as { databaseService: typeof databaseService }).databaseService = databaseService;
+    (service as unknown as { serialEventLogService: { logEvent: jest.Mock } }).serialEventLogService = {
+      logEvent,
+    };
+    (service as unknown as { auditLogService: { logMutation: jest.Mock } }).auditLogService = {
+      logMutation: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await service.removeSalesOrderSerial(
+      { serialNumber: 'SN-185', salesId: 3502, unitType: 'indoor' },
+      { userId: 4, username: 'myln', ipAddress: null },
+    );
+
+    expect(result.success).toBe(true);
+    const restoreUpdate = clientQuery.mock.calls
+      .map((call) => String(call[0]))
+      .find((sql) => sql.includes('previousPurchaseId') && sql.includes('UPDATE'));
+    expect(restoreUpdate).toContain('"purchaseId" = $1');
+    expect(restoreUpdate).toContain('"status" = $2');
+    const restoreParams = clientQuery.mock.calls.find((call) =>
+      String(call[0]).includes('UPDATE') && String(call[0]).includes('previousPurchaseId'),
+    )?.[1] as unknown[];
+    expect(restoreParams?.[0]).toBe(185);
+    expect(restoreParams?.[1]).toBe('scanned');
+    expect(logEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'REMOVED_FROM_SO',
+        previousStatus: 'reserved',
+        newStatus: 'scanned',
+        newPurchaseId: 185,
+        newSalesId: null,
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('does not restore a purchase order that was cancelled while the serial was on a sales order', async () => {
+    const clientQuery = jest.fn(async (sql: string) => {
+      if (String(sql).includes('SELECT') && String(sql).includes('previousPurchaseId')) {
+        return {
+          rows: [{ id: 7, purchase_id: '', previous_purchase_id: '185' }],
+        };
+      }
+      return { rowCount: 1, rows: [{ id: 7 }] };
+    });
+    const databaseService = {
+      query: jest.fn(async (sql: string) => {
+        if (String(sql).includes('information_schema.columns')) {
+          return {
+            rows: [
+              { column_name: 'salesId' },
+              { column_name: 'status' },
+              { column_name: 'purchaseId' },
+              { column_name: 'previousPurchaseId' },
+            ],
+          };
+        }
+        if (String(sql).includes('tblpurchase_orders')) {
+          return { rowCount: 1, rows: [{ id: '185', status: 'cancelled' }] };
+        }
+        if (String(sql).includes('previousPurchaseId') && String(sql).includes('SELECT')) {
+          return { rows: [{ id: 7, purchase_id: '', previous_purchase_id: '185' }] };
+        }
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: 7,
+              salesId: '3502',
+              unitType: 'indoor',
+              status: 'reserved',
+              productId: '1',
+              capacityId: '2',
+            },
+          ],
+        };
+      }),
+      withTransaction: jest.fn(async (callback: (client: { query: jest.Mock }) => Promise<unknown>) =>
+        callback({ query: clientQuery }),
+      ),
+    };
+    (service as unknown as { databaseService: typeof databaseService }).databaseService = databaseService;
+    (service as unknown as { serialEventLogService: { logEvent: jest.Mock } }).serialEventLogService = {
+      logEvent: jest.fn().mockResolvedValue(undefined),
+    };
+    (service as unknown as { auditLogService: { logMutation: jest.Mock } }).auditLogService = {
+      logMutation: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await service.removeSalesOrderSerial({
+      serialNumber: 'SN-185',
+      salesId: 3502,
+      unitType: 'indoor',
+    });
+
+    expect(result.success).toBe(true);
+    const restoreUpdate = clientQuery.mock.calls
+      .map((call) => String(call[0]))
+      .find((sql) => sql.includes('UPDATE') && sql.includes('previousPurchaseId'));
+    expect(restoreUpdate).toBeUndefined();
+  });
 });
